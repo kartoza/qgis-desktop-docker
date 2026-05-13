@@ -1,0 +1,64 @@
+name: PR Build
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build Docker image
+        run: nix build .#docker
+
+      - name: Load Docker image
+        run: |
+          OUT=$(nix build .#docker --print-out-paths)
+          nix store cat "$OUT" | docker load
+
+      - name: Generate build summary
+        run: |
+          chmod +x build-summary.sh
+          bash build-summary.sh nix-xfce-kasm:latest build-summary.md
+
+      - name: Save Docker image as artifact
+        run: |
+          OUT=$(nix build .#docker --print-out-paths)
+          nix store cat "$OUT" > nix-xfce-kasm.tar.gz
+
+      - name: Upload Docker image artifact (7 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: nix-xfce-kasm.tar.gz
+          retention-days: 7
+
+      - name: Upload build summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-summary
+          path: |
+            build-summary.md
+            sbom.txt
+          retention-days: 7
+
+      - name: Comment on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: build-summary
+          path: build-summary.md
