@@ -1,0 +1,19 @@
+services:
+  qgis-desktop:
+    image: ghcr.io/kartoza/qgis-desktop-docker:latest
+    container_name: qgis-desktop
+    ports:
+      - "8443:8443"
+    environment:
+      - VNC_RESOLUTION=1920x1080
+      - VNC_COL_DEPTH=24
+      - VNC_PORT=8443
+    volumes:
+      # Persist the user's home directory (QGIS projects, settings, plugins)
+      - qgis-home:/home/user
+      # Optional: mount a local data directory into the container
+      # - ./data:/home/user/data
+    restart: unless-stopped
+
+volumes:
+  qgis-home:
