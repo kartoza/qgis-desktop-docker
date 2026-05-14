@@ -168,6 +168,16 @@ EOF
           '';
 
           config = {
+            Labels = {
+              "org.opencontainers.image.title" = "QGIS Desktop";
+              "org.opencontainers.image.description" = "QGIS Desktop in a Docker container with KasmVNC web-based access, built with Nix";
+              "org.opencontainers.image.url" = "https://github.com/kartoza/qgis-desktop-docker";
+              "org.opencontainers.image.source" = "https://github.com/kartoza/qgis-desktop-docker";
+              "org.opencontainers.image.documentation" = "https://github.com/kartoza/qgis-desktop-docker#readme";
+              "org.opencontainers.image.vendor" = "Kartoza";
+              "org.opencontainers.image.licenses" = "GPL-2.0";
+              "org.opencontainers.image.authors" = "Tim Sutton <tim@kartoza.com>";
+            };
             Env = [
               "HOME=/home/user"
               "USER=user"
@@ -215,24 +225,70 @@ EOF
           };
         };
 
+        mkApp = name: script: {
+          type = "app";
+          program = "${pkgs.writeShellApplication {
+            inherit name;
+            runtimeInputs = with pkgs; [ docker jq coreutils ];
+            text = script;
+          }}/bin/${name}";
+        };
+
       in {
         packages = {
           kasmvnc = kasmvnc;
+          dockerImage = dockerImage;
           docker = dockerImage;
           default = dockerImage;
+        };
+
+        apps = {
+          build-docker = mkApp "build-docker" ''
+            echo "Building Docker image with Nix..."
+            nix build .#docker -o result
+            OUT=$(nix build .#docker --print-out-paths)
+            nix store cat "$OUT" | docker load
+            echo ""
+            echo "Image loaded: nix-xfce-kasm:latest"
+            docker image inspect nix-xfce-kasm:latest --format \
+              "Size: {{.Size}} bytes ($(docker image inspect nix-xfce-kasm:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+          '';
+
+          run = mkApp "run" ''
+            echo "Starting QGIS Desktop on http://localhost:8443 ..."
+            docker run --rm -p 8443:8443 --name qgis-desktop nix-xfce-kasm:latest
+          '';
+
+          default = mkApp "help" ''
+            echo "QGIS Desktop Docker - Available commands:"
+            echo ""
+            echo "  nix run .#build-docker  Build the Docker image"
+            echo "  nix run .#run           Run the container"
+            echo "  nix run .#summary       Generate build summary"
+            echo "  make build-docker       Build via Make"
+            echo "  make run                Run via Make"
+          '';
+
+          summary = mkApp "summary" ''
+            bash build-summary.sh nix-xfce-kasm:latest build-summary.md
+          '';
         };
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             docker
+            python3
+            syft
+            grype
+            jq
           ];
           shellHook = ''
-            echo "nix-docker-kasm development shell"
+            echo "QGIS Desktop Docker - development shell"
             echo ""
-            echo "Build:  nix build .#docker"
-            echo "Load:   docker load < result"
-            echo "Run:    docker run --rm -p 8443:8443 nix-xfce-kasm:latest"
-            echo "Open:   https://localhost:8443"
+            echo "  nix run .#build-docker  Build the Docker image"
+            echo "  nix run .#run           Run the container"
+            echo "  make build-docker       Build via Make"
+            echo "  make run                Run via Make"
           '';
         };
       }

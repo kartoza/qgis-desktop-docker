@@ -1,0 +1,265 @@
+name: Docker
+
+on:
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NIX_IMAGE: nix-xfce-kasm
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build Nix Docker image
+        run: nix build .#docker -o result
+
+      - name: Load Docker image
+        run: |
+          OUT=$(nix build .#docker --print-out-paths)
+          nix store cat "$OUT" | docker load
+
+      - name: Determine version tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag image with version
+        run: |
+          docker tag ${{ env.NIX_IMAGE }}:latest ${{ env.NIX_IMAGE }}:${{ steps.version.outputs.tag }}
+
+      - name: Export image as tarball
+        run: |
+          docker save ${{ env.NIX_IMAGE }}:latest | gzip > ${{ env.NIX_IMAGE }}.tar.gz
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.NIX_IMAGE }}:latest
+          artifact-name: sbom.spdx.json
+          output-file: sbom.spdx.json
+          format: spdx-json
+
+      - name: Generate SBOM with syft (for table)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          syft ${{ env.NIX_IMAGE }}:latest -o json > sbom-syft.json
+
+      - name: Generate SBOM table
+        run: python3 scripts/sbom_table.py sbom-syft.json > sbom-table.md
+
+      - name: Scan for CVEs
+        uses: anchore/scan-action@v6
+        id: cve-scan
+        with:
+          image: ${{ env.NIX_IMAGE }}:latest
+          fail-build: false
+          output-format: json
+          severity-cutoff: negligible
+
+      - name: Generate CVE table
+        run: |
+          SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
+          if [ -f "$SCAN_FILE" ]; then
+            cp "$SCAN_FILE" cve-scan.json
+            python3 scripts/cve_table.py cve-scan.json > cve-table.md
+          else
+            echo "**No known CVEs detected in this image.**" > cve-table.md
+            echo "{}" > cve-scan.json
+          fi
+
+      - name: Generate build report
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_ID=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{.Id}}' | cut -c8-19)
+          IMAGE_SIZE=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B)
+          TARBALL_SIZE=$(stat --format=%s ${{ env.NIX_IMAGE }}.tar.gz | numfmt --to=iec-i --suffix=B)
+          LAYER_COUNT=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{len .RootFS.Layers}}')
+
+          cat > build-report.md <<EOF
+          ## Docker Image Build
+
+          | Property | Value |
+          |----------|-------|
+          | Registry | \`${GHCR_IMAGE}\` |
+          | Tag | \`${VERSION}\` |
+          | Image ID | \`${IMAGE_ID}\` |
+          | Image Size | ${IMAGE_SIZE} |
+          | Tarball Size | ${TARBALL_SIZE} |
+          | Layers | ${LAYER_COUNT} |
+          | Port | 8443 |
+
+          ### Quick Start
+
+          \`\`\`bash
+          docker pull ${GHCR_IMAGE}:${VERSION}
+          docker run --rm -p 8443:8443 ${GHCR_IMAGE}:${VERSION}
+          # Open http://localhost:8443
+          \`\`\`
+
+          ### Docker Compose
+
+          \`\`\`yaml
+          services:
+            qgis-desktop:
+              image: ${GHCR_IMAGE}:${VERSION}
+              ports:
+                - "8443:8443"
+              volumes:
+                - qgis-home:/home/user
+              restart: unless-stopped
+          volumes:
+            qgis-home:
+          \`\`\`
+
+          ### SBOM
+
+          $(cat sbom-table.md)
+
+          ### CVE Scan
+
+          $(cat cve-table.md)
+          EOF
+
+          # Strip leading whitespace from heredoc
+          sed -i 's/^          //' build-report.md
+
+          # Also write step summary
+          cat build-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # --- PR-specific steps ---
+
+      - name: Upload image artifact (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: ${{ env.NIX_IMAGE }}.tar.gz
+          retention-days: 7
+          overwrite: true
+
+      - name: Upload SBOM artifact (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+          retention-days: 7
+          overwrite: true
+
+      - name: Upload CVE scan artifact (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve-scan
+          path: cve-scan.json
+          retention-days: 7
+          overwrite: true
+
+      - name: Find existing PR comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/find-comment@v3
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "## Docker Image Build"
+
+      - name: Post or update PR comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            ${{ steps.version.outputs.tag }}
+
+            [Download image artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            Commit: `${{ github.event.pull_request.head.sha }}`
+
+            ---
+
+            ${{ env.REPORT_BODY }}
+
+      - name: Read build report for PR comment
+        if: github.event_name == 'pull_request'
+        id: report
+        run: echo "REPORT_BODY<<ENDOFBODY" >> "$GITHUB_ENV" && cat build-report.md >> "$GITHUB_ENV" && echo "ENDOFBODY" >> "$GITHUB_ENV"
+
+      - name: Post or update PR comment (with report)
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: ${{ env.REPORT_BODY }}
+
+      # --- Release-specific steps ---
+
+      - name: Log in to GHCR
+        if: github.event_name == 'release'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GHCR
+        if: github.event_name == 'release'
+        run: |
+          GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          VERSION="${{ steps.version.outputs.tag }}"
+
+          docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:${VERSION}"
+          docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:latest"
+          docker push "${GHCR_IMAGE}:${VERSION}"
+          docker push "${GHCR_IMAGE}:latest"
+
+      - name: Set package visibility to public
+        if: github.event_name == 'release'
+        continue-on-error: true
+        run: |
+          PKG_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          gh api \
+            --method PUT \
+            /orgs/${{ github.repository_owner }}/packages/container/${PKG_NAME}/visibility \
+            -f visibility=public 2>/dev/null || echo "Warning: Could not set package visibility (org policy may prevent it)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Append build report to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          append_body: true
+          body_path: build-report.md
+          files: |
+            ${{ env.NIX_IMAGE }}.tar.gz
+            sbom.spdx.json
+            cve-scan.json
