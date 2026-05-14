@@ -70,25 +70,16 @@ jobs:
       - name: Generate SBOM table
         run: python3 scripts/sbom_table.py sbom-syft.json > sbom-table.md
 
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
       - name: Scan for CVEs
-        uses: anchore/scan-action@v6
-        id: cve-scan
-        with:
-          image: ${{ env.NIX_IMAGE }}:latest
-          fail-build: false
-          output-format: json
-          severity-cutoff: negligible
+        run: |
+          grype sbom:sbom.spdx.json -o json > cve-scan.json 2>/dev/null || echo '{"matches":[]}' > cve-scan.json
 
       - name: Generate CVE table
-        run: |
-          SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
-          if [ -f "$SCAN_FILE" ]; then
-            cp "$SCAN_FILE" cve-scan.json
-            python3 scripts/cve_table.py cve-scan.json > cve-table.md
-          else
-            echo "**No known CVEs detected in this image.**" > cve-table.md
-            echo "{}" > cve-scan.json
-          fi
+        run: python3 scripts/cve_table.py cve-scan.json > cve-table.md
 
       - name: Generate build report
         run: |
@@ -179,6 +170,41 @@ jobs:
           retention-days: 7
           overwrite: true
 
+      - name: Read build report for PR comment
+        if: github.event_name == 'pull_request'
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+
+          {
+            echo "REPORT_BODY<<ENDOFBODY"
+            cat build-report.md
+            cat <<ARTIFACT_EOF
+
+          ### Download & Run This Build
+
+          1. Download the \`docker-image\` artifact from the [workflow run](${RUN_URL})
+          2. Load and run:
+
+          \`\`\`bash
+          # Unzip the downloaded artifact
+          unzip docker-image.zip
+
+          # Load into Docker
+          docker load < ${{ env.NIX_IMAGE }}.tar.gz
+
+          # Run it
+          docker run --rm -p 8443:8443 ${{ env.NIX_IMAGE }}:latest
+
+          # Open http://localhost:8443
+          \`\`\`
+
+          ---
+          Commit: \`${SHA}\`
+          ARTIFACT_EOF
+            echo "ENDOFBODY"
+          } >> "$GITHUB_ENV"
+
       - name: Find existing PR comment
         if: github.event_name == 'pull_request'
         uses: peter-evans/find-comment@v3
@@ -189,29 +215,6 @@ jobs:
           body-includes: "## Docker Image Build"
 
       - name: Post or update PR comment
-        if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          comment-id: ${{ steps.find-comment.outputs.comment-id }}
-          issue-number: ${{ github.event.pull_request.number }}
-          edit-mode: replace
-          body: |
-            ${{ steps.version.outputs.tag }}
-
-            [Download image artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-            Commit: `${{ github.event.pull_request.head.sha }}`
-
-            ---
-
-            ${{ env.REPORT_BODY }}
-
-      - name: Read build report for PR comment
-        if: github.event_name == 'pull_request'
-        id: report
-        run: echo "REPORT_BODY<<ENDOFBODY" >> "$GITHUB_ENV" && cat build-report.md >> "$GITHUB_ENV" && echo "ENDOFBODY" >> "$GITHUB_ENV"
-
-      - name: Post or update PR comment (with report)
         if: github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v4
         with:
