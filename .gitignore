@@ -3,3 +3,14 @@ result-man
 PROMPT.log
 .claude
 git.sh
+git.out
+screenshots_gitignored/
+build-summary.md
+sbom.txt
+sbom.spdx.json
+sbom-syft.json
+cve-scan.json
+cve-table.md
+sbom-table.md
+build-report.md
+*.tar.gz

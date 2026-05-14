@@ -14,13 +14,16 @@ A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) 
 - **Fully reproducible** -- the entire image is defined declaratively in a Nix flake
 - **Persistent workspaces** -- mount a volume to keep your QGIS projects, plugins, and settings across restarts
 - **Minimal footprint** -- only the packages needed to run QGIS and the desktop environment
-- **No auth by default** -- designed for local use; add authentication for production deployments
+- **SBOM & CVE scanning** -- every build produces a Software Bill of Materials and vulnerability scan
 
 ## Quick Start
 
-### Using Docker
+### Pull from GHCR
+
+> **Note:** If the package is private, authenticate first: `echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin`
 
 ```bash
+docker pull ghcr.io/kartoza/qgis-desktop-docker:latest
 docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -33,8 +36,6 @@ curl -O https://raw.githubusercontent.com/kartoza/qgis-desktop-docker/main/docke
 docker compose up -d
 ```
 
-Open [http://localhost:8443](http://localhost:8443) in your browser.
-
 ## Usage Examples
 
 ### Basic (ephemeral)
@@ -42,8 +43,6 @@ Open [http://localhost:8443](http://localhost:8443) in your browser.
 ```bash
 docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
-
-Everything is lost when the container stops.
 
 ### Persistent home directory (named volume)
 
@@ -62,8 +61,6 @@ docker run --rm -p 8443:8443 \
   -v "$HOME/qgis-data:/home/user/data" \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
-
-Your local `~/qgis-data` folder appears at `/home/user/data` inside the container. Useful for working with shapefiles, GeoPackages, and rasters on the host.
 
 ### Persistent home + local data
 
@@ -90,25 +87,17 @@ docker run --rm -p 3000:3000 \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
-
 ## Docker Compose
-
-The included `docker-compose.yml` provides a production-ready configuration with persistent storage:
 
 ```yaml
 services:
   qgis-desktop:
     image: ghcr.io/kartoza/qgis-desktop-docker:latest
-    container_name: qgis-desktop
     ports:
       - "8443:8443"
     environment:
       - VNC_RESOLUTION=1920x1080
-      - VNC_COL_DEPTH=24
-      - VNC_PORT=8443
     volumes:
-      # Persist the user's home directory
       - qgis-home:/home/user
       # Optional: mount a local data directory
       # - ./data:/home/user/data
@@ -118,17 +107,6 @@ volumes:
   qgis-home:
 ```
 
-```bash
-# Start
-docker compose up -d
-
-# Stop
-docker compose down
-
-# Stop and remove persistent data
-docker compose down -v
-```
-
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -136,34 +114,41 @@ docker compose down -v
 | `VNC_PORT` | `8443` | Port for the KasmVNC web interface |
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution (resizable in browser) |
 | `VNC_COL_DEPTH` | `24` | Color depth (16, 24, or 32) |
-| `VNC_PW` | `password` | VNC password (only used for kasmvncpasswd, basic auth is disabled) |
+| `VNC_PW` | `password` | VNC password (basic auth is disabled by default) |
 | `DISPLAY` | `:1` | X display number |
+
+## Endpoints
+
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8443` | KasmVNC web client (full desktop) |
 
 ## Architecture
 
-This image is built entirely with [Nix](https://nixos.org), using `dockerTools.buildLayeredImage` for reproducible, minimal Docker images.
+```mermaid
+graph LR
+    Browser["Web Browser"] -->|HTTP :8443| KasmVNC["KasmVNC<br/>(Xkasmvnc)"]
+    KasmVNC -->|X11 :1| XFCE["XFCE Desktop"]
+    XFCE --> QGIS["QGIS 4.0"]
+    XFCE --> Thunar["Thunar<br/>File Manager"]
+    XFCE --> Terminal["XFCE Terminal"]
 
+    subgraph Docker Container
+        KasmVNC
+        XFCE
+        QGIS
+        Thunar
+        Terminal
+    end
 ```
-flake.nix                    # Main flake: defines packages, Docker image, dev shell
-kasmvnc.nix                  # KasmVNC package (v1.4.0 from Debian Bookworm deb)
-libcrypt-compat.nix          # libcrypt.so.1 compat lib from Debian
-start-desktop.sh             # Entrypoint: launches Xkasmvnc + XFCE
-config/                      # XFCE panel and desktop configuration
-  xfce4/panel/default.xml
-  xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
-docker-compose.yml           # Docker Compose example
-build-summary.sh             # Build summary and SBOM generator
-.github/workflows/
-  pr-build.yml               # PR: build, artifact (7d), comment summary
-  release.yml                # Release: build, publish to GHCR, attach assets
-```
 
-### How it works
+The container runs a single process tree:
 
-1. **Xkasmvnc** starts an X server with an embedded web server and VNC protocol
-2. **XFCE** launches inside the X session via `dbus-run-session`
-3. **Your browser** connects to the KasmVNC web UI over HTTP on port 8443
-4. **QGIS** is available in the applications menu and via the panel launcher
+1. **`start-desktop.sh`** -- entrypoint that orchestrates startup
+2. **`Xkasmvnc`** -- X server + VNC + embedded web server (KasmVNC)
+3. **`dbus-run-session`** -- manages the D-Bus session bus
+4. **`startxfce4`** -- launches XFCE window manager, panel, desktop
+5. **QGIS** -- available in the applications menu and panel launcher
 
 KasmVNC is driven directly (the `Xkasmvnc` binary) rather than through the `kasmvncserver` Perl wrapper, eliminating a large Perl dependency tree.
 
@@ -174,26 +159,43 @@ KasmVNC is driven directly (the `Xkasmvnc` binary) rather than through the `kasm
 - [Nix](https://nixos.org/download) with flakes enabled
 - Docker
 
-### Build
+### Using Nix
 
 ```bash
 git clone https://github.com/kartoza/qgis-desktop-docker.git
 cd qgis-desktop-docker
 
-# Build the Docker image
-nix build .#docker
+# Build and load the Docker image
+nix run .#build-docker
 
-# Load into Docker
+# Or step by step
+nix build .#docker
 nix store cat $(nix build .#docker --print-out-paths) | docker load
 
 # Run
 docker run --rm -p 8443:8443 nix-xfce-kasm:latest
 ```
 
-### Build just the KasmVNC package
+### Using Make
 
 ```bash
-nix build .#kasmvnc
+make build-docker    # Build the image
+make run             # Run in foreground
+make run-detached    # Run in background
+make run-persistent  # Run with persistent home volume
+make stop            # Stop the container
+make summary         # Generate build summary
+make compose-up      # Start with docker-compose
+make compose-down    # Stop docker-compose
+```
+
+### Available `nix run` commands
+
+```bash
+nix run .#build-docker  # Build the Docker image
+nix run .#run           # Run the container
+nix run .#summary       # Generate build summary
+nix run                 # Show help
 ```
 
 ### Development shell
@@ -202,33 +204,61 @@ nix build .#kasmvnc
 nix develop
 ```
 
-### Generate build summary
+Provides docker, python3, syft, grype, jq, and other tools.
 
-```bash
-bash build-summary.sh nix-xfce-kasm:latest
+## Project Structure
+
+```
+flake.nix                    # Main flake: packages, Docker image, apps, dev shell
+kasmvnc.nix                  # KasmVNC package (v1.4.0 from Debian Bookworm deb)
+libcrypt-compat.nix          # libcrypt.so.1 compat lib from Debian
+start-desktop.sh             # Entrypoint: launches Xkasmvnc + XFCE
+config/                      # XFCE panel and desktop configuration
+docker-compose.yml           # Docker Compose example
+Makefile                     # Make targets for build/run/summary
+build-summary.sh             # Build summary generator
+scripts/
+  sbom_table.py              # SBOM JSON to markdown table
+  cve_table.py               # Grype CVE JSON to markdown table
+.github/workflows/
+  docker.yml                 # Unified PR + Release workflow
 ```
 
 ## CI/CD
 
-### Pull Requests
+A single GitHub Actions workflow (`.github/workflows/docker.yml`) handles both PRs and releases.
 
-Every PR triggers a build that:
-- Builds the Docker image with Nix
-- Uploads the image as a **7-day artifact**
-- Posts a **build summary comment** on the PR with versions and SBOM
+### On every Pull Request
 
-### Releases
+1. Builds the Docker image with Nix
+2. Generates an SBOM (SPDX JSON via anchore/sbom-action)
+3. Scans for CVEs (Grype via anchore/scan-action)
+4. Generates a build report with image stats, SBOM table, and CVE table
+5. Uploads image tarball, SBOM, and CVE scan as **7-day artifacts**
+6. Posts/updates a **PR comment** with the full build report
 
-Creating a GitHub release:
-- Builds the Docker image
-- Publishes to **GitHub Container Registry** (`ghcr.io/kartoza/qgis-desktop-docker`)
-- Attaches the image tarball, build summary, and SBOM to the release
-- Appends build details to the release notes
+### On every Release
 
-## Security Notes
+1. Builds the Docker image with Nix
+2. Generates SBOM and CVE scan
+3. Pushes to **GitHub Container Registry** (`ghcr.io/kartoza/qgis-desktop-docker`)
+4. Tags with both version and `latest`
+5. Appends build report to release notes
+6. Attaches image tarball, `sbom.spdx.json`, and `cve-scan.json` as release assets
+
+## Security & Transparency
+
+Every build generates:
+
+- **[SBOM](https://github.com/kartoza/qgis-desktop-docker/releases/latest)** (`sbom.spdx.json`) -- complete Software Bill of Materials in SPDX JSON format listing every package in the image
+- **[CVE Scan](https://github.com/kartoza/qgis-desktop-docker/releases/latest)** (`cve-scan.json`) -- Grype vulnerability scan results with severity ratings
+
+Both are attached to every release and available as artifacts on every PR build.
+
+### Authentication
 
 - **No authentication** is enabled by default (`-SecurityTypes None -disableBasicAuth`). This is intended for local development use.
-- For production or multi-user deployments, consider placing the container behind a reverse proxy with authentication (e.g., nginx + OAuth2 Proxy, Traefik + BasicAuth).
+- For production or multi-user deployments, place the container behind a reverse proxy with authentication (e.g., nginx + OAuth2 Proxy, Traefik + BasicAuth).
 - The container runs as a non-root user (`user`, UID 1000).
 
 ## License
