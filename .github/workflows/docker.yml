@@ -2,6 +2,8 @@ name: Docker
 
 on:
   pull_request:
+  push:
+    branches: [main]
   release:
     types: [published]
 
@@ -9,6 +11,7 @@ permissions:
   contents: write
   packages: write
   pull-requests: write
+  actions: read
 
 env:
   REGISTRY: ghcr.io
@@ -16,7 +19,11 @@ env:
   NIX_IMAGE: nix-xfce-kasm
 
 jobs:
+  # ==========================================================================
+  # BUILD: Full build + SBOM + CVE scan (runs on PR and push to main)
+  # ==========================================================================
   build:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -40,19 +47,14 @@ jobs:
       - name: Determine version tag
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo "tag=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=main-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Tag image with version
-        run: |
-          docker tag ${{ env.NIX_IMAGE }}:latest ${{ env.NIX_IMAGE }}:${{ steps.version.outputs.tag }}
-
       - name: Export image as tarball
-        run: |
-          docker save ${{ env.NIX_IMAGE }}:latest | gzip > ${{ env.NIX_IMAGE }}.tar.gz
+        run: docker save ${{ env.NIX_IMAGE }}:latest | gzip > ${{ env.NIX_IMAGE }}.tar.gz
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
@@ -71,12 +73,10 @@ jobs:
         run: python3 scripts/sbom_table.py sbom-syft.json > sbom-table.md
 
       - name: Install Grype
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
 
       - name: Scan for CVEs
-        run: |
-          grype sbom:sbom.spdx.json -o json > cve-scan.json 2>/dev/null || echo '{"matches":[]}' > cve-scan.json
+        run: grype sbom:sbom.spdx.json -o json > cve-scan.json 2>/dev/null || echo '{"matches":[]}' > cve-scan.json
 
       - name: Generate CVE table
         run: python3 scripts/cve_table.py cve-scan.json > cve-table.md
@@ -106,8 +106,8 @@ jobs:
           ### Quick Start
 
           \`\`\`bash
-          docker pull ${GHCR_IMAGE}:${VERSION}
-          docker run --rm -p 8443:8443 ${GHCR_IMAGE}:${VERSION}
+          docker pull ${GHCR_IMAGE}:latest
+          docker run --rm -p 8443:8443 ${GHCR_IMAGE}:latest
           # Open http://localhost:8443
           \`\`\`
 
@@ -116,7 +116,7 @@ jobs:
           \`\`\`yaml
           services:
             qgis-desktop:
-              image: ${GHCR_IMAGE}:${VERSION}
+              image: ${GHCR_IMAGE}:latest
               ports:
                 - "8443:8443"
               volumes:
@@ -135,16 +135,10 @@ jobs:
           $(cat cve-table.md)
           EOF
 
-          # Strip leading whitespace from heredoc
           sed -i 's/^          //' build-report.md
-
-          # Also write step summary
           cat build-report.md >> "$GITHUB_STEP_SUMMARY"
 
-      # --- PR-specific steps ---
-
-      - name: Upload image artifact (PR)
-        if: github.event_name == 'pull_request'
+      - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
           name: docker-image
@@ -152,8 +146,7 @@ jobs:
           retention-days: 7
           overwrite: true
 
-      - name: Upload SBOM artifact (PR)
-        if: github.event_name == 'pull_request'
+      - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: sbom
@@ -161,8 +154,7 @@ jobs:
           retention-days: 7
           overwrite: true
 
-      - name: Upload CVE scan artifact (PR)
-        if: github.event_name == 'pull_request'
+      - name: Upload CVE scan artifact
         uses: actions/upload-artifact@v4
         with:
           name: cve-scan
@@ -170,7 +162,16 @@ jobs:
           retention-days: 7
           overwrite: true
 
-      - name: Read build report for PR comment
+      - name: Upload build report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-report
+          path: build-report.md
+          retention-days: 7
+          overwrite: true
+
+      # --- PR comment ---
+      - name: Prepare PR comment
         if: github.event_name == 'pull_request'
         run: |
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -223,21 +224,171 @@ jobs:
           edit-mode: replace
           body: ${{ env.REPORT_BODY }}
 
-      # --- Release-specific steps ---
+  # ==========================================================================
+  # RELEASE: Tries to reuse artifacts from main build, falls back to full build
+  # ==========================================================================
+  release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Try to find existing build artifacts
+        id: find-artifacts
+        continue-on-error: true
+        run: |
+          # Find the most recent successful build on main for this commit
+          RUN_ID=$(gh run list \
+            --repo ${{ github.repository }} \
+            --workflow docker.yml \
+            --branch main \
+            --status success \
+            --limit 10 \
+            --json databaseId,headSha \
+            -q "[.[] | select(.headSha == \"${{ github.sha }}\")] | .[0].databaseId")
+
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No matching build found for SHA ${{ github.sha }}"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found build run: $RUN_ID"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- Reuse path: download existing artifacts ---
+      - name: Download cached image artifact
+        if: steps.find-artifacts.outputs.found == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          run-id: ${{ steps.find-artifacts.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download cached SBOM
+        if: steps.find-artifacts.outputs.found == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          run-id: ${{ steps.find-artifacts.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download cached CVE scan
+        if: steps.find-artifacts.outputs.found == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: cve-scan
+          run-id: ${{ steps.find-artifacts.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download cached build report
+        if: steps.find-artifacts.outputs.found == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: build-report
+          run-id: ${{ steps.find-artifacts.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- Fallback path: full build if no cached artifacts ---
+      - name: Install Nix (fallback)
+        if: steps.find-artifacts.outputs.found != 'true'
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build Docker image (fallback)
+        if: steps.find-artifacts.outputs.found != 'true'
+        run: |
+          nix build .#docker -o result
+          OUT=$(nix build .#docker --print-out-paths)
+          nix store cat "$OUT" | docker load
+          docker save ${{ env.NIX_IMAGE }}:latest | gzip > ${{ env.NIX_IMAGE }}.tar.gz
+
+      - name: Generate SBOM (fallback)
+        if: steps.find-artifacts.outputs.found != 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.NIX_IMAGE }}:latest
+          artifact-name: sbom.spdx.json
+          output-file: sbom.spdx.json
+          format: spdx-json
+
+      - name: Generate SBOM table (fallback)
+        if: steps.find-artifacts.outputs.found != 'true'
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          syft ${{ env.NIX_IMAGE }}:latest -o json > sbom-syft.json
+          python3 scripts/sbom_table.py sbom-syft.json > sbom-table.md
+
+      - name: CVE scan (fallback)
+        if: steps.find-artifacts.outputs.found != 'true'
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          grype sbom:sbom.spdx.json -o json > cve-scan.json 2>/dev/null || echo '{"matches":[]}' > cve-scan.json
+          python3 scripts/cve_table.py cve-scan.json > cve-table.md
+
+      - name: Generate build report (fallback)
+        if: steps.find-artifacts.outputs.found != 'true'
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_ID=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{.Id}}' | cut -c8-19)
+          IMAGE_SIZE=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B)
+          TARBALL_SIZE=$(stat --format=%s ${{ env.NIX_IMAGE }}.tar.gz | numfmt --to=iec-i --suffix=B)
+          LAYER_COUNT=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{len .RootFS.Layers}}')
+
+          cat > build-report.md <<EOF
+          ## Docker Image Build
+
+          | Property | Value |
+          |----------|-------|
+          | Registry | \`${GHCR_IMAGE}\` |
+          | Tag | \`${VERSION}\` |
+          | Image ID | \`${IMAGE_ID}\` |
+          | Image Size | ${IMAGE_SIZE} |
+          | Tarball Size | ${TARBALL_SIZE} |
+          | Layers | ${LAYER_COUNT} |
+          | Port | 8443 |
+
+          ### Quick Start
+
+          \`\`\`bash
+          docker pull ${GHCR_IMAGE}:${VERSION}
+          docker run --rm -p 8443:8443 ${GHCR_IMAGE}:${VERSION}
+          # Open http://localhost:8443
+          \`\`\`
+
+          ### SBOM
+
+          $(cat sbom-table.md)
+
+          ### CVE Scan
+
+          $(cat cve-table.md)
+          EOF
+
+          sed -i 's/^          //' build-report.md
+
+      # --- Common release steps ---
+      - name: Load Docker image
+        run: docker load < ${{ env.NIX_IMAGE }}.tar.gz
 
       - name: Log in to GHCR
-        if: github.event_name == 'release'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push to GHCR
-        if: github.event_name == 'release'
+      - name: Tag and push to GHCR
         run: |
           GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-          VERSION="${{ steps.version.outputs.tag }}"
+          VERSION="${{ github.event.release.tag_name }}"
 
           docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:${VERSION}"
           docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:latest"
@@ -245,7 +396,6 @@ jobs:
           docker push "${GHCR_IMAGE}:latest"
 
       - name: Set package visibility to public
-        if: github.event_name == 'release'
         continue-on-error: true
         run: |
           PKG_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
@@ -256,8 +406,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Append build report to release
-        if: github.event_name == 'release'
+      - name: Update build report with release tag
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          sed -i "s|Tag | \`pr-[^\`]*\`|Tag | \`${VERSION}\`|g" build-report.md || true
+          sed -i "s|Tag | \`main-[^\`]*\`|Tag | \`${VERSION}\`|g" build-report.md || true
+
+      - name: Append build report to release and attach assets
         uses: softprops/action-gh-release@v2
         with:
           append_body: true
