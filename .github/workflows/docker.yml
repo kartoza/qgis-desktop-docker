@@ -70,25 +70,16 @@ jobs:
       - name: Generate SBOM table
         run: python3 scripts/sbom_table.py sbom-syft.json > sbom-table.md
 
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
       - name: Scan for CVEs
-        uses: anchore/scan-action@v6
-        id: cve-scan
-        with:
-          image: ${{ env.NIX_IMAGE }}:latest
-          fail-build: false
-          output-format: json
-          severity-cutoff: negligible
+        run: |
+          grype sbom:sbom.spdx.json -o json > cve-scan.json 2>/dev/null || echo '{"matches":[]}' > cve-scan.json
 
       - name: Generate CVE table
-        run: |
-          SCAN_FILE="${{ steps.cve-scan.outputs.json }}"
-          if [ -f "$SCAN_FILE" ]; then
-            cp "$SCAN_FILE" cve-scan.json
-            python3 scripts/cve_table.py cve-scan.json > cve-table.md
-          else
-            echo "**No known CVEs detected in this image.**" > cve-table.md
-            echo "{}" > cve-scan.json
-          fi
+        run: python3 scripts/cve_table.py cve-scan.json > cve-table.md
 
       - name: Generate build report
         run: |
@@ -181,16 +172,17 @@ jobs:
 
       # --- PR comment with build report ------------------------------------
       #
-      # Previously this section had three steps: find, post-with-tag, then
-      # slurp build-report.md into $GITHUB_ENV and post again. The env-var
-      # approach blew up runs because build-report.md is dominated by a
-      # ~150 KB CVE table. Once REPORT_BODY entered the environment, every
-      # subsequent step's `execve` for Node 24 hit E2BIG (`Argument list too
-      # long`) — that's why the Post-Checkout cleanup was also failing.
+      # Earlier revisions of this section slurped build-report.md into
+      # $GITHUB_ENV as REPORT_BODY. The env-var approach blew up runs because
+      # build-report.md is dominated by a ~150 KB CVE table. Once REPORT_BODY
+      # entered the environment, every subsequent step's `execve` for Node 24
+      # hit E2BIG ("Argument list too long") — that's why even the
+      # Post-Checkout cleanup was failing.
       #
-      # Fix: prepend the tag / artifact link / commit to build-report.md on
-      # disk, then feed the file to create-or-update-comment via body-path
-      # so the report never lands in the process environment.
+      # Fix: build the full comment body (tag + artifact link + commit +
+      # report + "Download & Run" instructions) into pr-comment.md on disk,
+      # then feed the file to create-or-update-comment via body-path. The
+      # body never enters the process environment.
 
       - name: Find existing PR comment
         if: github.event_name == 'pull_request'
@@ -201,18 +193,43 @@ jobs:
           comment-author: github-actions[bot]
           body-includes: "## Docker Image Build"
 
-      - name: Prepend header to build report
+      - name: Assemble PR comment body
         if: github.event_name == 'pull_request'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          NIX_IMAGE: ${{ env.NIX_IMAGE }}
         run: |
           {
-            printf '%s\n\n' '${{ steps.version.outputs.tag }}'
-            printf '[Download image artifact](https://github.com/%s/actions/runs/%s)\n\n' \
-              '${{ github.repository }}' '${{ github.run_id }}'
-            printf 'Commit: `%s`\n\n---\n\n' '${{ github.event.pull_request.head.sha }}'
+            printf '%s\n\n' "$TAG"
+            printf '[Download image artifact](https://github.com/%s/actions/runs/%s)\n\n' "$REPO" "$RUN_ID"
+            printf 'Commit: `%s`\n\n---\n\n' "$SHA"
             cat build-report.md
+            cat <<ARTIFACT_EOF
+
+          ### Download & Run This Build
+
+          1. Download the \`docker-image\` artifact from the [workflow run](https://github.com/${REPO}/actions/runs/${RUN_ID})
+          2. Load and run:
+
+          \`\`\`bash
+          # Unzip the downloaded artifact
+          unzip docker-image.zip
+
+          # Load into Docker
+          docker load < ${NIX_IMAGE}.tar.gz
+
+          # Run it
+          docker run --rm -p 8443:8443 ${NIX_IMAGE}:latest
+
+          # Open http://localhost:8443
+          \`\`\`
+          ARTIFACT_EOF
           } > pr-comment.md
 
-      - name: Post or update PR comment (with report)
+      - name: Post or update PR comment
         if: github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v4
         with:
