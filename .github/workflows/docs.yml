@@ -1,22 +1,31 @@
 # SPDX-FileCopyrightText: Kartoza
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Build the mkdocs site and publish it to GitHub Pages.
-#
-# Triggers:
-#   * Every release (publish + prerelease) — the "canonical" publish.
-#   * Every push to main touching docs/, mkdocs.yml, or this workflow — so
-#     changes land on Pages between releases too.
-#   * Manual dispatch — useful when re-publishing after a Pages settings change.
+# Docs pipeline:
+#   * Build the Kartoza-branded PDF (`nix run .#docs-pdf`) on every push,
+#     PR, and release. Upload it as a short-lived artifact for pushes / PRs
+#     (7 days) and attach it as a long-lived asset on release publish.
+#   * Build the mkdocs site (`nix run .#docs-build`) and publish it to
+#     GitHub Pages on release-published, on push to main (paths-scoped),
+#     and on manual dispatch.
 #
 # GH Pages must be set to "Deploy from GitHub Actions" in the repo settings
-# (Settings → Pages → Build and deployment → Source).
+# (Settings -> Pages -> Build and deployment -> Source).
 
 name: docs
 
 on:
   release:
     types: [published]
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+      - "flake.nix"
+      - "flake.lock"
+      - "start-desktop.sh"
+      - "entrypoint.sh"
   push:
     branches: [main]
     paths:
@@ -31,25 +40,104 @@ on:
 # rapid succession of pushes doesn't stack up in the queue, but we don't
 # cancel in-progress deploys (Pages doesn't like being interrupted mid-upload).
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
-# Least-privilege token scope for the Pages deploy action.
+# Least-privilege token scope. contents:write is needed only in the release
+# path to upload the PDF as a release asset; other jobs use contents:read.
 permissions:
   contents: read
   pages: write
   id-token: write
 
 jobs:
-  build:
-    name: Build mkdocs site
+  # ---------------------------------------------------------------------------
+  # PDF build. Runs on every trigger. Uploads as an artifact so the URL is
+  # linkable from PRs and workflow-run pages.
+  # ---------------------------------------------------------------------------
+  pdf:
+    name: Build documentation PDF
     runs-on: ubuntu-latest
+    outputs:
+      pdf-name: ${{ steps.name.outputs.name }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
         with:
           # git-revision-date-localized-plugin reads history to compute the
           # per-page "last modified" timestamps.
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Compute PDF filename
+        id: name
+        run: |
+          case "${{ github.event_name }}" in
+            release)      tag="${{ github.event.release.tag_name }}" ;;
+            pull_request) tag="pr-${{ github.event.pull_request.number }}" ;;
+            *)            tag="$(git rev-parse --short HEAD)" ;;
+          esac
+          echo "name=qgis-desktop-docker-docs-${tag}.pdf" >> "$GITHUB_OUTPUT"
+
+      - name: Build PDF (nix run .#docs-pdf)
+        run: nix run .#docs-pdf -- "${{ steps.name.outputs.name }}"
+
+      - name: Upload PDF as short-lived artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.name }}
+          path: ${{ steps.name.outputs.name }}
+          # 7 days for PR / push builds. Release attachment (see `release-pdf`
+          # job) supersedes this with a permanent copy on the release page.
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # On a released tag, attach the PDF to the release page as a long-lived
+  # asset. gh CLI is preinstalled on ubuntu-latest runners.
+  # ---------------------------------------------------------------------------
+  release-pdf:
+    name: Attach PDF to release
+    needs: pdf
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download PDF artifact from the pdf job
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.pdf.outputs.pdf-name }}
+          path: ./pdf
+
+      - name: Upload PDF to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "./pdf/${{ needs.pdf.outputs.pdf-name }}" \
+            --clobber
+
+  # ---------------------------------------------------------------------------
+  # mkdocs site build. Runs on release, push-to-main, and manual dispatch;
+  # skipped on pull_request (no Pages preview here).
+  # ---------------------------------------------------------------------------
+  site:
+    name: Build mkdocs site
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
           fetch-depth: 0
 
       - name: Install Nix
@@ -69,7 +157,8 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    needs: build
+    needs: site
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

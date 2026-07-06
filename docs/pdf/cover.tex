@@ -1,52 +1,51 @@
-% Kartoza-branded titlepage.
-\begin{titlepage}
-  \pagecolor{textdefault}
+% Kartoza-branded cover page (brand pack v1.0.1).
+% Uses \thispagestyle{empty} + a manual layout instead of \begin{titlepage}
+% because the latter can conflict with pandoc's L3-based shipout injection.
+\begingroup
+\thispagestyle{empty}
+\pagecolor{textdefault}
+\color{surfacewhite}
+
+\vspace*{2cm}
+
+\begin{center}
+  % The reversed vertical logo — works on the charcoal cover background.
+  % The build script (see docs-pdf app in flake.nix) copies the file into
+  % pandoc's working directory as cover-logo.png.
+  \includegraphics[width=0.34\textwidth]{cover-logo.png}
+
+  \vspace{2cm}
+
+  \color{kartozaamber}\rule{0.55\textwidth}{2pt}
+
+  \vspace{1.5cm}
+
   \color{surfacewhite}
-  \thispagestyle{empty}
+  {\fontsize{30}{36}\selectfont\bfseries QGIS Desktop Docker}
 
-  \vspace*{2.5cm}
+  \vspace{0.5cm}
 
-  \begin{center}
-    % Decorative geometric marker in the Kartoza palette.
-    \begin{tikzpicture}
-      \fill[kartozablue]  (0,0)   rectangle (1.4,1.4);
-      \fill[kartozaamber] (1.55,0) rectangle (2.95,1.4);
-      \fill[surfacewhite] (3.1,0)  rectangle (4.5,1.4);
-    \end{tikzpicture}
+  {\LARGE Documentation}
 
-    \vspace{2cm}
+  \vspace{2cm}
 
-    {\fontsize{50}{60}\selectfont\bfseries\sffamily KARTOZA}
+  {\Large\color{kartozablue}\itshape
+   Putting spatial decision-making tools\\
+   in the hands of everyone.}
 
-    \vspace{0.3cm}
-    {\Large\sffamily\color{kartozablue} geospatial engineering}
+  \vfill
 
-    \vspace{3cm}
+  \color{kartozablue}
+  \small
+  {\bfseries Made with love by Kartoza}\\
+  \vspace{0.3cm}
+  kartoza.com\\
+  github.com/kartoza/qgis-desktop-docker\\
+  \vspace{0.5cm}
+  \color{kartozagrey}\today
+\end{center}
 
-    \color{kartozaamber}\rule{0.55\textwidth}{2pt}
-
-    \vspace{1.5cm}
-
-    \color{surfacewhite}
-    {\fontsize{30}{36}\selectfont\bfseries\sffamily QGIS Desktop Docker}
-
-    \vspace{0.5cm}
-
-    {\LARGE\sffamily Documentation}
-
-    \vfill
-
-    \color{kartozablue}
-    \small\sffamily
-    {\bfseries Made with love by Kartoza}\\
-    \vspace{0.3cm}
-    kartoza.com\\
-    github.com/kartoza/qgis-desktop-docker\\
-    \vspace{0.5cm}
-    \color{kartozagrey}\today
-  \end{center}
-\end{titlepage}
-
-% Reset page background for content pages.
+\newpage
 \nopagecolor
-\clearpage
+\color{textdefault}
+\endgroup

@@ -1,5 +1,12 @@
 # About
 
+![Kartoza](../assets/brand/kartoza-logo-horizontal-color.png){: style="max-width:280px; margin-bottom:1.2em;" }
+
+!!! quote ""
+    *Putting spatial decision-making tools in the hands of everyone.*
+
+    — Kartoza
+
 QGIS Desktop Docker is a small project with one goal: let anyone run QGIS
 from a browser tab, without installing QGIS on their machine and without
 handing over shell access to a server.

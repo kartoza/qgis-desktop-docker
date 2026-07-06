@@ -1,3 +1,11 @@
+% Kartoza brand pack v1.0.1: Lato for prose, inconsolata for code.
+% Lato is loaded via pandoc's `-V fontfamily=lato -V fontfamilyoptions=default`
+% (see docs-pdf app in flake.nix). The `default` option makes Lato the
+% document-wide default — no \familydefault renewcommand needed. We use
+% inconsolata as the monospace face because no JetBrains Mono pdftex package
+% exists in TeX Live and inconsolata is a clean brand-adjacent match.
+\usepackage{inconsolata}
+
 % Kartoza brand palette — same tokens as docs/stylesheets/kartoza-tokens.css.
 \usepackage{xcolor}
 \definecolor{kartozablue}{HTML}{54A2CC}
@@ -43,8 +51,13 @@
 \AtBeginDocument{\color{textdefault}}
 
 % Nicer code blocks with a Kartoza-blue left rule.
+% CRITICAL: commandchars=\\\{\} must be present so pandoc's syntax-highlight
+% macros (\ExtensionTok, \NormalTok, \AttributeTok, …) are interpreted rather
+% than printed as text. Pandoc's own template sets this; we lose it by
+% overriding the environment, so we have to re-add it here.
 \usepackage{fvextra}
 \DefineVerbatimEnvironment{Highlighting}{Verbatim}{
+  commandchars=\\\{\},
   breaklines,
   breakanywhere,
   fontsize=\small,

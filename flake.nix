@@ -276,11 +276,10 @@ EOF
           pymdown-extensions
         ]);
 
-        # TeX Live subset for the PDF builder. scheme-medium is the base;
-        # everything below is either what preamble.tex uses (titlesec, sectsty,
-        # fvextra, …) or what pandoc's default LaTeX writer requires (upquote,
-        # parskip, microtype, xurl, tcolorbox, …). Grouped rather than
-        # scheme-full to keep the closure a manageable ~500 MB instead of ~5 GB.
+        # TeX Live for the PDF builder. scheme-medium gives us pandoc's
+        # writer requirements + fontspec etc.; the extras are what our
+        # preamble/cover pulls in on top of that. Kept as a `combine` (not
+        # scheme-full) so the closure stays at ~500 MB.
         pdfLatex = pkgs.texlive.combine {
           inherit (pkgs.texlive)
             scheme-medium
@@ -291,13 +290,22 @@ EOF
             upquote microtype parskip xurl bookmark hyperref
             xkeyval etoolbox pdftexcmds infwarerr kvoptions ltxcmds
             fontawesome5 sourcecodepro sourcesanspro sourceserifpro
+            # Kartoza brand-pack body font (Lato) + its transitive deps.
+            lato inconsolata fontaxes mweights
             ;
         };
 
         # Fontconfig needs a config file + font directories at runtime so
-        # xelatex can resolve mainfont / sansfont / monofont via fontspec.
+        # lualatex can resolve mainfont / sansfont / monofont via fontspec.
+        # Lato + JetBrains Mono are the Kartoza brand-pack fonts (v1.0.1);
+        # DejaVu + Liberation are fallbacks for glyphs those two don't cover.
         pdfFontsConf = pkgs.makeFontsConf {
-          fontDirectories = [ pkgs.dejavu_fonts pkgs.liberation_ttf ];
+          fontDirectories = [
+            pkgs.lato
+            pkgs.jetbrains-mono
+            pkgs.dejavu_fonts
+            pkgs.liberation_ttf
+          ];
         };
 
         # Helper for docs-related apps that need the mkdocs Python env.
@@ -531,10 +539,14 @@ EOF
             echo "Built site into ./site/"
           '';
 
-          # Assemble the docs into a Kartoza-branded PDF via pandoc + xelatex.
+          # Assemble the docs into a Kartoza-branded PDF via pandoc + lualatex.
           # SVG diagrams are pre-rendered to PDF with rsvg-convert so they stay
           # vector in the output. Result written to ./qgis-desktop-docker.pdf
           # (or the first CLI arg).
+          # We use lualatex rather than xelatex because xetex's internal
+          # xdvipdfmx invocation goes through /bin/sh (via C system(3)), which
+          # doesn't exist on non-FHS distros like NixOS. lualatex writes PDF
+          # directly, no /bin/sh needed.
           docs-pdf = mkDocsApp "docs-pdf" (with pkgs; [
             pandoc
             pdfLatex
@@ -546,8 +558,17 @@ EOF
             findutils
             gawk
             coreutils
+            glibcLocales
           ]) ''
             export FONTCONFIG_FILE=${pdfFontsConf}
+            # lualatex refuses to start with "Unable to read locale data" if
+            # the locale is unset (which it is in a bare `nix run` env).
+            export LOCALE_ARCHIVE=${pkgs.glibcLocales}/lib/locale/locale-archive
+            export LC_ALL=C.UTF-8
+            export LANG=C.UTF-8
+            # luaotfload caches its font database in $TEXMFCACHE. If unset it
+            # tries ~/.texlive2025/texmf-var/luatex-cache which doesn't exist,
+            # then fails silently and fontspec reports the font as missing.
             OUT="''${1:-qgis-desktop-docker.pdf}"
             case "$OUT" in
               /*) OUT_ABS="$OUT" ;;
@@ -555,7 +576,30 @@ EOF
             esac
 
             WORK=$(mktemp -d -t qgis-docs-pdf.XXXXXX)
-            trap 'rm -rf "$WORK"' EXIT
+            # Preserve WORK on failure so the tex log survives for debugging.
+            # Written as a function so shellcheck can see rc's assignment
+            # (it can't follow $? inside a quoted trap string).
+            _docs_pdf_cleanup() {
+              rc=$?
+              if [ "$rc" -eq 0 ]; then
+                rm -rf "$WORK"
+              else
+                echo "docs-pdf failed; kept work dir at: $WORK"
+              fi
+              exit "$rc"
+            }
+            trap _docs_pdf_cleanup EXIT
+
+            # Writable dirs for luaotfload font-cache and TeX aux files.
+            # luaotfload writes to $LUAOTFLOAD_CACHE_DIR (if set) or looks up
+            # $TEXMFCACHE. In both cases it wants to actually CREATE the dir
+            # tree; a bare $TEXMFCACHE is refused with "no writeable cache
+            # path, quiting". Point it at a place we know is writable.
+            export TEXMFCACHE="$WORK/tex-cache"
+            export TEXMFVAR="$WORK/tex-var"
+            export LUAOTFLOAD_CACHE_DIR="$WORK/tex-cache/luaotfload"
+            export HOME="$WORK"
+            mkdir -p "$TEXMFCACHE" "$TEXMFVAR" "$LUAOTFLOAD_CACHE_DIR"
 
             echo "Assembling PDF at $OUT_ABS"
 
@@ -609,30 +653,50 @@ META
                 chapter=$((chapter + 1))
                 [ "$chapter" -gt 1 ] && printf '\n\n\\newpage\n\n'
                 # Rewrite SVG references in the analyst scenario to point at
-                # the pre-rendered PDFs. All other pages are copied through.
+                # the pre-rendered PDFs, transform admonitions to bold labels,
+                # and knock out the odd Unicode glyph (pdflatex doesn't take
+                # arbitrary UTF-8 without inputenc utf8x which we don't ship).
                 sed \
                   -e 's|diagrams/\([a-z-]*\)\.svg|'"$WORK/diagrams/"'\1.pdf|g' \
                   -e 's|!!! note|**Note:**|g' \
                   -e 's|!!! tip|**Tip:**|g' \
                   -e 's|!!! warning|**Warning:**|g' \
                   -e 's|!!! danger|**Danger:**|g' \
+                  -e 's|!!! quote ""||g' \
+                  -e 's|⚠|WARNING:|g' \
+                  -e 's|▶|>|g' \
+                  -e 's|✗|X|g' \
+                  -e 's|↳| ->|g' \
+                  -e 's|→| -> |g' \
+                  -e 's|─|-|g' \
+                  -e 's|│| |g' \
+                  -e 's|└|`|g' \
+                  -e 's|├||g' \
+                  -e 's|…|...|g' \
+                  -e 's|§|Section |g' \
+                  -e 's|—|--|g' \
                   "$page"
               done
             } > "$WORK/combined.md"
 
-            # Copy templates.
+            # Copy templates + the reversed vertical logo used by the cover.
             cp ${./docs/pdf/preamble.tex} "$WORK/preamble.tex"
             cp ${./docs/pdf/cover.tex}    "$WORK/cover.tex"
+            cp ${./docs/assets/brand/kartoza-logo-vertical-reversed.png} \
+               "$WORK/cover-logo.png"
 
+            mkdir -p "$WORK/texout"
             cd "$WORK"
             pandoc combined.md \
-              --pdf-engine=xelatex \
+              --pdf-engine=pdflatex \
+              --pdf-engine-opt=-interaction=nonstopmode \
+              --pdf-engine-opt=-output-directory="$WORK/texout" \
+              --resource-path=".:$DOCS_DIR:$DOCS_DIR/about:$DOCS_DIR/scenarios" \
               --include-in-header=preamble.tex \
               --include-before-body=cover.tex \
               --toc --toc-depth=2 \
-              -V mainfont="DejaVu Serif" \
-              -V sansfont="DejaVu Sans" \
-              -V monofont="DejaVu Sans Mono" \
+              -V fontfamily=lato \
+              -V fontfamilyoptions=default \
               -V geometry:margin=2.5cm \
               -V colorlinks=true \
               -V linkcolor=kartozablue \

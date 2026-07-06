@@ -4,6 +4,8 @@ PROMPT.log
 .claude
 git.sh
 git.out
+claude.sh
+claude.out
 screenshots_gitignored/
 build-summary.md
 sbom.txt

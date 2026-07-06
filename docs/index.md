@@ -1,5 +1,8 @@
 # QGIS Desktop Docker
 
+!!! quote ""
+    *Putting spatial decision-making tools in the hands of everyone.*
+
 A fully reproducible, Nix-built Docker image that runs QGIS inside a minimal
 XFCE desktop, reachable from any web browser via KasmVNC — no VNC client, no
 local install, no shell access.

@@ -24,7 +24,8 @@ theme:
   logo: assets/brand/kartoza-symbol-color.svg
   favicon: assets/brand/favicon.png
   font:
-    text: Nunito
+    # Kartoza brand pack v1.0.1 — Lato for prose, JetBrains Mono for code.
+    text: Lato
     code: JetBrains Mono
   language: en
   palette:
