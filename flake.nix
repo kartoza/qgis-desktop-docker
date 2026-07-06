@@ -276,6 +276,30 @@ EOF
           pymdown-extensions
         ]);
 
+        # TeX Live subset for the PDF builder. scheme-medium is the base;
+        # everything below is either what preamble.tex uses (titlesec, sectsty,
+        # fvextra, …) or what pandoc's default LaTeX writer requires (upquote,
+        # parskip, microtype, xurl, tcolorbox, …). Grouped rather than
+        # scheme-full to keep the closure a manageable ~500 MB instead of ~5 GB.
+        pdfLatex = pkgs.texlive.combine {
+          inherit (pkgs.texlive)
+            scheme-medium
+            # preamble.tex
+            titlesec sectsty fancyhdr fvextra soul booktabs enumitem
+            xcolor pgf fontspec unicode-math selnolig
+            # pandoc's default LaTeX writer requirements
+            upquote microtype parskip xurl bookmark hyperref
+            xkeyval etoolbox pdftexcmds infwarerr kvoptions ltxcmds
+            fontawesome5 sourcecodepro sourcesanspro sourceserifpro
+            ;
+        };
+
+        # Fontconfig needs a config file + font directories at runtime so
+        # xelatex can resolve mainfont / sansfont / monofont via fontspec.
+        pdfFontsConf = pkgs.makeFontsConf {
+          fontDirectories = [ pkgs.dejavu_fonts pkgs.liberation_ttf ];
+        };
+
         # Helper for docs-related apps that need the mkdocs Python env.
         mkDocsApp = name: extraInputs: script: {
           type = "app";
@@ -513,14 +537,17 @@ EOF
           # (or the first CLI arg).
           docs-pdf = mkDocsApp "docs-pdf" (with pkgs; [
             pandoc
-            texlive.combined.scheme-medium
-            librsvg
+            pdfLatex
+            fontconfig
             dejavu_fonts
+            liberation_ttf
+            librsvg
             gnused
             findutils
             gawk
             coreutils
           ]) ''
+            export FONTCONFIG_FILE=${pdfFontsConf}
             OUT="''${1:-qgis-desktop-docker.pdf}"
             case "$OUT" in
               /*) OUT_ABS="$OUT" ;;
