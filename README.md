@@ -117,11 +117,137 @@ volumes:
 | `VNC_PW` | `password` | VNC password (basic auth is disabled by default) |
 | `DISPLAY` | `:1` | X display number |
 
+## Kasm permission controls
+
+The container ships with KasmVNC's data-loss-prevention knobs wired to environment
+variables. Defaults are **restrictive** — clipboard sharing is disabled in both
+directions until you explicitly enable it. Boolean values accept
+`1`, `yes`, `true`, `on`, or `enabled`; anything else counts as off.
+
+| Variable | Default | Xkasmvnc flag | Effect |
+|----------|---------|---------------|--------|
+| `KASM_ALLOW_CLIPBOARD_IN` | `0` | `-AcceptCutText` | Allow pasting from local machine into the container |
+| `KASM_ALLOW_CLIPBOARD_OUT` | `0` | `-SendCutText` | Allow copying from the container out to the local machine |
+| `KASM_ALLOW_PRIMARY_SELECTION` | `0` | `-SendPrimary` | Share X primary selection (middle-click paste) |
+| `KASM_CLIPBOARD_IN_MAX` | `0` | `-DLP_ClipAcceptMax` | Max bytes accepted per paste; `0` = unlimited |
+| `KASM_CLIPBOARD_OUT_MAX` | `0` | `-DLP_ClipSendMax` | Max bytes sent per copy; `0` = unlimited |
+| `KASM_CLIPBOARD_DELAY_MS` | `0` | `-DLP_ClipDelay` | Minimum ms between clipboard operations (anti-spam) |
+| `KASM_CLIPBOARD_MIME_TYPES` | *(kasm default)* | `-DLP_ClipTypes` | Comma-separated MIME allowlist, e.g. `text/plain,text/html` |
+| `KASM_WATERMARK_TEXT` | *(none)* | `-DLP_WatermarkText` | Overlay text on the desktop as a screenshot deterrent. `${USER}` / `$USER` is expanded by `start-desktop.sh` to the first `KASM_USERS` entry (or `VNC_USER`). strftime tokens (`%H:%M` etc.) are expanded by KasmVNC at render time. Stick to ASCII — the default watermark font lacks glyphs like em dash (U+2014). |
+| `KASM_DLP_LOG` | `off` | `-DLP_Log` | `off`, `info`, or `verbose`. **`verbose` logs KEYSTROKES AND CLIPBOARD CONTENT to the server log** |
+
+### Examples
+
+Block copy/paste both directions, watermark the desktop:
+
+```bash
+docker run --rm -p 8443:8443 \
+  -e KASM_WATERMARK_TEXT='${USER} %H:%M' \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+Allow paste in but block copy out (a common data-exfil control), with a 4 KB cap:
+
+```bash
+docker run --rm -p 8443:8443 \
+  -e KASM_ALLOW_CLIPBOARD_IN=1 \
+  -e KASM_CLIPBOARD_IN_MAX=4096 \
+  -e KASM_CLIPBOARD_MIME_TYPES=text/plain \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+Fully permissive (matches the KasmVNC upstream default posture):
+
+```bash
+docker run --rm -p 8443:8443 \
+  -e KASM_ALLOW_CLIPBOARD_IN=1 \
+  -e KASM_ALLOW_CLIPBOARD_OUT=1 \
+  -e KASM_ALLOW_PRIMARY_SELECTION=1 \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+### File transfer
+
+KasmVNC 1.4.0 **standalone** does not expose a runtime toggle for the file
+upload/download feature — that lives in the (commercial) Kasm Workspaces
+platform. If you need to block file transfer, put the container behind a
+reverse proxy and drop the upload/download endpoints there, or drop the
+container's outbound network with `--network none`.
+
+## Egress network lockdown
+
+The container ships with an **egress firewall enabled by default**. On startup
+a root entrypoint installs nftables rules that allow only:
+
+- loopback traffic,
+- return traffic for connections the container initiated (`ct state established,related`),
+- DNS to Docker's embedded resolver (`127.0.0.11`) and any nameserver in `/etc/resolv.conf`,
+- the hosts you name in `KASM_EGRESS_ALLOW`.
+
+Everything else outbound is dropped. Once the rules are installed, the
+entrypoint drops all inheritable/ambient capabilities and switches to UID
+1000, so the desktop process can neither modify nor observe the firewall.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KASM_EGRESS_LOCKDOWN` | `1` | `0` disables the filter entirely (**dev only**) |
+| `KASM_EGRESS_ALLOW` | *(empty)* | Comma-separated allowlist: IPv4 addresses, CIDRs, and/or hostnames (resolved once at startup) |
+
+### Required capability
+
+The container needs `NET_ADMIN` so the entrypoint can call `nft`. Add it on
+`docker run` or in compose:
+
+```bash
+docker run --cap-add=NET_ADMIN -p 8443:8443 ...
+```
+
+```yaml
+services:
+  qgis-desktop:
+    cap_add:
+      - NET_ADMIN
+```
+
+If `NET_ADMIN` is missing and `KASM_EGRESS_LOCKDOWN=1` (the default) the
+container **fails closed** — it prints a diagnostic and exits. Set
+`KASM_EGRESS_LOCKDOWN=0` to opt out.
+
+### Example: only the postgres database reachable
+
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e KASM_EGRESS_ALLOW='db.internal,10.0.0.0/24' \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+Inside the desktop, `psql -h db.internal ...` works; `curl https://example.com`
+hangs and times out.
+
+### Caveats
+
+- Hostnames are resolved **once** at container start. If the target's IP
+  changes (typical for cloud-managed databases), restart the container.
+- Only IPv4 is filtered by default. If you use IPv6, add rules to
+  `entrypoint.sh` or block IPv6 with `--sysctl net.ipv6.conf.all.disable_ipv6=1`.
+- The filter runs inside the container's network namespace, so it does not
+  restrict traffic between multiple containers on a shared Docker network
+  unless each container has its own filter.
+
 ## Endpoints
 
 | URL | Description |
 |-----|-------------|
 | `http://localhost:8443` | KasmVNC web client (full desktop) |
+
+## Scenarios
+
+Worked-example deployments combining several of the knobs above:
+
+- **[Analyst locked-down session](docs/scenarios/analyst-locked-down.md)** —
+  single user `bob`, clipboard blocked in both directions, egress restricted
+  to a co-located `kartoza/postgis` container. Includes UML diagrams and a
+  ready-to-run `docker-compose.yml`. Try it with `nix run .#run-analyst-scenario`.
 
 ## Architecture
 
@@ -257,9 +383,63 @@ Both are attached to every release and available as artifacts on every PR build.
 
 ### Authentication
 
-- **No authentication** is enabled by default (`-SecurityTypes None -disableBasicAuth`). This is intended for local development use.
-- For production or multi-user deployments, place the container behind a reverse proxy with authentication (e.g., nginx + OAuth2 Proxy, Traefik + BasicAuth).
-- The container runs as a non-root user (`user`, UID 1000).
+HTTP Basic Auth is **enabled by default** on the web endpoint. When a browser
+connects to `:8443` Xkasmvnc replies `401 WWW-Authenticate: Basic` and the
+browser shows its native user/password prompt. Credentials are reused
+transparently for the VNC handshake, so users only see one prompt.
+
+Credentials are resolved in this order (first wins):
+
+1. `KASM_USERS_FILE` — path to a file containing `user:password` per line;
+   default `/etc/kasmvnc/users`. Lines starting with `#` and blank lines are
+   ignored. Mount the file into the container, ideally with mode `0600`.
+2. `KASM_USERS` — inline list, e.g. `alice:pw1,bob:pw2`. Comma or newline
+   separated. Passwords may contain colons; only the first `:` on the line
+   is treated as the separator.
+3. Legacy `VNC_USER` / `VNC_PW` — single user, kept for backwards compatibility.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KASM_AUTH` | `1` | `0` disables auth entirely (`-DisableBasicAuth`, `-SecurityTypes None`). **Dev only.** |
+| `KASM_USERS_FILE` | `/etc/kasmvnc/users` | Bind-mount target for a `user:password` file |
+| `KASM_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list |
+
+**Multi-user via file:**
+
+```bash
+cat > users <<'EOF'
+# QGIS desktop users — file mode should be 0600
+alice:hunter2
+bob:correct-horse-battery-staple
+EOF
+chmod 600 users
+docker run --rm -p 8443:8443 \
+  -v "$PWD/users:/etc/kasmvnc/users:ro" \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+**Multi-user via env:**
+
+```bash
+docker run --rm -p 8443:8443 \
+  -e KASM_USERS='alice:pw1,bob:pw2' \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+**Disable auth for local dev only:**
+
+```bash
+docker run --rm -p 8443:8443 -e KASM_AUTH=0 \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+Notes:
+
+- The browser HTTP Basic Auth prompt is unstyled (native browser dialog). If you
+  need a branded login page, front the container with a reverse proxy
+  (nginx + OAuth2 Proxy, Traefik + BasicAuth, Caddy + `basic_auth`, etc.) and
+  disable Kasm auth with `KASM_AUTH=0`.
+- Container runs as non-root (`user`, UID 1000).
 
 ## License
 

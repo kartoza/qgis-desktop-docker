@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 540"
+     font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arr-k" viewBox="0 0 10 10" refX="10" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/>
+    </marker>
+    <marker id="arr-g" viewBox="0 0 10 10" refX="10" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arr-r" viewBox="0 0 10 10" refX="10" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <text x="460" y="28" text-anchor="middle" font-size="16" font-weight="600" fill="#0f172a">
+    Deployment — Analyst Locked-Down Scenario
+  </text>
+  <text x="460" y="48" text-anchor="middle" fill="#64748b" font-size="12">
+    bob is confined to a KasmVNC session that can reach only the co-located Postgres/PostGIS container.
+  </text>
+
+  <!-- Analyst laptop -->
+  <rect x="30" y="200" width="200" height="140" rx="8"
+        fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+  <text x="130" y="228" text-anchor="middle" font-weight="600" fill="#0f172a">
+    Analyst laptop
+  </text>
+  <text x="130" y="246" text-anchor="middle" fill="#64748b" font-size="11">
+    bob (corporate network)
+  </text>
+  <rect x="62" y="266" width="136" height="52" rx="4" fill="#fff" stroke="#475569"/>
+  <text x="130" y="288" text-anchor="middle" fill="#0f172a">Browser</text>
+  <text x="130" y="306" text-anchor="middle" fill="#64748b" font-size="11">
+    prompted for BasicAuth
+  </text>
+
+  <!-- Docker host boundary -->
+  <rect x="280" y="70" width="620" height="450" rx="12"
+        fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="10 5"/>
+  <text x="298" y="93" font-weight="600" fill="#334155">Docker host</text>
+
+  <!-- Docker network -->
+  <rect x="310" y="115" width="560" height="380" rx="10"
+        fill="#f1f5f9" stroke="#64748b" stroke-dasharray="6 3"/>
+  <text x="328" y="138" fill="#334155" font-size="12">
+    Docker bridge network: analyst-net
+  </text>
+
+  <!-- qgis-desktop container -->
+  <rect x="340" y="160" width="240" height="290" rx="8"
+        fill="#dcfce7" stroke="#166534" stroke-width="1.5"/>
+  <text x="460" y="186" text-anchor="middle" font-weight="600" fill="#14532d">
+    qgis-desktop
+  </text>
+  <text x="460" y="204" text-anchor="middle" fill="#166534" font-size="11">
+    entrypoint (root) → drops to uid 1000
+  </text>
+
+  <rect x="358" y="220" width="204" height="46" rx="4"
+        fill="#fff" stroke="#166534"/>
+  <text x="460" y="240" text-anchor="middle" fill="#0f172a">nftables egress filter</text>
+  <text x="460" y="256" text-anchor="middle" fill="#64748b" font-size="11">
+    allow: db (resolved once)
+  </text>
+
+  <rect x="358" y="276" width="204" height="46" rx="4"
+        fill="#fff" stroke="#166534"/>
+  <text x="460" y="296" text-anchor="middle" fill="#0f172a">KasmVNC :8443</text>
+  <text x="460" y="312" text-anchor="middle" fill="#64748b" font-size="11">
+    BasicAuth · clipboard blocked · watermark
+  </text>
+
+  <rect x="358" y="332" width="204" height="102" rx="4"
+        fill="#fff" stroke="#166534"/>
+  <text x="460" y="354" text-anchor="middle" fill="#0f172a">XFCE session</text>
+  <text x="460" y="376" text-anchor="middle" fill="#0f172a">QGIS 4.0</text>
+  <text x="460" y="398" text-anchor="middle" fill="#0f172a">terminal · thunar</text>
+  <text x="460" y="420" text-anchor="middle" fill="#64748b" font-size="11">
+    uid 1000, all caps dropped
+  </text>
+
+  <!-- db container -->
+  <rect x="650" y="220" width="200" height="160" rx="8"
+        fill="#dbeafe" stroke="#1e40af" stroke-width="1.5"/>
+  <text x="750" y="246" text-anchor="middle" font-weight="600" fill="#1e3a8a">
+    db
+  </text>
+  <text x="750" y="264" text-anchor="middle" fill="#1e40af" font-size="11">
+    postgis/postgis:16-3.4
+  </text>
+  <rect x="668" y="282" width="164" height="46" rx="4"
+        fill="#fff" stroke="#1e40af"/>
+  <text x="750" y="302" text-anchor="middle" fill="#0f172a">Postgres :5432</text>
+  <text x="750" y="318" text-anchor="middle" fill="#64748b" font-size="11">
+    gis (PostGIS)
+  </text>
+  <text x="750" y="358" text-anchor="middle" fill="#64748b" font-size="11">
+    port NOT published
+  </text>
+  <text x="750" y="372" text-anchor="middle" fill="#64748b" font-size="11">
+    to the host
+  </text>
+
+  <!-- browser -> :8443 -->
+  <path d="M 230 292 L 340 292" fill="none" stroke="#0f172a" stroke-width="1.5"
+        marker-end="url(#arr-k)"/>
+  <text x="245" y="284" fill="#0f172a" font-size="11">HTTP :8443</text>
+
+  <!-- qgis -> db (allow) -->
+  <path d="M 580 298 L 650 298" fill="none" stroke="#15803d" stroke-width="2"
+        marker-end="url(#arr-g)"/>
+  <text x="586" y="290" fill="#15803d" font-weight="600" font-size="11">
+    allow db:5432
+  </text>
+
+  <!-- blocked outbound -->
+  <path d="M 460 450 L 460 500" fill="none" stroke="#b91c1c" stroke-width="2"
+        stroke-dasharray="6 4" marker-end="url(#arr-r)"/>
+  <text x="475" y="474" fill="#b91c1c" font-size="11">✗ internet</text>
+  <text x="475" y="490" fill="#b91c1c" font-size="10">dropped by nftables</text>
+</svg>

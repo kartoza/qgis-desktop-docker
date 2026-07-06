@@ -1,0 +1,127 @@
+# Analyst locked-down scenario.
+#
+# One user (bob / password123) gets a KasmVNC session with:
+#   * clipboard IN and OUT both blocked
+#   * X primary selection blocked
+#   * a per-session watermark overlay
+#   * DLP audit logging at "info" level
+#   * egress restricted so the only reachable host is the co-located
+#     kartoza/postgis service ("db")
+#
+# The Postgres port is NOT published on the Docker host — the analyst container
+# reaches it only over the internal Docker bridge network `analyst-net`.
+#
+# See docs/scenarios/analyst-locked-down.md for the full write-up and diagrams.
+
+services:
+  qgis-desktop:
+    # Point at the locally built image (`nix run .#build-docker`).
+    # Swap for `ghcr.io/kartoza/qgis-desktop-docker:latest` for the published one.
+    image: nix-xfce-kasm:latest
+    container_name: qgis-desktop
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    # Required so the entrypoint can install the nftables egress ruleset.
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # Display / session
+      - VNC_RESOLUTION=1920x1080
+
+      # Authentication — bob is the only user for this session.
+      # Passwords may contain colons; only the first ':' is the separator.
+      - KASM_USERS=bob:password123
+
+      # Clipboard fully blocked in both directions, plus X primary selection.
+      - KASM_ALLOW_CLIPBOARD_IN=0
+      - KASM_ALLOW_CLIPBOARD_OUT=0
+      - KASM_ALLOW_PRIMARY_SELECTION=0
+
+      # Per-session watermark. start-desktop.sh expands ${USER} to the first
+      # KASM_USERS entry (falls back to VNC_USER, then $USER). strftime tokens
+      # like %H:%M are handled by Xkasmvnc's watermark renderer. Stay in ASCII
+      # for the separator — the default watermark font doesn't have U+2014 (—)
+      # and would render tofu.
+      - KASM_WATERMARK_TEXT=RESTRICTED - $${USER} %H:%M
+
+      # DLP audit at "info" — logs metadata (which operations happened) but not
+      # the content. Do NOT switch to "verbose" without a legal review.
+      - KASM_DLP_LOG=info
+
+      # Egress lockdown: only the co-located `db` service is reachable.
+      # Hostname is resolved once at container start against the Docker
+      # embedded resolver, so it picks up whatever IP `db` has on `analyst-net`.
+      - KASM_EGRESS_LOCKDOWN=1
+      - KASM_EGRESS_ALLOW=db
+    networks:
+      - analyst-net
+    volumes:
+      - qgis-home:/home/user
+    # on-failure limits noise if the desktop crashes on boot. Switch to
+    # `unless-stopped` in production once you're confident it comes up cleanly.
+    restart: on-failure:3
+
+  db:
+    # We use the upstream PostGIS image rather than kartoza/postgis because
+    # some kartoza/postgis tags trip over moby/moby#35071 on Docker storage
+    # drivers backed by XFS with 64-bit inodes — bash's redirection in
+    # setup-conf.sh fails with "Value too large for defined data type" when
+    # writing /etc/postgresql/16/main/postgresql.conf. The upstream image is
+    # a straight drop-in for this scenario; see the doc for the kartoza
+    # equivalent config if you need it.
+    image: postgis/postgis:16-3.4
+    container_name: analyst-db
+    environment:
+      - POSTGRES_USER=bob
+      - POSTGRES_PASSWORD=password123
+      - POSTGRES_DB=gis
+    networks:
+      - analyst-net
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bob -d gis"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    # No `ports:` here — Postgres is unreachable from the host, only from
+    # containers on analyst-net.
+    restart: unless-stopped
+
+# --- Kartoza alternative -----------------------------------------------------
+# If your Docker storage driver isn't on XFS and you'd rather run the Kartoza
+# PostGIS image, comment out the `db:` block above and swap in this variant.
+# Note: env var and volume-mount names differ from the upstream image.
+#
+#   db:
+#     image: kartoza/postgis:16-3.4
+#     container_name: analyst-db
+#     environment:
+#       - POSTGRES_USER=bob
+#       - POSTGRES_PASS=password123
+#       - POSTGRES_DBNAME=gis
+#       - ALLOW_IP_RANGE=172.16.0.0/12
+#       - POSTGRES_MULTIPLE_EXTENSIONS=postgis,postgis_topology,hstore
+#     networks:
+#       - analyst-net
+#     volumes:
+#       - db-data:/var/lib/postgresql
+#     healthcheck:
+#       test: ["CMD-SHELL", "PGPASSWORD=password123 pg_isready -U bob -d gis -h 127.0.0.1"]
+#       interval: 10s
+#       timeout: 5s
+#       retries: 12
+#       start_period: 30s
+#     restart: unless-stopped
+
+networks:
+  analyst-net:
+    driver: bridge
+
+volumes:
+  qgis-home:
+  db-data:

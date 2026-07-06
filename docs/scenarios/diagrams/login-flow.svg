@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 780"
+     font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12">
+  <defs>
+    <marker id="msg" viewBox="0 0 10 10" refX="10" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0f172a"/>
+    </marker>
+    <marker id="msg-g" viewBox="0 0 10 10" refX="10" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#15803d"/>
+    </marker>
+    <marker id="msg-r" viewBox="0 0 10 10" refX="10" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+  </defs>
+
+  <text x="480" y="26" text-anchor="middle" font-size="16" font-weight="600" fill="#0f172a">
+    Sequence — Login, DB connection, and blocked operations
+  </text>
+
+  <!-- Lifeline headers: 6 columns at x = 90, 240, 400, 560, 720, 880 -->
+  <!-- Bob -->
+  <rect x="50" y="52" width="80" height="34" rx="4" fill="#f1f5f9" stroke="#334155"/>
+  <text x="90" y="74" text-anchor="middle" font-weight="600" fill="#0f172a">Bob</text>
+  <line x1="90" y1="86" x2="90" y2="750" stroke="#94a3b8" stroke-dasharray="4 4"/>
+
+  <!-- Browser -->
+  <rect x="200" y="52" width="80" height="34" rx="4" fill="#f1f5f9" stroke="#334155"/>
+  <text x="240" y="74" text-anchor="middle" font-weight="600" fill="#0f172a">Browser</text>
+  <line x1="240" y1="86" x2="240" y2="750" stroke="#94a3b8" stroke-dasharray="4 4"/>
+
+  <!-- Xkasmvnc -->
+  <rect x="360" y="52" width="80" height="34" rx="4" fill="#dcfce7" stroke="#166534"/>
+  <text x="400" y="74" text-anchor="middle" font-weight="600" fill="#14532d">Xkasmvnc</text>
+  <line x1="400" y1="86" x2="400" y2="750" stroke="#94a3b8" stroke-dasharray="4 4"/>
+
+  <!-- QGIS -->
+  <rect x="520" y="52" width="80" height="34" rx="4" fill="#dcfce7" stroke="#166534"/>
+  <text x="560" y="74" text-anchor="middle" font-weight="600" fill="#14532d">QGIS</text>
+  <line x1="560" y1="86" x2="560" y2="750" stroke="#94a3b8" stroke-dasharray="4 4"/>
+
+  <!-- nftables -->
+  <rect x="680" y="52" width="80" height="34" rx="4" fill="#fef3c7" stroke="#92400e"/>
+  <text x="720" y="74" text-anchor="middle" font-weight="600" fill="#78350f">nftables</text>
+  <line x1="720" y1="86" x2="720" y2="750" stroke="#94a3b8" stroke-dasharray="4 4"/>
+
+  <!-- db -->
+  <rect x="840" y="52" width="80" height="34" rx="4" fill="#dbeafe" stroke="#1e40af"/>
+  <text x="880" y="74" text-anchor="middle" font-weight="600" fill="#1e3a8a">db</text>
+  <line x1="880" y1="86" x2="880" y2="750" stroke="#94a3b8" stroke-dasharray="4 4"/>
+
+  <!-- Phase 1: initial connect + 401 -->
+  <text x="30" y="115" font-weight="600" fill="#334155">1. open web UI</text>
+
+  <path d="M 90 130 L 240 130" stroke="#0f172a" stroke-width="1.4" fill="none" marker-end="url(#msg)"/>
+  <text x="165" y="124" text-anchor="middle" fill="#0f172a">open http://host:8443</text>
+
+  <path d="M 240 158 L 400 158" stroke="#0f172a" stroke-width="1.4" fill="none" marker-end="url(#msg)"/>
+  <text x="320" y="152" text-anchor="middle" fill="#0f172a">GET /</text>
+
+  <path d="M 400 186 L 240 186" stroke="#0f172a" stroke-width="1.4" fill="none"
+        stroke-dasharray="4 3" marker-end="url(#msg)"/>
+  <text x="320" y="180" text-anchor="middle" fill="#0f172a">401 WWW-Authenticate: Basic realm="Kasm"</text>
+
+  <path d="M 240 214 L 90 214" stroke="#0f172a" stroke-width="1.4" fill="none"
+        stroke-dasharray="4 3" marker-end="url(#msg)"/>
+  <text x="165" y="208" text-anchor="middle" fill="#0f172a">native user/password prompt</text>
+
+  <!-- Phase 2: creds submitted -->
+  <text x="30" y="252" font-weight="600" fill="#334155">2. authenticate</text>
+
+  <path d="M 90 270 L 240 270" stroke="#0f172a" stroke-width="1.4" fill="none" marker-end="url(#msg)"/>
+  <text x="165" y="264" text-anchor="middle" fill="#0f172a">bob / password123</text>
+
+  <path d="M 240 298 L 400 298" stroke="#0f172a" stroke-width="1.4" fill="none" marker-end="url(#msg)"/>
+  <text x="320" y="292" text-anchor="middle" fill="#0f172a">GET / + Authorization: Basic ...</text>
+
+  <!-- Self-message: verify ~/.kasmpasswd -->
+  <path d="M 400 320 C 460 320, 460 344, 400 344" stroke="#166534" stroke-width="1.4" fill="none"
+        marker-end="url(#msg-g)"/>
+  <text x="466" y="336" fill="#166534">verify against ~/.kasmpasswd</text>
+
+  <path d="M 400 372 L 240 372" stroke="#15803d" stroke-width="1.4" fill="none"
+        stroke-dasharray="4 3" marker-end="url(#msg-g)"/>
+  <text x="320" y="366" text-anchor="middle" fill="#15803d">200 OK · session cookie</text>
+
+  <!-- Phase 3: VNC + XFCE launch -->
+  <text x="30" y="410" font-weight="600" fill="#334155">3. desktop session</text>
+
+  <path d="M 240 428 L 400 428" stroke="#0f172a" stroke-width="1.4" fill="none" marker-end="url(#msg)"/>
+  <text x="320" y="422" text-anchor="middle" fill="#0f172a">WebSocket upgrade (VNC RFB)</text>
+
+  <rect x="410" y="446" width="140" height="26" rx="4" fill="#fff" stroke="#166534"/>
+  <text x="480" y="463" text-anchor="middle" fill="#166534">XFCE + QGIS start</text>
+
+  <!-- Phase 4: DB connection -->
+  <text x="30" y="500" font-weight="600" fill="#334155">4. add PostGIS layer</text>
+
+  <path d="M 90 518 L 560 518" stroke="#0f172a" stroke-width="1.4" fill="none" marker-end="url(#msg)"/>
+  <text x="325" y="512" text-anchor="middle" fill="#0f172a">"Add PostGIS Layer" host=db user=bob db=gis</text>
+
+  <path d="M 560 546 L 720 546" stroke="#0f172a" stroke-width="1.4" fill="none" marker-end="url(#msg)"/>
+  <text x="640" y="540" text-anchor="middle" fill="#0f172a">TCP connect(db:5432)</text>
+
+  <path d="M 720 574 L 880 574" stroke="#15803d" stroke-width="1.4" fill="none" marker-end="url(#msg-g)"/>
+  <text x="800" y="568" text-anchor="middle" fill="#15803d">allowed by allowlist</text>
+
+  <path d="M 880 602 L 560 602" stroke="#15803d" stroke-width="1.4" fill="none"
+        stroke-dasharray="4 3" marker-end="url(#msg-g)"/>
+  <text x="720" y="596" text-anchor="middle" fill="#15803d">rows returned</text>
+
+  <!-- Phase 5: blocked ops -->
+  <text x="30" y="638" font-weight="600" fill="#334155">5. blocked operations</text>
+
+  <path d="M 90 658 L 400 658" stroke="#b91c1c" stroke-width="1.4" fill="none" marker-end="url(#msg-r)"/>
+  <text x="245" y="652" text-anchor="middle" fill="#b91c1c">Ctrl-C on canvas (copy)</text>
+
+  <rect x="330" y="668" width="140" height="24" rx="3" fill="#fef2f2" stroke="#b91c1c"/>
+  <text x="400" y="684" text-anchor="middle" fill="#b91c1c">clipboard OUT blocked</text>
+
+  <path d="M 90 710 L 720 710" stroke="#b91c1c" stroke-width="1.4" fill="none" marker-end="url(#msg-r)"/>
+  <text x="405" y="704" text-anchor="middle" fill="#b91c1c">`curl example.com` from terminal</text>
+
+  <rect x="650" y="720" width="140" height="24" rx="3" fill="#fef2f2" stroke="#b91c1c"/>
+  <text x="720" y="736" text-anchor="middle" fill="#b91c1c">DROP · connection timeout</text>
+</svg>

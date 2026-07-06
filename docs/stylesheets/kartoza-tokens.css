@@ -1,0 +1,12 @@
+/* SPDX-FileCopyrightText: Tim Sutton */
+/* SPDX-License-Identifier: MIT */
+:root{
+  --kartoza-blue:#54A2CC; --kartoza-amber:#EEB348; --kartoza-grey:#8A8B8B;
+  --text-default:#383939; --text-muted:#676869; --rule-line:#D1D1D1;
+  --surface-cloud:#F5F5F2; --surface-white:#FFFFFF;
+  --font-sans:'Nunito','Helvetica Neue',Arial,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --status-success:#3C7D54; --status-success-tint:#EAF3EC;
+  --status-warn:#EEB348;    --status-warn-tint:#FCF3E0;
+  --status-error:#B0473C;   --status-error-tint:#FBEFEF;
+}

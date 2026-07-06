@@ -4,10 +4,52 @@ services:
     container_name: qgis-desktop
     ports:
       - "8443:8443"
+    # Required so the entrypoint can install nftables egress-lockdown rules.
+    # If you drop this cap, you MUST also set KASM_EGRESS_LOCKDOWN=0 below or
+    # the container will refuse to start.
+    cap_add:
+      - NET_ADMIN
     environment:
+      - VNC_USER=user
+      - VNC_PW=password
       - VNC_RESOLUTION=1920x1080
       - VNC_COL_DEPTH=24
       - VNC_PORT=8443
+      # --- Authentication (browser prompts for user + password on connect) ---
+      # Enabled by default; VNC_USER/VNC_PW above is used when nothing else is set.
+      # Set KASM_AUTH=0 to disable auth entirely (DEV ONLY — never expose to network).
+      # - KASM_AUTH=0
+      # Inline multi-user list (comma or newline separated); passwords may contain ':'.
+      # - KASM_USERS=alice:pw1,bob:pw2
+      # Mounted user file (one 'user:password' per line, '#' for comments).
+      # File wins over KASM_USERS which wins over legacy VNC_USER/VNC_PW.
+      # - KASM_USERS_FILE=/etc/kasmvnc/users
+      # --- Kasm permission controls (secure-by-default) ---
+      # Clipboard is OFF in both directions unless explicitly enabled.
+      # Set to 1 (or yes/true/on) to allow.
+      # - KASM_ALLOW_CLIPBOARD_IN=1     # paste from local machine into the container
+      # - KASM_ALLOW_CLIPBOARD_OUT=1    # copy from the container out to the local machine
+      # - KASM_ALLOW_PRIMARY_SELECTION=1  # X primary selection (middle-click paste)
+      # Byte caps on clipboard payloads (0 = unlimited, only applies when enabled above)
+      # - KASM_CLIPBOARD_IN_MAX=4096
+      # - KASM_CLIPBOARD_OUT_MAX=4096
+      # Anti-spam delay between clipboard ops in ms (0 = none)
+      # - KASM_CLIPBOARD_DELAY_MS=500
+      # Comma-separated MIME allowlist (defaults to KasmVNC's built-in list when unset)
+      # - KASM_CLIPBOARD_MIME_TYPES=text/plain,text/html
+      # Watermark text overlay (screenshot deterrent). Supports ${USER} and strftime tokens.
+      # - KASM_WATERMARK_TEXT=${USER} %H:%M
+      # DLP logging level: off | info | verbose.
+      # WARNING: 'verbose' logs KEYSTROKES AND CLIPBOARD CONTENT to the server log.
+      # - KASM_DLP_LOG=info
+      # --- Egress network lockdown (ON by default) ---
+      # When on, the container may only initiate outbound connections to hosts
+      # on KASM_EGRESS_ALLOW (plus DNS to the Docker embedded resolver).
+      # Leave KASM_EGRESS_ALLOW empty to reach nothing at all outbound.
+      # Set KASM_EGRESS_LOCKDOWN=0 to disable the filter entirely (dev only).
+      # Accepts IPv4 addresses, CIDRs, and hostnames (resolved once at startup).
+      # - KASM_EGRESS_ALLOW=db,postgres.internal,10.0.0.0/24
+      # - KASM_EGRESS_LOCKDOWN=0
     volumes:
       # Persist the user's home directory (QGIS projects, settings, plugins)
       - qgis-home:/home/user

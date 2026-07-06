@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Build the mkdocs site and publish it to GitHub Pages.
+#
+# Triggers:
+#   * Every release (publish + prerelease) — the "canonical" publish.
+#   * Every push to main touching docs/, mkdocs.yml, or this workflow — so
+#     changes land on Pages between releases too.
+#   * Manual dispatch — useful when re-publishing after a Pages settings change.
+#
+# GH Pages must be set to "Deploy from GitHub Actions" in the repo settings
+# (Settings → Pages → Build and deployment → Source).
+
+name: docs
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+      - "flake.nix"
+      - "flake.lock"
+  workflow_dispatch:
+
+# Only one publish in flight per ref. Newer runs supersede older ones so a
+# rapid succession of pushes doesn't stack up in the queue, but we don't
+# cancel in-progress deploys (Pages doesn't like being interrupted mid-upload).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# Least-privilege token scope for the Pages deploy action.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build mkdocs site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          # git-revision-date-localized-plugin reads history to compute the
+          # per-page "last modified" timestamps.
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Build site with mkdocs (via flake)
+        run: nix run .#docs-build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

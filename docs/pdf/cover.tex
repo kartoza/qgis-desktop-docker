@@ -1,0 +1,52 @@
+% Kartoza-branded titlepage.
+\begin{titlepage}
+  \pagecolor{textdefault}
+  \color{surfacewhite}
+  \thispagestyle{empty}
+
+  \vspace*{2.5cm}
+
+  \begin{center}
+    % Decorative geometric marker in the Kartoza palette.
+    \begin{tikzpicture}
+      \fill[kartozablue]  (0,0)   rectangle (1.4,1.4);
+      \fill[kartozaamber] (1.55,0) rectangle (2.95,1.4);
+      \fill[surfacewhite] (3.1,0)  rectangle (4.5,1.4);
+    \end{tikzpicture}
+
+    \vspace{2cm}
+
+    {\fontsize{50}{60}\selectfont\bfseries\sffamily KARTOZA}
+
+    \vspace{0.3cm}
+    {\Large\sffamily\color{kartozablue} geospatial engineering}
+
+    \vspace{3cm}
+
+    \color{kartozaamber}\rule{0.55\textwidth}{2pt}
+
+    \vspace{1.5cm}
+
+    \color{surfacewhite}
+    {\fontsize{30}{36}\selectfont\bfseries\sffamily QGIS Desktop Docker}
+
+    \vspace{0.5cm}
+
+    {\LARGE\sffamily Documentation}
+
+    \vfill
+
+    \color{kartozablue}
+    \small\sffamily
+    {\bfseries Made with love by Kartoza}\\
+    \vspace{0.3cm}
+    kartoza.com\\
+    github.com/kartoza/qgis-desktop-docker\\
+    \vspace{0.5cm}
+    \color{kartozagrey}\today
+  \end{center}
+\end{titlepage}
+
+% Reset page background for content pages.
+\nopagecolor
+\clearpage
