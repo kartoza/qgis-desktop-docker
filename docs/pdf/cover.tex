@@ -1,0 +1,51 @@
+% Kartoza-branded cover page (brand pack v1.0.1).
+% Uses \thispagestyle{empty} + a manual layout instead of \begin{titlepage}
+% because the latter can conflict with pandoc's L3-based shipout injection.
+\begingroup
+\thispagestyle{empty}
+\pagecolor{textdefault}
+\color{surfacewhite}
+
+\vspace*{2cm}
+
+\begin{center}
+  % The reversed vertical logo — works on the charcoal cover background.
+  % The build script (see docs-pdf app in flake.nix) copies the file into
+  % pandoc's working directory as cover-logo.png.
+  \includegraphics[width=0.34\textwidth]{cover-logo.png}
+
+  \vspace{2cm}
+
+  \color{kartozaamber}\rule{0.55\textwidth}{2pt}
+
+  \vspace{1.5cm}
+
+  \color{surfacewhite}
+  {\fontsize{30}{36}\selectfont\bfseries QGIS Desktop Docker}
+
+  \vspace{0.5cm}
+
+  {\LARGE Documentation}
+
+  \vspace{2cm}
+
+  {\Large\color{kartozablue}\itshape
+   Putting spatial decision-making tools\\
+   in the hands of everyone.}
+
+  \vfill
+
+  \color{kartozablue}
+  \small
+  {\bfseries Made with love by Kartoza}\\
+  \vspace{0.3cm}
+  kartoza.com\\
+  github.com/kartoza/qgis-desktop-docker\\
+  \vspace{0.5cm}
+  \color{kartozagrey}\today
+\end{center}
+
+\newpage
+\nopagecolor
+\color{textdefault}
+\endgroup

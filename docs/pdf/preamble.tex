@@ -1,0 +1,78 @@
+% Kartoza brand pack v1.0.1: Lato for prose, inconsolata for code.
+% Lato is loaded via pandoc's `-V fontfamily=lato -V fontfamilyoptions=default`
+% (see docs-pdf app in flake.nix). The `default` option makes Lato the
+% document-wide default — no \familydefault renewcommand needed. We use
+% inconsolata as the monospace face because no JetBrains Mono pdftex package
+% exists in TeX Live and inconsolata is a clean brand-adjacent match.
+\usepackage{inconsolata}
+
+% Kartoza brand palette — same tokens as docs/stylesheets/kartoza-tokens.css.
+\usepackage{xcolor}
+\definecolor{kartozablue}{HTML}{54A2CC}
+\definecolor{kartozaamber}{HTML}{EEB348}
+\definecolor{kartozagrey}{HTML}{8A8B8B}
+\definecolor{textdefault}{HTML}{383939}
+\definecolor{textmuted}{HTML}{676869}
+\definecolor{surfacewhite}{HTML}{FFFFFF}
+\definecolor{surfacecloud}{HTML}{F5F5F2}
+\definecolor{ruleline}{HTML}{D1D1D1}
+\definecolor{statussuccess}{HTML}{3C7D54}
+\definecolor{statuswarn}{HTML}{EEB348}
+\definecolor{statuserror}{HTML}{B0473C}
+
+% TikZ for the cover artwork.
+\usepackage{tikz}
+
+% Better section headings using the brand palette.
+\usepackage{titlesec}
+\titleformat{\section}
+  {\color{textdefault}\Large\bfseries\sffamily}
+  {\color{kartozablue}\thesection}{1em}{}
+\titleformat{\subsection}
+  {\color{textdefault}\large\bfseries\sffamily}
+  {\color{kartozablue}\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+  {\color{textmuted}\normalsize\bfseries\sffamily}
+  {\color{kartozablue}\thesubsubsection}{1em}{}
+
+% Header / footer.
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{kartozagrey}\sffamily QGIS Desktop Docker}
+\fancyhead[R]{\small\color{kartozagrey}\sffamily Documentation}
+\fancyfoot[C]{\small\color{textmuted}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\color{kartozablue}\hrule width\headwidth height\headrulewidth}
+
+% Body text colour.
+\usepackage{sectsty}
+\allsectionsfont{\sffamily}
+\AtBeginDocument{\color{textdefault}}
+
+% Nicer code blocks with a Kartoza-blue left rule.
+% CRITICAL: commandchars=\\\{\} must be present so pandoc's syntax-highlight
+% macros (\ExtensionTok, \NormalTok, \AttributeTok, …) are interpreted rather
+% than printed as text. Pandoc's own template sets this; we lose it by
+% overriding the environment, so we have to re-add it here.
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{
+  commandchars=\\\{\},
+  breaklines,
+  breakanywhere,
+  fontsize=\small,
+  frame=leftline,
+  framerule=1.5pt,
+  rulecolor=\color{kartozablue}
+}
+
+% Softer inline code appearance.
+\usepackage{soul}
+\definecolor{codebg}{HTML}{F5F5F2}
+
+% Tables get a subtle top and bottom rule.
+\usepackage{booktabs}
+
+% Compact list spacing.
+\usepackage{enumitem}
+\setlist{itemsep=0.2em, topsep=0.3em}

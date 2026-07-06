@@ -170,20 +170,48 @@ jobs:
           retention-days: 7
           overwrite: true
 
-      - name: Read build report for PR comment
-        if: github.event_name == 'pull_request'
-        run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          SHA="${{ github.event.pull_request.head.sha }}"
+      # --- PR comment with build report ------------------------------------
+      #
+      # Earlier revisions of this section slurped build-report.md into
+      # $GITHUB_ENV as REPORT_BODY. The env-var approach blew up runs because
+      # build-report.md is dominated by a ~150 KB CVE table. Once REPORT_BODY
+      # entered the environment, every subsequent step's `execve` for Node 24
+      # hit E2BIG ("Argument list too long") — that's why even the
+      # Post-Checkout cleanup was failing.
+      #
+      # Fix: build the full comment body (tag + artifact link + commit +
+      # report + "Download & Run" instructions) into pr-comment.md on disk,
+      # then feed the file to create-or-update-comment via body-path. The
+      # body never enters the process environment.
 
+      - name: Find existing PR comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/find-comment@v4
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "## Docker Image Build"
+
+      - name: Assemble PR comment body
+        if: github.event_name == 'pull_request'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          NIX_IMAGE: ${{ env.NIX_IMAGE }}
+        run: |
           {
-            echo "REPORT_BODY<<ENDOFBODY"
+            printf '%s\n\n' "$TAG"
+            printf '[Download image artifact](https://github.com/%s/actions/runs/%s)\n\n' "$REPO" "$RUN_ID"
+            printf 'Commit: `%s`\n\n---\n\n' "$SHA"
             cat build-report.md
             cat <<ARTIFACT_EOF
 
           ### Download & Run This Build
 
-          1. Download the \`docker-image\` artifact from the [workflow run](${RUN_URL})
+          1. Download the \`docker-image\` artifact from the [workflow run](https://github.com/${REPO}/actions/runs/${RUN_ID})
           2. Load and run:
 
           \`\`\`bash
@@ -191,28 +219,15 @@ jobs:
           unzip docker-image.zip
 
           # Load into Docker
-          docker load < ${{ env.NIX_IMAGE }}.tar.gz
+          docker load < ${NIX_IMAGE}.tar.gz
 
           # Run it
-          docker run --rm -p 8443:8443 ${{ env.NIX_IMAGE }}:latest
+          docker run --rm -p 8443:8443 ${NIX_IMAGE}:latest
 
           # Open http://localhost:8443
           \`\`\`
-
-          ---
-          Commit: \`${SHA}\`
           ARTIFACT_EOF
-            echo "ENDOFBODY"
-          } >> "$GITHUB_ENV"
-
-      - name: Find existing PR comment
-        if: github.event_name == 'pull_request'
-        uses: peter-evans/find-comment@v3
-        id: find-comment
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          comment-author: github-actions[bot]
-          body-includes: "## Docker Image Build"
+          } > pr-comment.md
 
       - name: Post or update PR comment
         if: github.event_name == 'pull_request'
@@ -221,7 +236,7 @@ jobs:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           issue-number: ${{ github.event.pull_request.number }}
           edit-mode: replace
-          body: ${{ env.REPORT_BODY }}
+          body-path: pr-comment.md
 
       # --- Release-specific steps ---
 
