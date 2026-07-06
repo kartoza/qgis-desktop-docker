@@ -179,37 +179,38 @@ jobs:
           retention-days: 7
           overwrite: true
 
+      # --- PR comment with build report ------------------------------------
+      #
+      # Previously this section had three steps: find, post-with-tag, then
+      # slurp build-report.md into $GITHUB_ENV and post again. The env-var
+      # approach blew up runs because build-report.md is dominated by a
+      # ~150 KB CVE table. Once REPORT_BODY entered the environment, every
+      # subsequent step's `execve` for Node 24 hit E2BIG (`Argument list too
+      # long`) — that's why the Post-Checkout cleanup was also failing.
+      #
+      # Fix: prepend the tag / artifact link / commit to build-report.md on
+      # disk, then feed the file to create-or-update-comment via body-path
+      # so the report never lands in the process environment.
+
       - name: Find existing PR comment
         if: github.event_name == 'pull_request'
-        uses: peter-evans/find-comment@v3
+        uses: peter-evans/find-comment@v4
         id: find-comment
         with:
           issue-number: ${{ github.event.pull_request.number }}
           comment-author: github-actions[bot]
           body-includes: "## Docker Image Build"
 
-      - name: Post or update PR comment
+      - name: Prepend header to build report
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          comment-id: ${{ steps.find-comment.outputs.comment-id }}
-          issue-number: ${{ github.event.pull_request.number }}
-          edit-mode: replace
-          body: |
-            ${{ steps.version.outputs.tag }}
-
-            [Download image artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-            Commit: `${{ github.event.pull_request.head.sha }}`
-
-            ---
-
-            ${{ env.REPORT_BODY }}
-
-      - name: Read build report for PR comment
-        if: github.event_name == 'pull_request'
-        id: report
-        run: echo "REPORT_BODY<<ENDOFBODY" >> "$GITHUB_ENV" && cat build-report.md >> "$GITHUB_ENV" && echo "ENDOFBODY" >> "$GITHUB_ENV"
+        run: |
+          {
+            printf '%s\n\n' '${{ steps.version.outputs.tag }}'
+            printf '[Download image artifact](https://github.com/%s/actions/runs/%s)\n\n' \
+              '${{ github.repository }}' '${{ github.run_id }}'
+            printf 'Commit: `%s`\n\n---\n\n' '${{ github.event.pull_request.head.sha }}'
+            cat build-report.md
+          } > pr-comment.md
 
       - name: Post or update PR comment (with report)
         if: github.event_name == 'pull_request'
@@ -218,7 +219,7 @@ jobs:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           issue-number: ${{ github.event.pull_request.number }}
           edit-mode: replace
-          body: ${{ env.REPORT_BODY }}
+          body-path: pr-comment.md
 
       # --- Release-specific steps ---
 
