@@ -16,7 +16,11 @@ SBOM and a Grype CVE scan as release artefacts.
 
 - A full QGIS 4.0 desktop in a browser tab, on any device.
 - Multi-monitor and dynamic resolution via KasmVNC.
-- HTTP BasicAuth with file- or env-based multi-user credentials.
+- **Three auth pathways** (choose per deployment via `KASM_AUTH_MODE`):
+  the browser's HTTP BasicAuth dialog (`basic`, default), a LightDM
+  greeter *inside* the desktop that re-prompts cleanly on failure
+  (`greeter`), or no auth for local dev (`none`). File- or env-based
+  multi-user credentials work with all three.
 - Data-loss-prevention knobs: clipboard direction and size caps, MIME
   allowlist, screen watermark, DLP audit log.
 - An nftables egress lockdown with a hostname/CIDR allowlist that runs

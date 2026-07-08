@@ -36,8 +36,117 @@
           text = builtins.readFile ./start-desktop.sh;
         };
 
+        # pam_exec verifier for greeter mode. Wrapped as a writeShellApplication
+        # so bash and openssl are on PATH regardless of pam_exec's env
+        # stripping.
+        checkPasswordScript = pkgs.writeShellApplication {
+          name = "check-password";
+          runtimeInputs = with pkgs; [ openssl gnugrep coreutils gawk ];
+          text = builtins.readFile ./config/lightdm/check-password.sh;
+        };
+
+        # XDG_DATA_DIRS / XDG_CONFIG_DIRS for the XFCE session. Same set as
+        # the image-level env vars in dockerImage.config.Env — repeated here
+        # because lightdm strips those before spawning the user session.
+        xfceXdgDataDirs = pkgs.lib.concatStringsSep ":" [
+          "${pkgs.shared-mime-info}/share"
+          "${pkgs.hicolor-icon-theme}/share"
+          "${pkgs.adwaita-icon-theme}/share"
+          "${pkgs.xfdesktop}/share"
+          "${pkgs.xfce4-session}/share"
+          "${pkgs.xfce4-panel}/share"
+          "${pkgs.xfce4-settings}/share"
+          "${pkgs.xfconf}/share"
+          "${pkgs.thunar}/share"
+          "${pkgs.qgis}/share"
+        ];
+        xfceXdgConfigDirs = pkgs.lib.concatStringsSep ":" [
+          "${pkgs.xfce4-session}/etc/xdg"
+          "${pkgs.xfce4-panel}/etc/xdg"
+          "${pkgs.xfce4-settings}/etc/xdg"
+          "${pkgs.xfdesktop}/etc/xdg"
+          "${pkgs.xfwm4}/etc/xdg"
+          "${pkgs.xfce4-terminal}/etc/xdg"
+          "${pkgs.thunar}/etc/xdg"
+          "/etc/xdg"
+        ];
+        xfcePath = pkgs.lib.makeBinPath (with pkgs; [
+          dbus
+          xfce4-session
+          xfce4-panel
+          xfce4-terminal
+          xfdesktop
+          xfwm4
+          xfce4-settings
+          xfconf
+          thunar
+          coreutils
+        ]);
+
+        # LightDM session-wrapper. Runs as the authenticated user with a
+        # stripped env — bake all the paths XFCE needs directly in.
+        xsessionScript = pkgs.writeShellScript "Xsession" ''
+          #!${pkgs.bash}/bin/bash
+          set -uo pipefail
+
+          HOME="''${HOME:-/home/''${USER:-user}}"
+          export HOME
+          mkdir -p "$HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
+          mkdir -p "$HOME/.config/xfce4/panel"
+
+          # Seed the wallpaper channel config from the system-wide default
+          # baked into the image. xfconfd doesn't merge /etc/xdg into the
+          # user store on first run, so without this the desktop comes up
+          # with a black backdrop.
+          if [ ! -f "$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" ]; then
+            cp /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
+               "$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml" \
+               2>/dev/null || true
+          fi
+          # Same for the panel config — otherwise XFCE builds an empty
+          # panel on first launch.
+          if [ ! -f "$HOME/.config/xfce4/panel/default.xml" ]; then
+            cp /home/user/.config/xfce4/panel/default.xml \
+               "$HOME/.config/xfce4/panel/default.xml" \
+               2>/dev/null || true
+          fi
+
+          # Env vars lightdm strips that XFCE needs.
+          export FONTCONFIG_FILE="${desktopFontsConf}"
+          export XDG_DATA_DIRS="${xfceXdgDataDirs}"
+          export XDG_CONFIG_DIRS="${xfceXdgConfigDirs}"
+          export XKB_BASE_DIR="${pkgs.xkeyboard_config}/share/X11/xkb"
+          export XKB_DEFAULT_RULES=evdev
+          export XKB_DEFAULT_MODEL=pc105
+          export XKB_DEFAULT_LAYOUT=us
+          export XDG_RUNTIME_DIR="/tmp/runtime-''${USER:-user}"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR" || true
+
+          export PATH="${xfcePath}:$PATH"
+
+          # Background XFCE so we can force the wallpaper via xfconf-query
+          # once xfconfd has come up (mirrors start-desktop.sh's post-start
+          # nudge for the different monitor property paths KasmVNC uses).
+          ${pkgs.dbus}/bin/dbus-run-session -- ${pkgs.xfce4-session}/bin/startxfce4 &
+          XFCE_PID=$!
+          (
+            sleep 3
+            for monitor in monitorscreen monitor0 monitorVNC-0; do
+              ${pkgs.xfconf}/bin/xfconf-query -c xfce4-desktop \
+                -p "/backdrop/screen0/$monitor/workspace0/last-image" \
+                -s /usr/share/wallpaper.png --create -t string 2>/dev/null || true
+              ${pkgs.xfconf}/bin/xfconf-query -c xfce4-desktop \
+                -p "/backdrop/screen0/$monitor/workspace0/image-style" \
+                -s 5 --create -t int 2>/dev/null || true
+            done
+          ) &
+          wait "$XFCE_PID"
+        '';
+
         # Root entrypoint: sets up nftables egress filter, drops privileges,
-        # then execs the desktop startup script.
+        # then execs the desktop startup script. In KASM_AUTH_MODE=greeter it
+        # instead materialises Linux user accounts and execs lightdm as root.
         entrypointScript = pkgs.writeShellApplication {
           name = "qgis-entrypoint";
           runtimeInputs = with pkgs; [
@@ -48,6 +157,14 @@
             gawk
             gnugrep
             glibc.bin     # getent
+            shadow        # chpasswd (kept for later reuse; runtime uses openssl+sed)
+            openssl       # openssl passwd -6 to hash user passwords (greeter mode)
+            gnused        # sed -i to edit /etc/shadow in place (greeter mode)
+            lightdm       # exec'd in greeter mode
+            dbus          # dbus-daemon --system for greeter mode
+            procps        # pgrep, guard against duplicate dbus
+            kasmvnc       # Xkasmvnc on PATH so the lightdm xserver wrapper finds it
+            xkeyboard_config # XKB_BASE_DIR sanity in greeter mode
             startupScript # so `start-desktop` is on PATH for setpriv --exec
           ];
           text = builtins.readFile ./entrypoint.sh;
@@ -94,6 +211,7 @@
             adwaita-icon-theme
             dejavu_fonts
             liberation_ttf
+            open-sans
 
             # Applications
             qgis
@@ -103,6 +221,16 @@
             util-linux    # setpriv
             iproute2
             glibc.bin     # getent for hostname resolution
+
+            # Greeter mode (KASM_AUTH_MODE=greeter): LightDM + GTK greeter.
+            # Kept out of the runtime path when mode != greeter, so basic /
+            # none users don't pay a startup cost — but they do pay the
+            # image-size cost. Roughly +40 MB uncompressed.
+            lightdm
+            lightdm-gtk-greeter
+            linux-pam
+            shadow        # useradd / chpasswd for user materialisation
+            bash          # /etc/lightdm/Xsession and xserver-wrapper shebangs
 
             # Scripts
             startupScript
@@ -134,6 +262,31 @@
             ln -s ${pkgs.dbus}/bin/dbus-daemon ./usr/bin/dbus-daemon
             ln -s ${pkgs.dbus}/bin/dbus-launch ./usr/bin/dbus-launch
 
+            # nixpkgs' lightdm build defaults to spawning "Xephyr" (or "X" or
+            # "Xorg") as its X server when there's no VT. Containers have no
+            # VT, so lightdm's xserver-command config from [Seat:*] is
+            # bypassed for the built-in "test" X path. Point all three
+            # binary names at our wrapper so the wrapper is invoked no
+            # matter which name lightdm chose.
+            ln -sfn /etc/lightdm/xkasmvnc-wrapper ./usr/bin/Xephyr
+            ln -sfn /etc/lightdm/xkasmvnc-wrapper ./usr/bin/X
+            ln -sfn /etc/lightdm/xkasmvnc-wrapper ./usr/bin/Xorg
+
+            # check-password (pam_exec verifier) needs openssl and grep at
+            # known paths — pam_exec gives its child a stripped env with
+            # only /bin:/usr/bin on PATH.
+            ln -sfn ${pkgs.openssl}/bin/openssl ./usr/bin/openssl
+            ln -sfn ${pkgs.gnugrep}/bin/grep    ./usr/bin/grep
+            ln -sfn ${pkgs.coreutils}/bin/cut   ./usr/bin/cut
+            ln -sfn ${pkgs.coreutils}/bin/tr    ./usr/bin/tr
+            ln -sfn ${pkgs.gawk}/bin/awk        ./usr/bin/awk
+
+            # LightDM strips the image env vars (incl. XKB_BASE_DIR) before
+            # spawning children. Give the wrapper a fixed fallback path to
+            # resolve to xkeyboard-config's xkb data.
+            mkdir -p ./usr/share/X11
+            ln -sfn ${pkgs.xkeyboard_config}/share/X11/xkb ./usr/share/X11/xkb
+
             # dbus needs a proper machine-id and config
             mkdir -p ./var/lib/dbus ./etc/dbus-1
             echo "00000000000000000000000000000000" > ./etc/machine-id
@@ -163,21 +316,30 @@
 </busconfig>
 DBUSEOF
 
+            # Several nixpkgs packages (shadow, glibc, dbus, lightdm) ship
+            # default files under /etc/. They land as read-only symlinks
+            # into the store; `cat >` fails with "Permission denied" on
+            # them. Unlink first so our writes win.
+            rm -f ./etc/passwd ./etc/group ./etc/shadow ./etc/nsswitch.conf ./etc/login.defs
+
             cat > ./etc/passwd <<EOF
 root:x:0:0:root:/root:/bin/bash
 user:x:1000:1000:user:/home/user:/bin/bash
+lightdm:x:996:996:LightDM:/var/lib/lightdm:/bin/false
 nobody:x:65534:65534:Nobody:/:/noshell
 EOF
 
             cat > ./etc/group <<EOF
 root:x:0:
 user:x:1000:
+lightdm:x:996:
 nogroup:x:65534:
 EOF
 
             cat > ./etc/shadow <<EOF
 root:!:1::::::
 user:!:1::::::
+lightdm:!:1::::::
 EOF
 
             cat > ./etc/nsswitch.conf <<EOF
@@ -187,7 +349,138 @@ shadow: files
 hosts: files dns
 EOF
 
+            # --- LightDM (KASM_AUTH_MODE=greeter) ---------------------------
+            # Config, session wrapper, xserver command, PAM stack, runtime
+            # dirs, and a shared session .desktop file. All baked in so the
+            # image works in greeter mode with zero mounted config.
+            mkdir -p \
+              ./etc/lightdm \
+              ./etc/pam.d \
+              ./lib \
+              ./usr/share/xsessions \
+              ./var/run/lightdm \
+              ./var/log/lightdm \
+              ./var/cache/lightdm \
+              ./var/lib/lightdm \
+              ./var/run/dbus
+
+            # lightdm's nixpkgs derivation ships /etc/lightdm/*.conf as
+            # read-only symlinks into the store; plain cp then fails with
+            # "Permission denied". Break the symlinks first so our overlay
+            # wins.
+            rm -f \
+              ./etc/lightdm/lightdm.conf \
+              ./etc/lightdm/lightdm-gtk-greeter.conf \
+              ./etc/lightdm/xkasmvnc-wrapper \
+              ./etc/lightdm/Xsession \
+              ./usr/share/xsessions/xfce.desktop
+
+            install -Dm 0644 ${./config/lightdm/lightdm-gtk-greeter.conf} ./etc/lightdm/lightdm-gtk-greeter.conf
+            install -Dm 0755 ${./config/lightdm/xkasmvnc-wrapper.sh}      ./etc/lightdm/xkasmvnc-wrapper
+            ln -sfn ${xsessionScript}                                     ./etc/lightdm/Xsession
+            ln -sfn ${checkPasswordScript}/bin/check-password             ./etc/lightdm/check-password
+            install -Dm 0644 ${./config/lightdm/xfce.desktop}             ./usr/share/xsessions/xfce.desktop
+
+            # LightDM.conf is templated at nix-build time so we can bake in
+            # the nix-store path for greeters-directory (lightdm-gtk-greeter
+            # ships its .desktop inside its own store share/xgreeters, and
+            # lightdm doesn't scan /usr/share/xgreeters on this build).
+            cat > ./etc/lightdm/lightdm.conf <<LIGHTDMCONF
+[LightDM]
+run-directory=/var/run/lightdm
+log-directory=/var/log/lightdm
+cache-directory=/var/cache/lightdm
+greeters-directory=${pkgs.lightdm-gtk-greeter}/share/xgreeters
+sessions-directory=/usr/share/xsessions
+start-default-seat=true
+
+[Seat:*]
+xserver-command=/etc/lightdm/xkasmvnc-wrapper
+xserver-share=true
+greeter-session=lightdm-gtk-greeter
+greeter-hide-users=false
+greeter-show-manual-login=true
+greeter-allow-guest=false
+allow-guest=false
+session-wrapper=/etc/lightdm/Xsession
+user-session=xfce
+autologin-user=
+autologin-user-timeout=0
+LIGHTDMCONF
+
+            # PAM needs to find pam_unix.so and friends. NixOS ships them in
+            # ${pkgs.linux-pam}/lib/security; on non-NixOS PAM's default
+            # search path is /lib/security. Symlink so a bare "pam_unix.so"
+            # in /etc/pam.d/* resolves. -f in case anything else already
+            # created the symlink.
+            ln -sfn ${pkgs.linux-pam}/lib/security ./lib/security
+
+            # Minimal PAM stacks. No pam_systemd (no systemd inside the
+            # container), no pam_ck_connector (no ConsoleKit). pam_env picks
+            # up locale settings. pam_unix hits /etc/shadow directly, which
+            # is what chpasswd writes to in entrypoint.sh.
+            # PAM stacks: lightdm may have shipped defaults from its
+            # nixpkgs derivation; unlink first so our overlay wins.
+            rm -f ./etc/pam.d/lightdm ./etc/pam.d/lightdm-greeter ./etc/pam.d/lightdm-autologin
+            # Auth via pam_exec + our own /etc/lightdm/check-password verifier.
+            # pam_unix is unusable here (delegates to non-SUID unix_chkpwd and
+            # always returns PAM_AUTHINFO_UNAVAIL). pam_permit follows pam_exec
+            # on the auth stack so pam_setcred (which lightdm calls before
+            # launching the session) has a module returning PAM_SUCCESS —
+            # pam_exec only implements sm_authenticate, not sm_setcred.
+            # Account / session default to permit so the greeter can start
+            # XFCE without extra setup.
+            cat > ./etc/pam.d/lightdm <<PAMEOF
+auth       required   pam_exec.so quiet expose_authtok /etc/lightdm/check-password
+auth       required   pam_permit.so
+account    required   pam_permit.so
+password   required   pam_permit.so
+session    required   pam_permit.so
+session    optional   pam_env.so
+PAMEOF
+
+            cat > ./etc/pam.d/lightdm-greeter <<PAMEOF
+auth       required   pam_permit.so
+account    required   pam_permit.so
+password   required   pam_deny.so
+session    required   pam_unix.so
+session    optional   pam_env.so
+PAMEOF
+
+            # A tiny /etc/login.defs so shadow's chpasswd doesn't warn about
+            # missing PASS_MAX_DAYS etc. Sensible defaults; not consulted at
+            # login time (PAM handles that).
+            cat > ./etc/login.defs <<'LOGINDEFS'
+ENCRYPT_METHOD  YESCRYPT
+UID_MIN         1000
+UID_MAX         60000
+GID_MIN         1000
+GID_MAX         60000
+UMASK           022
+LOGINDEFS
+
+            # dbus system bus config. The nixpkgs default lives inside the
+            # store and pulls in policy fragments we don't ship; write a
+            # minimal permissive one that's fine for a single-container use.
+            rm -f ./etc/dbus-1/system.conf
+            cat > ./etc/dbus-1/system.conf <<DBUSEOF
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>system</type>
+  <listen>unix:path=/var/run/dbus/system_bus_socket</listen>
+  <pidfile>/var/run/dbus/pid</pidfile>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+DBUSEOF
+
             chown -R 1000:1000 ./home/user
+            chown -R 996:996 ./var/lib/lightdm ./var/cache/lightdm ./var/log/lightdm ./var/run/lightdm
           '';
 
           config = {
@@ -210,12 +503,15 @@ EOF
               "VNC_PORT=8443"
               "VNC_RESOLUTION=1280x720"
               "VNC_COL_DEPTH=24"
+              # Auth mode: basic (default) | none | greeter.
+              # See docs/configuration/authentication.md.
+              "KASM_AUTH_MODE=basic"
               # Egress lockdown defaults ON. Requires --cap-add=NET_ADMIN
               # on `docker run`. Set to 0 to disable (dev only).
               "KASM_EGRESS_LOCKDOWN=1"
               "KASM_EGRESS_ALLOW="
               "XDG_RUNTIME_DIR=/tmp/runtime-user"
-              "FONTCONFIG_FILE=${pkgs.fontconfig.out}/etc/fonts/fonts.conf"
+              "FONTCONFIG_FILE=${desktopFontsConf}"
               "XDG_DATA_DIRS=${pkgs.lib.concatStringsSep ":" [
                 "${pkgs.shared-mime-info}/share"
                 "${pkgs.hicolor-icon-theme}/share"
@@ -308,6 +604,20 @@ EOF
           ];
         };
 
+        # Fontconfig for the desktop image. The default nixpkgs
+        # /etc/fonts/fonts.conf doesn't scan the specific font packages
+        # we bake into the image, so QGIS / XFCE / lightdm-gtk-greeter
+        # come up complaining that Open Sans and friends are missing.
+        # Building our own config with makeFontsConf points fontconfig
+        # at exactly the font packages listed in dockerImage.contents.
+        desktopFontsConf = pkgs.makeFontsConf {
+          fontDirectories = [
+            pkgs.dejavu_fonts
+            pkgs.liberation_ttf
+            pkgs.open-sans
+          ];
+        };
+
         # Helper for docs-related apps that need the mkdocs Python env.
         mkDocsApp = name: extraInputs: script: {
           type = "app";
@@ -384,7 +694,35 @@ EOF
             echo "⚠  Auth: DISABLED. Do NOT expose this port to any untrusted network."
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH=0 \
+              -e KASM_AUTH_MODE=none \
+              nix-xfce-kasm:latest
+          '';
+
+          # LightDM greeter mode: browser sees an X-server-hosted login form
+          # instead of the browser's HTTP BasicAuth dialog. Log out or fail to
+          # authenticate and the greeter re-prompts cleanly (no browser cache
+          # to fight).
+          run-greeter = mkApp "run-greeter" ''
+            docker rm -f qgis-desktop 2>/dev/null || true
+            echo "▶ Auth mode: greeter (LightDM inside the X session)"
+            echo "  Log in as  user / password  (default single-user creds)"
+            echo "  For multi-user try:  nix run .#run-greeter-multi"
+            echo "  Open http://localhost:8443"
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e KASM_AUTH_MODE=greeter \
+              nix-xfce-kasm:latest
+          '';
+
+          # Greeter mode with two demo users (alice / bob). Each gets a real
+          # Linux account and home directory at container start.
+          run-greeter-multi = mkApp "run-greeter-multi" ''
+            docker rm -f qgis-desktop 2>/dev/null || true
+            echo "▶ Auth mode: greeter (multi-user)"
+            echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
+            echo "  Open http://localhost:8443"
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e KASM_AUTH_MODE=greeter \
+              -e KASM_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
               nix-xfce-kasm:latest
           '';
 
@@ -494,6 +832,8 @@ EOF
                 nix run .#run-multi-user    Multi-user via KASM_USERS env
                 nix run .#run-users-file    Multi-user via bind-mounted file
                 nix run .#run-no-auth       Auth DISABLED (dev only)
+                nix run .#run-greeter       LightDM greeter (in-session login form)
+                nix run .#run-greeter-multi Greeter with alice + bob accounts
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)
@@ -618,6 +958,7 @@ EOF
               "$DOCS_DIR/configuration/egress-lockdown.md"
               "$DOCS_DIR/scenarios/index.md"
               "$DOCS_DIR/scenarios/analyst-locked-down.md"
+              "$DOCS_DIR/scenarios/multi-user-greeter.md"
               "$DOCS_DIR/developer-guide/index.md"
               "$DOCS_DIR/developer-guide/architecture.md"
               "$DOCS_DIR/developer-guide/nix-flake.md"
@@ -730,6 +1071,8 @@ META
                 nix run .#run-multi-user    Multi-user via KASM_USERS env
                 nix run .#run-users-file    Multi-user via bind-mounted file
                 nix run .#run-no-auth       Auth DISABLED (dev only)
+                nix run .#run-greeter       LightDM greeter (in-session login form)
+                nix run .#run-greeter-multi Greeter with alice + bob accounts
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)

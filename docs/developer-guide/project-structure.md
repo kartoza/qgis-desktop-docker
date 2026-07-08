@@ -9,13 +9,23 @@ qgis-desktop-docker/
 ├── kasmvnc.nix                 # KasmVNC package (v1.4.0 from Debian Bookworm deb)
 ├── libcrypt-compat.nix         # libcrypt.so.1 compat lib from Debian
 │
-├── entrypoint.sh               # Root entrypoint: nftables + setpriv drop
-├── start-desktop.sh            # Unprivileged entrypoint: Xkasmvnc + XFCE
+├── entrypoint.sh               # Root entrypoint: nftables + auth mode dispatch
+├── start-desktop.sh            # Unprivileged entrypoint (basic/none): Xkasmvnc + XFCE
 │
 ├── config/                     # XFCE panel and desktop configuration
-│   └── xfce4/
-│       ├── panel/default.xml
-│       └── xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+│   ├── xfce4/
+│   │   ├── panel/default.xml
+│   │   └── xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+│   │
+│   └── lightdm/                # LightDM greeter mode (KASM_AUTH_MODE=greeter)
+│       ├── lightdm-gtk-greeter.conf   # Kartoza-branded greeter theme
+│       ├── xkasmvnc-wrapper.sh         # X-server shim that starts Xkasmvnc
+│       ├── check-password.sh           # pam_exec verifier (sha512crypt)
+│       └── xfce.desktop                # Session .desktop entry lightdm reads
+│
+│   # lightdm.conf and Xsession are generated inline in flake.nix so
+│   # nix store paths (fonts, XDG_DATA_DIRS, xkeyboard_config) can be
+│   # baked in at build time.
 │
 ├── resources/                  # Static assets baked into the image
 │   └── wallpaper.png

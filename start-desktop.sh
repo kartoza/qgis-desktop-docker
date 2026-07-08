@@ -25,13 +25,30 @@ KASM_CLIPBOARD_MIME_TYPES="${KASM_CLIPBOARD_MIME_TYPES:-}" # comma-sep MIME allo
 KASM_WATERMARK_TEXT="${KASM_WATERMARK_TEXT:-}"             # empty = no watermark
 KASM_DLP_LOG="${KASM_DLP_LOG:-off}"                        # off | info | verbose
 
-# Authentication controls.
-#   KASM_AUTH=1 (default) — HTTP BasicAuth on the web endpoint + VncAuth on RFB.
-#   KASM_AUTH=0          — no auth (dev only; never expose to the network).
+# Authentication controls (tri-state as of 1.4.0; legacy KASM_AUTH still honoured).
+#   KASM_AUTH_MODE=basic (default) — HTTP BasicAuth on the web endpoint + VncAuth on RFB.
+#   KASM_AUTH_MODE=none            — no auth (dev only; never expose to the network).
+#   KASM_AUTH_MODE=greeter         — handled by the root entrypoint; start-desktop
+#                                     is not invoked in that mode.
 # Credentials come from (in order): KASM_USERS_FILE if readable, else KASM_USERS
 # env var, else legacy single-user VNC_USER / VNC_PW.
 #   KASM_USERS_FILE — path to a file with one 'user:password' per line, '#' comments.
 #   KASM_USERS      — inline 'user1:pw1,user2:pw2' (comma or newline separated).
+KASM_AUTH_MODE="${KASM_AUTH_MODE:-}"
+case "${KASM_AUTH_MODE,,}" in
+  none)    KASM_AUTH="0" ;;
+  basic)   KASM_AUTH="1" ;;
+  greeter)
+    echo "ERROR: start-desktop invoked with KASM_AUTH_MODE=greeter — the root" >&2
+    echo "       entrypoint should have execed lightdm instead." >&2
+    exit 1
+    ;;
+  "")      : ;;  # No mode override — fall back to legacy KASM_AUTH.
+  *)
+    echo "ERROR: KASM_AUTH_MODE='${KASM_AUTH_MODE}' is not one of none|basic|greeter." >&2
+    exit 1
+    ;;
+esac
 KASM_AUTH="${KASM_AUTH:-1}"
 KASM_USERS_FILE="${KASM_USERS_FILE:-/etc/kasmvnc/users}"
 KASM_USERS="${KASM_USERS:-}"

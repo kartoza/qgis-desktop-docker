@@ -383,63 +383,75 @@ Both are attached to every release and available as artifacts on every PR build.
 
 ### Authentication
 
-HTTP Basic Auth is **enabled by default** on the web endpoint. When a browser
-connects to `:8443` Xkasmvnc replies `401 WWW-Authenticate: Basic` and the
-browser shows its native user/password prompt. Credentials are reused
-transparently for the VNC handshake, so users only see one prompt.
+The container offers three auth pathways selected by `KASM_AUTH_MODE`
+(default: `basic`):
 
-Credentials are resolved in this order (first wins):
+| Mode | What the user sees | When to use |
+|------|--------------------|-------------|
+| `basic` | Browser's HTTP Basic Auth dialog | Fast to set up. Fine for a single trusted user. |
+| `greeter` | In-desktop LightDM login form | Multi-user, or wherever users may need to log out / re-authenticate without closing the browser tab. |
+| `none` | No prompt — desktop appears immediately | Local dev only. Never expose to any untrusted network. |
+
+Legacy `KASM_AUTH=0` still forces `none` for backwards compatibility.
+
+All three modes read credentials from the same sources (first wins):
 
 1. `KASM_USERS_FILE` — path to a file containing `user:password` per line;
-   default `/etc/kasmvnc/users`. Lines starting with `#` and blank lines are
-   ignored. Mount the file into the container, ideally with mode `0600`.
-2. `KASM_USERS` — inline list, e.g. `alice:pw1,bob:pw2`. Comma or newline
-   separated. Passwords may contain colons; only the first `:` on the line
-   is treated as the separator.
-3. Legacy `VNC_USER` / `VNC_PW` — single user, kept for backwards compatibility.
+   default `/etc/kasmvnc/users`. `#` comments and blank lines ignored.
+   Mount with mode `0600`.
+2. `KASM_USERS` — inline `alice:pw1,bob:pw2` list.
+3. Legacy `VNC_USER` / `VNC_PW` — single user, defaults to `user` / `password`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_AUTH` | `1` | `0` disables auth entirely (`-DisableBasicAuth`, `-SecurityTypes None`). **Dev only.** |
+| `KASM_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` |
+| `KASM_AUTH` | *(unset)* | Legacy: `0` forces `none`. |
 | `KASM_USERS_FILE` | `/etc/kasmvnc/users` | Bind-mount target for a `user:password` file |
 | `KASM_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list |
 
-**Multi-user via file:**
+**Basic (default), multi-user via file:**
 
 ```bash
 cat > users <<'EOF'
-# QGIS desktop users — file mode should be 0600
 alice:hunter2
 bob:correct-horse-battery-staple
 EOF
 chmod 600 users
-docker run --rm -p 8443:8443 \
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -v "$PWD/users:/etc/kasmvnc/users:ro" \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
-**Multi-user via env:**
+**Greeter mode (in-desktop LightDM login form):**
 
 ```bash
-docker run --rm -p 8443:8443 \
-  -e KASM_USERS='alice:pw1,bob:pw2' \
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e KASM_AUTH_MODE=greeter \
   ghcr.io/kartoza/qgis-desktop-docker:latest
+# Log in as user / password. Wrong password re-prompts in place —
+# no browser tab to close, no cache to clear.
 ```
 
 **Disable auth for local dev only:**
 
 ```bash
-docker run --rm -p 8443:8443 -e KASM_AUTH=0 \
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN -e KASM_AUTH_MODE=none \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
 Notes:
 
-- The browser HTTP Basic Auth prompt is unstyled (native browser dialog). If you
-  need a branded login page, front the container with a reverse proxy
-  (nginx + OAuth2 Proxy, Traefik + BasicAuth, Caddy + `basic_auth`, etc.) and
-  disable Kasm auth with `KASM_AUTH=0`.
-- Container runs as non-root (`user`, UID 1000).
+- **`basic` vs `greeter`.** `basic` is the browser's own HTTP Basic Auth
+  dialog — unstyled and hard to re-prompt after a failed login (browsers
+  cache the credentials for the tab). `greeter` runs LightDM inside the
+  X session, so failures and logouts return to a proper login form.
+- **Privileges.** `basic` and `none` run the desktop as UID 1000 after
+  the root entrypoint drops privileges. `greeter` keeps LightDM running as
+  root inside the container so it can spawn each session as its target
+  user; XFCE itself still runs unprivileged.
+- **Custom brand or SSO/OIDC.** Front the container with a reverse proxy
+  (nginx + OAuth2 Proxy, Traefik, Caddy + `basic_auth`, etc.) and set
+  `KASM_AUTH_MODE=none`.
 
 ## License
 

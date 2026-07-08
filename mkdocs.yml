@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Kartoza
 # SPDX-License-Identifier: GPL-2.0-or-later
 site_name: QGIS Desktop Docker
-site_description: QGIS Desktop inside a Nix-built Docker container with browser access via KasmVNC, clipboard/DLP controls, HTTP BasicAuth, and an nftables egress lockdown.
+site_description: QGIS Desktop inside a Nix-built Docker container with browser access via KasmVNC, clipboard/DLP controls, three auth pathways (none, HTTP BasicAuth, or LightDM greeter), and an nftables egress lockdown.
 site_url: https://kartoza.github.io/qgis-desktop-docker/
 site_author: Kartoza
 copyright: >
@@ -167,6 +167,7 @@ nav:
   - Scenarios:
     - scenarios/index.md
     - Analyst Locked-Down: scenarios/analyst-locked-down.md
+    - Multi-User Greeter: scenarios/multi-user-greeter.md
   - Developer Guide:
     - developer-guide/index.md
     - Architecture: developer-guide/architecture.md

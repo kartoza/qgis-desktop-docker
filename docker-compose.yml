@@ -15,9 +15,13 @@ services:
       - VNC_RESOLUTION=1920x1080
       - VNC_COL_DEPTH=24
       - VNC_PORT=8443
-      # --- Authentication (browser prompts for user + password on connect) ---
-      # Enabled by default; VNC_USER/VNC_PW above is used when nothing else is set.
-      # Set KASM_AUTH=0 to disable auth entirely (DEV ONLY — never expose to network).
+      # --- Authentication ---------------------------------------------------
+      # Tri-state mode selector (default: basic).
+      #   basic   — HTTP Basic Auth on the web endpoint (browser dialog).
+      #   greeter — LightDM login form inside the desktop (see docs).
+      #   none    — no auth (DEV ONLY — never expose to network).
+      # - KASM_AUTH_MODE=greeter
+      # Legacy: KASM_AUTH=0 still forces mode=none.
       # - KASM_AUTH=0
       # Inline multi-user list (comma or newline separated); passwords may contain ':'.
       # - KASM_USERS=alice:pw1,bob:pw2

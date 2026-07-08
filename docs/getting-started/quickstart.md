@@ -11,9 +11,17 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 ```
 
 Open <http://localhost:8443> and log in with the built-in credentials
-**`user`** / **`password`**. The browser will show its native HTTP BasicAuth
-dialog; those credentials are reused transparently for the VNC handshake so
-you only see one prompt.
+**`user`** / **`password`**. By default the browser shows its native HTTP
+BasicAuth dialog; those credentials are reused transparently for the VNC
+handshake so you only see one prompt.
+
+!!! tip "Prefer an in-desktop login form?"
+    Set `-e KASM_AUTH_MODE=greeter` on `docker run` to boot with a
+    LightDM greeter inside the desktop instead of the browser's Basic
+    Auth dialog. Wrong password re-prompts in place — no browser tab to
+    close, no cache to clear. See
+    [Authentication](../configuration/authentication.md) for the full
+    tri-state selector.
 
 !!! warning "NET_ADMIN is required"
     The container starts an nftables egress firewall as its first act. It

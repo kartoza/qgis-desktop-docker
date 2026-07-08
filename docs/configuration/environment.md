@@ -9,7 +9,11 @@ and on which X display.
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution. Resizable in the browser. |
 | `VNC_COL_DEPTH` | `24` | Colour depth (`16`, `24`, or `32`). |
 | `VNC_PW` | `password` | Legacy single-user VNC password. Only used if `KASM_USERS_FILE` and `KASM_USERS` are both unset. |
-| `DISPLAY` | `:1` | X display number the server binds to. |
+| `DISPLAY` | `:1` | X display number the server binds to (basic/none mode). In `greeter` mode LightDM manages the display and pins it to `:0`. |
+
+Authentication lives on its own page — see
+[Authentication](authentication.md) for `KASM_AUTH_MODE`, `KASM_USERS_FILE`,
+`KASM_USERS`, and the credential-resolution order.
 
 ## Examples
 
