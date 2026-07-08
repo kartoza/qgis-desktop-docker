@@ -7,6 +7,41 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-07-08
+
+Adds a third authentication pathway: an in-desktop LightDM greeter that
+avoids the browser-cache pain of HTTP Basic Auth on failed logins.
+
+### Added
+
+#### Authentication
+- `KASM_AUTH_MODE` — tri-state selector: `none` | `basic` (default) |
+  `greeter`. `basic` and `none` behave exactly as before.
+- `greeter` mode boots LightDM (with `lightdm-gtk-greeter`) inside the
+  KasmVNC-served X session. Xkasmvnc runs with `-DisableBasicAuth`; the
+  greeter is the auth boundary.
+- Users defined via `KASM_USERS` / `KASM_USERS_FILE` / legacy
+  `VNC_USER`+`VNC_PW` are materialised as real Linux accounts at container
+  start, so PAM authenticates against `/etc/shadow`.
+- New `nix run .#run-greeter` convenience app.
+- Kartoza-branded greeter config (`config/lightdm/lightdm-gtk-greeter.conf`).
+
+#### Packages
+- `lightdm`, `lightdm-gtk-greeter`, `linux-pam`, `shadow`, `dbus` (system
+  bus) added to the image. Roughly +40 MB uncompressed for the new closure.
+
+### Changed
+- Legacy `KASM_AUTH=0` continues to work — it is now interpreted as
+  `KASM_AUTH_MODE=none`.
+- `docker-compose.yml` and `docs/configuration/authentication.md`
+  documented against the new tri-state.
+
+### Notes
+- In `greeter` mode LightDM runs as root inside the container so it can
+  spawn each session as its target user. The XFCE session still runs
+  unprivileged. The nftables egress lockdown is installed before LightDM
+  starts and cannot be modified from inside the session.
+
 ## [1.3.0] — 2026-07-06
 
 Secure-by-default release: multi-user auth, clipboard/DLP controls, an
@@ -139,7 +174,8 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.0.0...v1.1.0

@@ -3,14 +3,18 @@
 The container has one job: run QGIS in an XFCE desktop that a browser can
 reach over HTTP. Getting there involves a deliberate root-then-drop boot
 flow so the egress firewall can be enforced without letting the desktop
-tamper with it.
+tamper with it. Since 1.4.0 the boot path branches on `KASM_AUTH_MODE` —
+`basic`/`none` follow the historical "start-desktop drops to uid 1000"
+route, and `greeter` keeps LightDM running as root inside the container
+so it can spawn each user session under its own UID.
 
-## Boot flow
+## Boot flow — `basic` / `none` (default)
 
 ```mermaid
 graph TD
     PID1["PID 1: qgis-entrypoint (root)"]
     NFT["setup nftables egress filter<br/>policy drop + allowlist"]
+    MODE{"KASM_AUTH_MODE"}
     SETPRIV["setpriv --reuid=1000 --regid=1000<br/>--inh-caps=-all --ambient-caps=-all"]
     START["start-desktop (uid 1000)"]
     XKASM["Xkasmvnc<br/>X server + VNC + web"]
@@ -18,12 +22,39 @@ graph TD
     XFCE["startxfce4"]
     QGIS["QGIS 4.0"]
 
-    PID1 --> NFT --> SETPRIV --> START
+    PID1 --> NFT --> MODE
+    MODE -->|"basic / none"| SETPRIV --> START
     START --> XKASM
     START --> DBUS --> XFCE --> QGIS
 ```
 
-## Stages
+## Boot flow — `greeter`
+
+```mermaid
+graph TD
+    PID1["PID 1: qgis-entrypoint (root)"]
+    NFT["setup nftables egress filter<br/>policy drop + allowlist"]
+    MODE{"KASM_AUTH_MODE"}
+    MATERIALISE["materialise /etc/passwd,<br/>/etc/group, /etc/shadow<br/>from KASM_USERS_*"]
+    DBUSSYS["dbus-daemon --system --fork"]
+    LIGHTDM["lightdm --debug (still root)"]
+    WRAPPER["/etc/lightdm/xkasmvnc-wrapper<br/>(pretends to be Xephyr)"]
+    XKASM["Xkasmvnc"]
+    GREETER["lightdm-gtk-greeter<br/>runs as user 'lightdm'"]
+    PAM["pam_exec →<br/>/etc/lightdm/check-password"]
+    XSESS["/etc/lightdm/Xsession<br/>(runs as authenticated user)"]
+    XFCE["startxfce4"]
+    QGIS["QGIS 4.0"]
+
+    PID1 --> NFT --> MODE
+    MODE -->|"greeter"| MATERIALISE --> DBUSSYS --> LIGHTDM
+    LIGHTDM -->|"xserver-command"| WRAPPER --> XKASM
+    LIGHTDM --> GREETER
+    GREETER -->|"password"| PAM
+    PAM -->|"on match"| XSESS --> XFCE --> QGIS
+```
+
+## Stages — common to all modes
 
 **1. `qgis-entrypoint` (root, PID 1)**
 
@@ -36,21 +67,29 @@ The `Cmd` set by the flake. It:
   builds an nftables ruleset with `policy drop` on the output chain plus
   `accept` rules for loopback, established/related, DNS, and the resolved
   allowlist.
-- Prepares `/tmp/.X11-unix` (root:root, mode 1777) and `/tmp/runtime-user`
-  (1000:1000, mode 700). Doing this as root before the drop keeps Xkasmvnc
-  from logging `_XSERVTransmkdir: Owner of /tmp/.X11-unix should be set to
-  root` warnings.
+- Prepares `/tmp/.X11-unix` (root:root, mode 1777), `/tmp/.ICE-unix`
+  (root:root, mode 1777 — XSMP socket dir XFCE's session manager needs),
+  and `/tmp/runtime-user` (1000:1000, mode 700). Doing this as root before
+  any privilege drop keeps Xkasmvnc and xfce4-session happy.
+- Reads `KASM_AUTH_MODE` (default `basic`) and dispatches:
+
+    * `basic` / `none` — [stage 2A](#2a-basic-none) below.
+    * `greeter` — [stage 2B](#2b-greeter) below.
+
+## Stage 2A — `basic` / `none`
+
+**`setpriv` → `start-desktop` (uid 1000)**
+
 - Execs `setpriv --reuid=1000 --regid=1000 --init-groups
   --inh-caps=-all --ambient-caps=-all -- start-desktop`.
 
-**2. `start-desktop` (uid 1000)**
-
-The unprivileged desktop entrypoint. It:
+The unprivileged desktop entrypoint (`start-desktop.sh`) then:
 
 - Normalises the `KASM_*` env vars, echoes the effective config, wipes any
   stale X lock or socket.
 - Populates `~/.kasmpasswd` from `KASM_USERS_FILE`, else `KASM_USERS`,
-  else `VNC_USER`/`VNC_PW`.
+  else `VNC_USER`/`VNC_PW`. In `none` mode this step is skipped and
+  Xkasmvnc gets `-DisableBasicAuth`.
 - Builds the DLP argv (`-AcceptCutText`, `-SendCutText`, `-SendPrimary`,
   `-DLP_*`, `-DLP_WatermarkText` with `${USER}` expanded).
 - Writes `~/.vnc/xstartup` — a small script that seeds the wallpaper
@@ -59,30 +98,131 @@ The unprivileged desktop entrypoint. It:
   for `/tmp/.X11-unix/X<n>` to appear, then runs the xstartup script.
 - `wait`s on `Xkasmvnc` so the container exits when it does.
 
-**3. XFCE + QGIS**
+## Stage 2B — `greeter`
+
+**User materialisation (root)**
+
+Rather than drop privileges, the entrypoint materialises real Linux user
+accounts from the credential sources and hands X server + auth
+lifecycle to LightDM.
+
+- `/etc/passwd`, `/etc/group`, `/etc/shadow` are dereferenced into real
+  writable files (they may have been read-only symlinks into the nix
+  store).
+- For each entry in `KASM_USERS_FILE` / `KASM_USERS` / legacy
+  `VNC_USER`+`VNC_PW`, the entrypoint appends a `/etc/passwd` line with a
+  fresh UID (starting at 1001) and creates `/home/<user>` with mode 0700.
+- The password is hashed with `openssl passwd -6` (sha512crypt) and
+  written directly into `/etc/shadow` — the entrypoint deletes any
+  existing line for the user and appends the new one. `chpasswd` is
+  bypassed because pam_unix's helper (`unix_chkpwd`) isn't SUID in this
+  container and returns `PAM_AUTHINFO_UNAVAIL`.
+
+**dbus system bus + LightDM**
+
+- Starts `dbus-daemon --system --fork` so lightdm can register
+  `org.freedesktop.DisplayManager`.
+- Exports `DBUS_SYSTEM_BUS_ADDRESS` because nixpkgs' dbus is often
+  compiled with a different default socket path than our system.conf
+  uses.
+- Prepends `/usr/bin` to PATH so lightdm can find our `Xephyr` shim.
+- `exec lightdm --debug` — lightdm now owns PID 1.
+
+**Xkasmvnc under LightDM**
+
+LightDM's `[Seat:*] xserver-command` is set to
+`/etc/lightdm/xkasmvnc-wrapper`, and the flake also symlinks
+`/usr/bin/Xephyr`, `/usr/bin/X`, and `/usr/bin/Xorg` to the same wrapper
+so *whichever* binary name lightdm's built-in seat logic picks up
+resolves to the same script.
+
+The wrapper:
+
+- Parses LightDM's Xorg-style argv (`:N -auth /path -nolisten tcp
+  -novtswitch ...`), keeps the display + auth file, drops the rest.
+- Launches Xkasmvnc in the background with all the DLP flags the
+  container's env vars specify.
+- Polls `/tmp/.X11-unix/X<n>` and, once the socket appears, sends
+  `SIGUSR1` to LightDM *from its own PID* (the one LightDM registered as
+  the X server). Without this, LightDM waits forever on the ready signal
+  — Xvnc doesn't implement the X convention of signalling its parent.
+- Forwards TERM / INT / HUP to the child so LightDM can stop the X
+  server cleanly.
+
+**PAM auth via `pam_exec`**
+
+`/etc/pam.d/lightdm` uses `pam_exec.so` pointing at
+`/etc/lightdm/check-password` (a `writeShellApplication` in the flake so
+`bash` + `openssl` are on its PATH). That script reads the password from
+stdin, looks up the user's shadow entry, and re-hashes with the same
+salt. `pam_permit` follows on the auth stack so `pam_setcred()`, which
+lightdm calls before spawning the session, gets a module that returns
+`PAM_SUCCESS`.
+
+**Session — `/etc/lightdm/Xsession`**
+
+A nix-built `writeShellScript` that lightdm runs as the authenticated
+user. It:
+
+- Re-exports the env vars lightdm strips (`FONTCONFIG_FILE`,
+  `XDG_DATA_DIRS`, `XDG_CONFIG_DIRS`, `XKB_BASE_DIR`,
+  `XDG_RUNTIME_DIR`) with nix-store paths baked in at build time.
+- Seeds `~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml`
+  and `~/.config/xfce4/panel/default.xml` from the system-wide copies
+  under `/etc/xdg/` and `/home/user/.config/xfce4/`.
+- Backgrounds `dbus-run-session -- startxfce4` and, after 3s, force-sets
+  the wallpaper via `xfconf-query` on all three candidate monitor paths
+  (`monitorscreen`, `monitor0`, `monitorVNC-0`) — KasmVNC's monitor name
+  varies with client capabilities.
+
+## XFCE + QGIS
 
 `startxfce4` brings up `xfwm4`, `xfce4-panel`, `xfdesktop`, and
 `xfsettingsd`. QGIS is on the panel and in the applications menu. Thunar
 and `xfce4-terminal` are available for file management and shell access
 inside the session.
 
-## Why root first, then drop?
+## Why root first, then drop (or keep as root, for greeter)?
 
 Only root can call `nft` to install a filter that binds to the container's
 network namespace. If the desktop process itself had `NET_ADMIN`, a
 compromised QGIS plugin — or the user simply typing `nft flush ruleset`
 in the terminal — could remove the filter.
 
-`setpriv` clears the inheritable and ambient capability sets before it
-execs `start-desktop`, so the desktop and every descendant it spawns
-(terminal, plugin, dbus service, whatever) run without `NET_ADMIN`. The
-container still holds the capability at the OCI level, but the running
-process tree cannot use it. Verify with `nft list ruleset` inside the
-XFCE terminal: it returns `Operation not permitted`.
+For `basic` / `none`: `setpriv` clears the inheritable and ambient
+capability sets before it execs `start-desktop`, so the desktop and every
+descendant it spawns (terminal, plugin, dbus service, whatever) run
+without `NET_ADMIN`. The container still holds the capability at the OCI
+level, but the running process tree cannot use it.
+
+For `greeter`: LightDM stays root so it can transition each authenticated
+session to its target user via PAM's `pam_setcred` + setuid — the XFCE
+session itself still runs unprivileged as the authenticated user, so the
+attacker-facing surface is unchanged from the `basic` mode session
+perspective. The nftables filter is installed *before* LightDM starts, so
+even a root exploit inside lightdm can only add rules; the OCI-level
+capability isolation still applies.
+
+Verify inside the XFCE terminal (any mode): `nft list ruleset` returns
+`Operation not permitted`.
 
 ## Why bypass `kasmvncserver`?
 
 KasmVNC ships a Perl wrapper (`kasmvncserver`) that reads a YAML config,
 writes a per-user `kasmvnc.yaml`, and forks `Xkasmvnc`. We drive
 `Xkasmvnc` directly and pass all flags on the command line. This drops the
-Perl dependency tree and makes the effective config visible in `ps` output.
+Perl dependency tree and makes the effective config visible in `ps`
+output — and in `greeter` mode makes it much easier to slot Xkasmvnc into
+LightDM's xserver-command hole.
+
+## Why can't we just use `pam_unix`?
+
+`pam_unix.so` in the nixpkgs container delegates to `unix_chkpwd`, a
+helper program that expects to be SUID root so it can read `/etc/shadow`
+when the caller isn't root (which is the case here — lightdm's session
+child `setuid()`s to the target user before calling `pam_authenticate()`).
+`unix_chkpwd` in nixpkgs isn't SUID inside the docker image, so
+pam_unix returns `PAM_AUTHINFO_UNAVAIL` regardless of `/etc/shadow`
+permissions. `pam_exec` with our own verifier sidesteps that entirely,
+and lets us keep the credential store (sha512crypt hashes in
+`/etc/shadow`) exactly the same shape a real Linux system uses.

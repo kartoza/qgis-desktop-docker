@@ -10,6 +10,11 @@ setup.
   Ships with UML diagrams, a `docker-compose.yml`, and a verification
   checklist. Try it with `nix run .#run-analyst-scenario`.
 
+- **[Multi-user greeter session](multi-user-greeter.md)** — shared
+  workstation with a LightDM login form inside the desktop, per-user
+  homes, and clean log-out → re-prompt without closing the browser.
+  Try it with `nix run .#run-greeter-multi`.
+
 Each scenario page describes the requirements, the topology, the
 container internals, the compose file, how to run it, and a checklist for
 confirming every requirement is enforced.

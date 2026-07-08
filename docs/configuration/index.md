@@ -6,7 +6,7 @@ Every knob is an environment variable, grouped by concern.
 |-------|------------------|------|
 | Session | Port, resolution, colour depth, X display number. | [Environment](environment.md) |
 | Kasm permissions | Clipboard direction, size caps, MIME allowlist, watermark, DLP audit log. | [Kasm permissions](kasm-permissions.md) |
-| Authentication | HTTP BasicAuth, multi-user via file or env, disabling auth. | [Authentication](authentication.md) |
+| Authentication | Three modes: `none`, `basic` HTTP BasicAuth (default), or `greeter` LightDM login. Multi-user via file or env. | [Authentication](authentication.md) |
 | Egress lockdown | nftables allowlist, fail-closed behaviour, capability requirement. | [Egress lockdown](egress-lockdown.md) |
 
 Defaults are chosen so that a stock `docker run --cap-add=NET_ADMIN`

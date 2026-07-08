@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# LightDM session-wrapper for KASM_AUTH_MODE=greeter.
+# Called by LightDM after a successful login with the user's chosen
+# session name as the first argument (e.g. "xfce"). We ignore the choice
+# and always launch XFCE via dbus-run-session, matching start-desktop.sh's
+# session bootstrap.
+
+set -euo pipefail
+
+# LightDM sets USER, HOME, DISPLAY etc. before invoking us. Guard against
+# an empty HOME (e.g. if PAM couldn't materialise the target user).
+HOME="${HOME:-/home/${USER:-user}}"
+export HOME
+
+mkdir -p "$HOME/.config/xfce4"
+
+# XFCE tries to read xfsettings/xfce4-desktop channel state on startup. If
+# the shared /etc/xdg/xfce4/ default is present (the flake installs one),
+# xfconf will use it and the user gets the Kartoza wallpaper without any
+# extra setup here.
+
+# dbus-run-session hosts the session bus for XFCE. Without it, xfconfd
+# refuses to start and the panel / desktop come up broken.
+exec dbus-run-session -- startxfce4
