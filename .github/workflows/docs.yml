@@ -26,14 +26,12 @@ on:
       - "flake.lock"
       - "start-desktop.sh"
       - "entrypoint.sh"
+  # Every merge to main republishes, deliberately unscoped by path. The site
+  # embeds things that live outside docs/ — the diagrams rendered from .d2
+  # sources, version numbers, the flake's own help text — so "nothing under
+  # docs/ changed" is not the same as "the site did not change".
   push:
     branches: [main]
-    paths:
-      - "docs/**"
-      - "mkdocs.yml"
-      - ".github/workflows/docs.yml"
-      - "flake.nix"
-      - "flake.lock"
   workflow_dispatch:
 
 # Only one publish in flight per ref. Newer runs supersede older ones so a

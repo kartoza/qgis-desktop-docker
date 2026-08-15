@@ -20,6 +20,22 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
+## The shape of it
+
+![How the home directory and the bucket relate](diagrams/persistence-overview.svg)
+
+Three things to take from that picture:
+
+- **The desktop never talks to the bucket.** It reads and writes an ordinary
+  local filesystem, with working file locks and no surprises for SQLite. Only
+  the sync process, running as root, ever sees object storage.
+- **The bucket holds four things, and only one is a mirror.** `home/` is
+  overwritten to match the container. `provision/` and `inbox/` are inputs.
+  `.persist-trash/` is what the mirror moved aside.
+- **Restore happens before the desktop starts.** That is the only moment root
+  writes into the home directory, and there is no user process running yet to
+  plant a symlink in the way.
+
 ## Why a sync and not a mount
 
 S3 is not a filesystem. A QGIS profile is SQLite — `qgis.db`,
@@ -37,6 +53,22 @@ sees whole files that are already at rest.
     warning. That window is `QGIS_DESKTOP_PERSIST_INTERVAL` wide — five minutes
     by default. A clean shutdown (`docker stop`, a Kubernetes eviction, a user
     logging out) always saves first.
+
+## The life of a container
+
+![Boot, work, shutdown, and what a hard kill costs](diagrams/persistence-lifecycle.svg)
+
+The two shutdown paths are the whole trade-off:
+
+| | What happens | What it costs |
+|---|---|---|
+| **Graceful** — `docker stop`, a Kubernetes eviction, the user logging out | `SIGTERM` reaches PID 1, the desktop is stopped, a final save runs | Nothing |
+| **Hard kill** — `docker kill`, `SIGKILL`, the node dying | The container is gone mid-session | Work since the last periodic save |
+
+That is why the entrypoint stays PID 1 when persistence is on: `SIGTERM` is
+delivered to PID 1 and nowhere else, so exec'ing the desktop would throw away
+the only chance to save. And it is why the interval is the number to think
+about — it *is* your worst-case data loss.
 
 ## Variables
 
@@ -151,8 +183,11 @@ files in the bucket to be retried rather than losing them.
 ## Safeguards
 
 The failure this feature has to avoid is not "the save didn't happen" — it is
-"the save happened, and replaced good data with bad". Five guards exist for
-that:
+"the save happened, and replaced good data with bad".
+
+![What has to be true before anything is written to the bucket](diagrams/persistence-guards.svg)
+
+Five guards exist for that:
 
 | Guard | What it stops |
 |-------|---------------|

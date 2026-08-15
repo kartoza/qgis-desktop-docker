@@ -147,6 +147,62 @@ else is an environment variable &mdash; see
 
 </div>
 
+## Run it yourself, or let us run it
+
+<div class="kz-hero" markdown>
+
+<span class="kz-eyebrow">KARTOZA &middot; COMMERCIAL SUPPORT</span>
+
+# Need this in production?
+
+Kartoza builds and maintains this image. We can deploy it into your
+infrastructure, integrate it with your identity provider and spatial database,
+add the domain tooling your team needs, and support it under an SLA.
+
+<div class="kz-cta" markdown>
+[:material-handshake: Talk to Kartoza](https://kartoza.com/contact-us){ .kz-cta__primary }
+[:material-cloud-outline: Hosted service &mdash; coming soon](https://kartoza.com/contact-us){ .kz-cta__secondary }
+[:material-heart: Sponsor the project](https://github.com/sponsors/kartoza){ .kz-cta__secondary }
+</div>
+
+</div>
+
+<div class="grid cards" markdown>
+
+-   :material-server-network:{ .lg .middle } __Deployment and integration__
+
+    ---
+
+    Kubernetes or Docker, single sign-on against your identity provider,
+    per-user home directories on your object storage, and an egress policy that
+    matches your security review rather than fighting it.
+
+-   :material-map-search:{ .lg .middle } __Domain tooling__
+
+    ---
+
+    Giswater is in the box because a client needed it. If your team needs a
+    different plugin stack, database schema or field workflow baked in and kept
+    working across QGIS releases, that is the same job.
+
+-   :material-cloud-check:{ .lg .middle } __Hosted QGIS desktops__ &mdash; *coming soon*
+
+    ---
+
+    A managed service: browser-based QGIS for your team, with persistent home
+    directories, your identity provider, and upgrades handled for you. Get in
+    touch to hear first when it launches.
+
+-   :material-lifebuoy:{ .lg .middle } __Support and training__
+
+    ---
+
+    SLA-backed support for the image and the QGIS stack inside it, plus
+    training for the people who will use it. Sponsorship keeps the open-source
+    version moving for everyone else.
+
+</div>
+
 ## Status
 
 [![Docker](https://github.com/kartoza/qgis-desktop-docker/actions/workflows/docker.yml/badge.svg)](https://github.com/kartoza/qgis-desktop-docker/actions/workflows/docker.yml)

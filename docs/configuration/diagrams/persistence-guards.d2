@@ -1,0 +1,41 @@
+# What has to be true before anything is written to the bucket.
+# Every branch here exists because the alternative is losing a user's data.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+start: "Time to save" { shape: circle; style.fill: "#1E88C7"; style.font-color: "#FFFFFF" }
+
+sentinel: "Did the restore\nsucceed this boot?" { shape: diamond }
+quota: "Is the home directory\nunder quota?" { shape: diamond }
+shrink: "Did most of the files\njust disappear?" { shape: diamond }
+
+save: "Save: mirror the home\ndirectory into home/" { style.fill: "#2E7D32"; style.font-color: "#FFFFFF" }
+trash: "Replaced and deleted objects\nmove to .persist-trash/" { style.fill: "#F5F5F2" }
+
+refuse_sentinel: "Refuse\n\nA container that failed to restore\nwould otherwise replace a full home\ndirectory with an empty one" {
+  style.fill: "#FFEBEE"
+  style.stroke: "#C62828"
+}
+refuse_quota: "Refuse, and write\nPERSISTENCE-WARNING.txt\n\nThe user has no terminal;\nthey have to hear it somewhere" {
+  style.fill: "#FFEBEE"
+  style.stroke: "#C62828"
+}
+refuse_shrink: "Refuse\n\nA broken volume mount looks exactly\nlike a user deleting everything" {
+  style.fill: "#FFEBEE"
+  style.stroke: "#C62828"
+}
+
+start -> sentinel
+sentinel -> refuse_sentinel: "no"
+sentinel -> quota: "yes"
+quota -> refuse_quota: "over"
+quota -> shrink: "under"
+shrink -> refuse_shrink: "yes"
+shrink -> save: "no"
+save -> trash
+
+lease: "Before any of this: the single-writer lease.\nA second container on the same prefix\nrefuses to start at all." {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

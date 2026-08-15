@@ -38,6 +38,7 @@ test: ## Run the test suite (no Docker required)
 	bash scripts/test-persist.sh
 	bash scripts/test-docs-glyphs.sh
 	bash scripts/test-autostart.sh
+	bash scripts/test-docs-diagrams.sh
 
 summary: ## Generate build summary
 	bash build-summary.sh $(IMAGE_NAME):$(IMAGE_TAG) build-summary.md

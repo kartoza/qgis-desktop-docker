@@ -820,6 +820,36 @@ DBUSEOF
         # Self-contained Keycloak + desktop demo for QGIS_DESKTOP_AUTH_MODE=oidc.
         keycloakComposeDir = ./examples/keycloak-oidc;
 
+        # One compose file per scenario, so every one in the docs can be
+        # reproduced with a single command.
+        greeterComposeFile = ./examples/multi-user-greeter/docker-compose.yml;
+        persistenceComposeFile = ./examples/home-persistence/docker-compose.yml;
+
+        # Every scenario target has the same shape: refuse without the image,
+        # print what the user is about to get, and tear down on Ctrl-C.
+        mkScenario = { name, composeFile, project, banner }: mkApp name ''
+          cat <<'BANNER'
+          ${banner}
+          BANNER
+
+          if ! docker image inspect nix-xfce-kasm:latest >/dev/null 2>&1; then
+            echo ""
+            echo "ERROR: image 'nix-xfce-kasm:latest' not found."
+            echo "       Build it first with:  nix run .#build-docker"
+            exit 1
+          fi
+
+          cleanup() {
+            echo ""
+            echo "Stopping…"
+            docker compose --project-name ${project} \
+              -f ${composeFile} down --remove-orphans 2>/dev/null || true
+          }
+          trap cleanup EXIT INT TERM
+
+          docker compose --project-name ${project} -f ${composeFile} up
+        '';
+
         # Python environment with mkdocs + Material + IM's plugin set.
         mkdocsPython = pkgs.python3.withPackages (ps: with ps; [
           mkdocs
@@ -873,6 +903,18 @@ DBUSEOF
             pkgs.liberation_ttf
             pkgs.open-sans
           ];
+        };
+
+        # Renders docs/**/diagrams/*.d2 to SVG. Separate from the mkdocs apps
+        # because the PDF build needs it too, and because a diagram change
+        # should be re-renderable on its own.
+        docsDiagrams = pkgs.writeShellApplication {
+          name = "docs-diagrams";
+          runtimeInputs = with pkgs; [ d2 findutils coreutils diffutils ];
+          text = ''
+            export QGIS_DESKTOP_PROJECT_ROOT="''${QGIS_DESKTOP_PROJECT_ROOT:-$PWD}"
+            exec bash ${./scripts/render-diagrams.sh} "$@"
+          '';
         };
 
         # Helper for docs-related apps that need the mkdocs Python env.
@@ -1092,6 +1134,43 @@ DBUSEOF
               -f ${keycloakComposeDir}/docker-compose.yml up
           '';
 
+          # Shared workstation: LightDM inside the desktop, two real accounts.
+          run-greeter-scenario = mkScenario {
+            name = "run-greeter-scenario";
+            composeFile = greeterComposeFile;
+            project = "qgis-greeter";
+            banner = ''
+              ▶ Multi-user greeter session
+
+                Login:    alice / hunter2
+                          bob / correct-horse-battery-staple
+                Desktop:  http://localhost:8443
+                Docs:     examples/multi-user-greeter/README.md
+
+                Log out from the XFCE menu and the next person signs in on the
+                same browser tab. Each account has its own home directory.
+                Press Ctrl-C to stop.'';
+          };
+
+          # The home directory living in object storage, with MinIO standing in
+          # for a real provider.
+          run-persistence-demo = mkScenario {
+            name = "run-persistence-demo";
+            composeFile = persistenceComposeFile;
+            project = "qgis-persistence";
+            banner = ''
+              ▶ Home persistence demo
+
+                Desktop:  http://localhost:8443    (user / password)
+                MinIO:    http://localhost:9001    (minioadmin / minioadmin123)
+                Docs:     examples/home-persistence/README.md
+
+                The home directory is restored from the bucket at boot and
+                saved every 60s. Kill the container and start it again — the
+                work comes back. Drop a file into the bucket's inbox/ prefix
+                and it lands on the desktop. Press Ctrl-C to stop.'';
+          };
+
           # Locked-down demo: auth on, clipboard blocked, watermarked, DLP info logging.
           # Handy for validating the permission controls end-to-end.
           run-locked-down = mkApp "run-locked-down" ''
@@ -1280,6 +1359,19 @@ DBUSEOF
             }}/bin/test-terminal-lockdown";
           };
 
+          # Keeps the committed diagram SVGs in step with their .d2 sources.
+          test-docs-diagrams = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-docs-diagrams";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep findutils diffutils d2 ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-docs-diagrams.sh
+              '';
+            }}/bin/test-docs-diagrams";
+          };
+
           # Unit tests for the QGIS autostart flag.
           test-autostart = {
             type = "app";
@@ -1344,7 +1436,8 @@ DBUSEOF
             program = "${pkgs.writeShellApplication {
               name = "test";
               runtimeInputs = with pkgs; [
-                bash coreutils gnused gnugrep gawk findutils oauth2-proxy rclone
+                bash coreutils gnused gnugrep gawk findutils diffutils
+                oauth2-proxy rclone d2
               ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
@@ -1360,6 +1453,8 @@ DBUSEOF
                 bash ${self}/scripts/test-docs-glyphs.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-autostart.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-docs-diagrams.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
@@ -1395,8 +1490,15 @@ DBUSEOF
             mkdocs serve -f "$WORK/mkdocs.yml" -a "$ADDR"
           '';
 
+          # Re-render every diagram from its .d2 source.
+          docs-diagrams = {
+            type = "app";
+            program = "${docsDiagrams}/bin/docs-diagrams";
+          };
+
           # Build the static site into ./site/.
           docs-build = mkDocsApp "docs-build" [] ''
+            ${docsDiagrams}/bin/docs-diagrams
             mkdocs build --strict
             echo "Built site into ./site/"
           '';
@@ -1410,6 +1512,7 @@ DBUSEOF
           # doesn't exist on non-FHS distros like NixOS. lualatex writes PDF
           # directly, no /bin/sh needed.
           docs-pdf = mkDocsApp "docs-pdf" (with pkgs; [
+            d2
             pandoc
             pdfLatex
             fontconfig
@@ -1465,6 +1568,10 @@ DBUSEOF
 
             echo "Assembling PDF at $OUT_ABS"
 
+            # Diagrams first: the PDF embeds the rendered SVGs, so a stale one
+            # would print an old picture next to new prose.
+            ${docsDiagrams}/bin/docs-diagrams
+
             # Nav order to match mkdocs.yml.
             #
             # docs/index.md is deliberately absent: it is a landing page built
@@ -1500,13 +1607,16 @@ DBUSEOF
               "$DOCS_DIR/about/license.md"
             )
 
-            # Convert SVGs to PDF so pandoc/xelatex can embed them at vector
-            # quality.
+            # Convert every diagram to PDF so pandoc/pdflatex embeds it at
+            # vector quality. Any docs/**/diagrams/ directory, not just the
+            # scenarios one — the pages rewrite `diagrams/x.svg` to the
+            # converted file by basename, so those names have to stay unique
+            # across directories (scripts/test-docs-diagrams.sh checks that).
             mkdir -p "$WORK/diagrams"
-            for svg in "$DOCS_DIR/scenarios/diagrams"/*.svg; do
+            while IFS= read -r svg; do
               name=$(basename "$svg" .svg)
               rsvg-convert -f pdf -o "$WORK/diagrams/$name.pdf" "$svg"
-            done
+            done < <(find "$DOCS_DIR" -path '*/diagrams/*.svg' | sort)
 
             # Concatenate pages with page breaks between chapters. Chapters map
             # to top-level sections in the nav.
