@@ -62,6 +62,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   created — it is set up once when a deployment is designed, not in reaction to
   a request. `QGIS_DESKTOP_PERSIST_CREATE_DEPLOY=0` opts out.
 
+### Changed
+
+- **The locally built image is now `kartoza:qgis-ltr` / `kartoza:qgis-latest`**
+  (was `nix-xfce-kasm:*`). The old name described how the image is built rather
+  than what it is, and said nothing about whose it is. `nix run .#build-docker`
+  still tags the LTR build `:latest`. The published name is unchanged:
+  `ghcr.io/kartoza/qgis-desktop-docker`.
+
 ### Fixed
 
 - The docs site now builds and deploys on every merge to `main`, rather than
@@ -199,8 +207,8 @@ the `VNC_*` session variables.
 
 #### QGIS channels
 - Two images from the same source, differing only in the QGIS package:
-  `nix-xfce-kasm:qgis-ltr` (also tagged `:latest`) on the long-term release, and
-  `nix-xfce-kasm:qgis-latest` on the current release. Published to GHCR as
+  `kartoza:qgis-ltr` (also tagged `:latest`) on the long-term release, and
+  `kartoza:qgis-latest` on the current release. Published to GHCR as
   `:qgis-ltr` + `:latest` + `:<version>`, and `:qgis-latest` /
   `:<version>-qgis-latest`.
 - `nix run .#build-docker` builds the LTR image;

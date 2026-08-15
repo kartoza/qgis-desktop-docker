@@ -9,7 +9,7 @@ entrypoint can install the nftables egress filter.
 | Target | What it does |
 |--------|--------------|
 | `nix run` | Print the help banner listing every target. |
-| `nix run .#build-docker` | Build the image with `nix build .#docker` and load it into the local Docker daemon as `nix-xfce-kasm:latest`. Prints the image size at the end. |
+| `nix run .#build-docker` | Build the image with `nix build .#docker` and load it into the local Docker daemon as `kartoza:latest`. Prints the image size at the end. |
 | `nix run .#run` | Foreground run with the default single-user auth. Log in as `user` / `password`. |
 | `nix run .#run-multi-user` | Foreground run with `QGIS_DESKTOP_USERS='alice:pw1,bob:pw2'` set. |
 | `nix run .#run-users-file` | Foreground run that generates a temp `user:password` file, mounts it at `/etc/qgis-desktop/users:ro`, and cleans it up on exit. |

@@ -41,6 +41,8 @@ Getting this backwards is the common mistake: putting a one-off delivery in
 
 ### What happens after you upload
 
+![The four steps a delivered file goes through](diagrams/deploy-lifecycle.svg)
+
 ```text
 1. you upload            s3://…/surveyor-7c1e/deploy/parcels.gpkg
 2. next sync tick        copied into ~/Desktop/parcels.gpkg, owned by the user
@@ -122,6 +124,8 @@ write outside `home/`.
 
 Delivery writes into a home directory on behalf of a user who never sees the
 credentials. Three things keep that honest:
+
+![Root downloads it; an unprivileged copy delivers it](diagrams/deploy-safety.svg)
 
 | Concern | What happens |
 |---------|--------------|

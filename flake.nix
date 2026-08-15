@@ -351,7 +351,7 @@
         # of the qgisChannels attrsets above; everything else about the two
         # images is identical.
         mkDockerImage = channel: pkgs.dockerTools.buildLayeredImage {
-          name = "nix-xfce-kasm";
+          name = "kartoza";
           tag = channel.tag;
           maxLayers = 120;
 
@@ -839,9 +839,9 @@ DBUSEOF
           ${banner}
           BANNER
 
-          if ! docker image inspect nix-xfce-kasm:latest >/dev/null 2>&1; then
+          if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
             echo ""
-            echo "ERROR: image 'nix-xfce-kasm:latest' not found."
+            echo "ERROR: image 'kartoza:latest' not found."
             echo "       Build it first with:  nix run .#build-docker"
             exit 1
           fi
@@ -980,11 +980,11 @@ DBUSEOF
             nix build .#docker -o result
             OUT=$(nix build .#docker --print-out-paths)
             nix store cat "$OUT" | docker load
-            docker tag nix-xfce-kasm:qgis-ltr nix-xfce-kasm:latest
+            docker tag kartoza:qgis-ltr kartoza:latest
             echo ""
-            echo "Image loaded: nix-xfce-kasm:qgis-ltr (also tagged :latest)"
-            docker image inspect nix-xfce-kasm:latest --format \
-              "Size: {{.Size}} bytes ($(docker image inspect nix-xfce-kasm:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+            echo "Image loaded: kartoza:qgis-ltr (also tagged :latest)"
+            docker image inspect kartoza:latest --format \
+              "Size: {{.Size}} bytes ($(docker image inspect kartoza:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
           '';
 
           # The current QGIS release, side by side with the LTR image. Nothing
@@ -995,10 +995,10 @@ DBUSEOF
             OUT=$(nix build .#docker-qgis-latest --print-out-paths)
             nix store cat "$OUT" | docker load
             echo ""
-            echo "Image loaded: nix-xfce-kasm:qgis-latest"
-            echo "Run it with:  docker run --rm -p 8443:8443 --cap-add=NET_ADMIN nix-xfce-kasm:qgis-latest"
-            docker image inspect nix-xfce-kasm:qgis-latest --format \
-              "Size: {{.Size}} bytes ($(docker image inspect nix-xfce-kasm:qgis-latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+            echo "Image loaded: kartoza:qgis-latest"
+            echo "Run it with:  docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-latest"
+            docker image inspect kartoza:qgis-latest --format \
+              "Size: {{.Size}} bytes ($(docker image inspect kartoza:qgis-latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
           '';
 
           # Foreground run with default single-user auth (Ctrl-C to stop).
@@ -1007,7 +1007,7 @@ DBUSEOF
             docker rm -f qgis-desktop 2>/dev/null || true
             echo "▶ Auth: single-user (default VNC_USER=user, VNC_PW=password)"
             echo "  Open http://localhost:8443 — browser will prompt for creds."
-            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop nix-xfce-kasm:latest
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop kartoza:latest
           '';
 
           # Multi-user via inline env var.
@@ -1018,7 +1018,7 @@ DBUSEOF
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # Multi-user via mounted file. Generates a temp file, mounts it 0600,
@@ -1038,7 +1038,7 @@ DBUSEOF
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -v "$USERS_FILE:/etc/qgis-desktop/users:ro" \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # No auth at all — for local sanity checks only.
@@ -1048,7 +1048,7 @@ DBUSEOF
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=none \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # LightDM greeter mode: browser sees an X-server-hosted login form
@@ -1063,7 +1063,7 @@ DBUSEOF
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # Greeter mode with two demo users (alice / bob). Each gets a real
@@ -1076,7 +1076,7 @@ DBUSEOF
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # OIDC / Keycloak mode against a real identity provider. Everything
@@ -1108,7 +1108,7 @@ DBUSEOF
               -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES \
               -e QGIS_DESKTOP_OIDC_EMAIL_DOMAINS \
               -e QGIS_DESKTOP_OIDC_INNER_MODE \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # End-to-end OIDC demo: a throwaway Keycloak with a pre-imported
@@ -1133,9 +1133,9 @@ DBUSEOF
               expects. Press Ctrl-C to stop and remove both containers.
             BANNER
 
-            if ! docker image inspect nix-xfce-kasm:latest >/dev/null 2>&1; then
+            if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
               echo ""
-              echo "ERROR: image 'nix-xfce-kasm:latest' not found."
+              echo "ERROR: image 'kartoza:latest' not found."
               echo "       Build it first with:  nix run .#build-docker"
               exit 1
             fi
@@ -1299,7 +1299,7 @@ DBUSEOF
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
               -e QGIS_DESKTOP_ALLOW_TERMINAL=0 \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # Demo the egress lockdown with a small allowlist. Try `curl 1.1.1.1`
@@ -1313,7 +1313,7 @@ DBUSEOF
             echo "  Log in as user / password  ·  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_EGRESS_ALLOW='1.1.1.1,example.com' \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # End-to-end scenario: bob / password123, clipboard blocked, egress
@@ -1334,9 +1334,9 @@ DBUSEOF
               Press Ctrl-C to stop and remove both containers.
             BANNER
 
-            if ! docker image inspect nix-xfce-kasm:latest >/dev/null 2>&1; then
+            if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
               echo ""
-              echo "ERROR: image 'nix-xfce-kasm:latest' not found."
+              echo "ERROR: image 'kartoza:latest' not found."
               echo "       Build it first with:  nix run .#build-docker"
               exit 1
             fi
@@ -1361,7 +1361,7 @@ DBUSEOF
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               -e QGIS_DESKTOP_EGRESS_LOCKDOWN=0 \
-              nix-xfce-kasm:latest
+              kartoza:latest
           '';
 
           # Convenience: hard-stop the running container from another terminal.
@@ -1590,7 +1590,7 @@ DBUSEOF
           };
 
           summary = mkApp "summary" ''
-            bash build-summary.sh nix-xfce-kasm:latest build-summary.md
+            bash build-summary.sh kartoza:latest build-summary.md
           '';
 
           # --- Documentation apps -----------------------------------------

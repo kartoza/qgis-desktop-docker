@@ -24,12 +24,12 @@ nix build .#docker -o result
 nix store cat "$(nix build .#docker --print-out-paths)" | docker load
 ```
 
-The image is loaded as `nix-xfce-kasm:qgis-ltr`, and tagged `:latest` as well —
+The image is loaded as `kartoza:qgis-ltr`, and tagged `:latest` as well —
 that is the tag every `nix run .#run-*` target and both compose files expect.
 Run it:
 
 ```bash
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN nix-xfce-kasm:latest
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:latest
 ```
 
 ## Choosing the QGIS channel
@@ -39,8 +39,8 @@ difference between them.
 
 | Target | QGIS | Image tag |
 |--------|------|-----------|
-| `nix run .#build-docker` *(default)* | Long-term release | `nix-xfce-kasm:qgis-ltr`, also tagged `:latest` |
-| `nix run .#build-docker-qgis-latest` | Current release | `nix-xfce-kasm:qgis-latest` |
+| `nix run .#build-docker` *(default)* | Long-term release | `kartoza:qgis-ltr`, also tagged `:latest` |
+| `nix run .#build-docker-qgis-latest` | Current release | `kartoza:qgis-latest` |
 
 **Why LTR is the default.** The LTR line only takes bug fixes, so a project
 that opens today opens the same way next month. That is what you want in front
@@ -53,7 +53,7 @@ than on the day the LTR ships.
 
 ```bash
 nix run .#build-docker-qgis-latest
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN nix-xfce-kasm:qgis-latest
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-latest
 ```
 
 Both images accept exactly the same environment variables, so a compose file
@@ -62,7 +62,7 @@ can be pointed at either by changing the tag alone.
 Which QGIS is in a given image, without starting it:
 
 ```bash
-docker image inspect nix-xfce-kasm:latest \
+docker image inspect kartoza:latest \
   --format '{{index .Config.Labels "com.kartoza.qgis.channel"}} {{index .Config.Labels "com.kartoza.qgis.version"}}'
 ```
 

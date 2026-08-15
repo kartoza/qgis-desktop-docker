@@ -13,7 +13,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  NIX_IMAGE: nix-xfce-kasm
+  NIX_IMAGE: kartoza
 
 jobs:
   # Fast, hermetic checks. Runs first so a broken auth path fails in seconds

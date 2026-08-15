@@ -132,8 +132,8 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-do
 Building either from source:
 
 ```bash
-nix run .#build-docker               # QGIS LTR    -> nix-xfce-kasm:qgis-ltr (+ :latest)
-nix run .#build-docker-qgis-latest   # QGIS latest -> nix-xfce-kasm:qgis-latest
+nix run .#build-docker               # QGIS LTR    -> kartoza:qgis-ltr (+ :latest)
+nix run .#build-docker-qgis-latest   # QGIS latest -> kartoza:qgis-latest
 ```
 
 Every other feature — auth modes, egress lockdown, terminal lockdown, Giswater
@@ -481,7 +481,7 @@ nix build .#docker
 nix store cat $(nix build .#docker --print-out-paths) | docker load
 
 # Run
-docker run --rm -p 8443:8443 nix-xfce-kasm:latest
+docker run --rm -p 8443:8443 kartoza:latest
 ```
 
 ### Using Make

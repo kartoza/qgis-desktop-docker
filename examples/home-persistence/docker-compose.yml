@@ -92,7 +92,7 @@ services:
         echo "bucket ready: qgis-homes, baseline/ seeded with a starter project"
 
   qgis-desktop:
-    image: nix-xfce-kasm:latest
+    image: kartoza:latest
     container_name: qgis-desktop-persist
     # A stable hostname is the lease identity: a container that is killed and
     # recreated reclaims its own lease immediately, while a genuinely

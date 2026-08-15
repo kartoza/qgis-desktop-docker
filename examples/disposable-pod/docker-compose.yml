@@ -65,7 +65,7 @@ services:
         echo "bucket ready (versioning on)"
 
   qgis-desktop:
-    image: nix-xfce-kasm:latest
+    image: kartoza:latest
     container_name: disposable-desktop
     # The lease identity. In Kubernetes a StatefulSet gives you exactly this:
     # a stable hostname, so a recreated pod reclaims its own lease instead of
@@ -116,7 +116,7 @@ services:
   # Not started by default. The same prefix, a different identity — the lease
   # should refuse it. See the `conflict` profile note at the top of this file.
   intruder:
-    image: nix-xfce-kasm:latest
+    image: kartoza:latest
     container_name: disposable-intruder
     hostname: qgis-desktop-1
     profiles: [conflict]

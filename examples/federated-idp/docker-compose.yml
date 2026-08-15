@@ -62,7 +62,7 @@ services:
       start_period: 20s
 
   qgis-desktop:
-    image: nix-xfce-kasm:latest
+    image: kartoza:latest
     container_name: federated-desktop
     depends_on:
       keycloak:
