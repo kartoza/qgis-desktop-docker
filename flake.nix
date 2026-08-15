@@ -14,6 +14,107 @@
         # KasmVNC package
         kasmvnc = pkgs.callPackage ./kasmvnc.nix {};
 
+        # --- Giswater support -------------------------------------------
+        # The two US EPA hydraulic solvers the Giswater plugin drives: EPANET
+        # for pressurised water supply ('ws') projects, SWMM for urban drainage
+        # ('ud'). Neither is in nixpkgs, so both are built from upstream source
+        # here — see nix/README.md for the packaging notes and the SWMM patch.
+        epanet = pkgs.callPackage ./nix/epanet.nix { };
+        swmm = pkgs.callPackage ./nix/swmm.nix { };
+
+        # Python packages Giswater imports from inside QGIS's own interpreter.
+        # Deliberately minimal: everything here is a genuine runtime import of
+        # the plugin, and anything Hydra has not built would land as a local
+        # source build in every image build.
+        giswaterPythonPackages = ps: [
+          ps.jsonschema
+          ps.debugpy
+          ps.psutil
+          ps.pyproj
+          ps.matplotlib
+        ];
+
+        epaSolvers = [ epanet swmm ];
+        epaPath = pkgs.lib.makeBinPath epaSolvers;
+        epaLibPath = pkgs.lib.makeLibraryPath epaSolvers;
+
+        # Giswater's go2epa tool shells out to the solvers, and its
+        # hydraulic_engine backend dlopen()s the toolkit libraries. Wrapping
+        # QGIS puts both within reach of anything QGIS spawns, without putting
+        # them on every process's path.
+        withEpaSolvers = qgisPackage:
+          pkgs.symlinkJoin {
+            name = "${qgisPackage.pname or "qgis"}-with-epa-solvers";
+            paths = [ qgisPackage ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postBuild = ''
+              for exe in "$out"/bin/*; do
+                # Skip anything that is not runnable — wrapProgram refuses
+                # those, and a stray data file in bin/ should not fail a build.
+                [ -f "$exe" ] && [ -x "$exe" ] || continue
+                wrapProgram "$exe" \
+                  --prefix PATH : "${epaPath}" \
+                  --prefix LD_LIBRARY_PATH : "${epaLibPath}" \
+                  --set-default GISWATER_EPANET_EXE "${epanet}/bin/runepanet" \
+                  --set-default GISWATER_SWMM_EXE "${swmm}/bin/runswmm"
+              done
+            '';
+            inherit (qgisPackage) meta;
+          };
+
+        # QGIS as the image ships it: the nixpkgs build, plus the Giswater
+        # Python dependencies inside its interpreter, plus the EPA solvers on
+        # its path.
+        qgisWithGiswater = withEpaSolvers (pkgs.qgis.override {
+          extraPythonPackages = giswaterPythonPackages;
+        });
+
+        # scripts/epa.sh in the store, so the desktop can wire the plugin up
+        # without a checkout being present. Giswater executes the solvers from
+        # fixed paths inside its own plugin directory, where it ships Windows
+        # binaries — repointing those is what makes go2epa work at all.
+        epaTool = pkgs.runCommand "giswater-epa-tool" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+        } ''
+          install -Dm755 ${./scripts/epa.sh} "$out/bin/epa"
+          # Explicit rather than relying on the fixup hook: wrapProgram hides
+          # the real script as .epa-wrapped, and an unpatched
+          # `/usr/bin/env bash` shebang would then fail.
+          patchShebangs "$out/bin/epa"
+          wrapProgram "$out/bin/epa" \
+            --set-default GISWATER_EPANET_EXE "${epanet}/bin/runepanet" \
+            --set-default GISWATER_SWMM_EXE "${swmm}/bin/runswmm" \
+            --set-default GISWATER_SWMM_SMOKE_MODEL "${./nix/swmm-smoke.inp}" \
+            --prefix PATH : "${pkgs.lib.makeBinPath (with pkgs; [
+              coreutils
+              findutils
+              gnused
+              gnugrep
+            ])}"
+        '';
+
+        # --- Terminal lockdown (KASM_ALLOW_TERMINAL=0) ------------------
+        disableTerminalScript = pkgs.writeShellApplication {
+          name = "kasm-disable-terminal";
+          runtimeInputs = with pkgs; [ coreutils gnused gnugrep ];
+          text = builtins.readFile ./config/lockdown/disable-terminal.sh;
+        };
+
+        # --- OIDC (KASM_AUTH_MODE=oidc) ---------------------------------
+        # Secret materialisation, run as root by the entrypoint.
+        oidcConfigScript = pkgs.writeShellApplication {
+          name = "kasm-oidc-config";
+          runtimeInputs = with pkgs; [ coreutils gnused ];
+          text = builtins.readFile ./config/oidc/oidc-config.sh;
+        };
+
+        # The proxy itself, run unprivileged.
+        oidcProxyScript = pkgs.writeShellApplication {
+          name = "kasm-oidc-proxy";
+          runtimeInputs = with pkgs; [ oauth2-proxy coreutils ];
+          text = builtins.readFile ./config/oidc/oidc-proxy.sh;
+        };
+
         # Startup script that launches KasmVNC + XFCE
         startupScript = pkgs.writeShellApplication {
           name = "start-desktop";
@@ -32,6 +133,8 @@
             gnugrep
             xkbcomp
             xrdb
+          ] ++ [
+            epaTool # `epa install` wires Giswater up to the native solvers
           ];
           text = builtins.readFile ./start-desktop.sh;
         };
@@ -58,7 +161,7 @@
           "${pkgs.xfce4-settings}/share"
           "${pkgs.xfconf}/share"
           "${pkgs.thunar}/share"
-          "${pkgs.qgis}/share"
+          "${qgisWithGiswater}/share"
         ];
         xfceXdgConfigDirs = pkgs.lib.concatStringsSep ":" [
           "${pkgs.xfce4-session}/etc/xdg"
@@ -125,6 +228,13 @@
 
           export PATH="${xfcePath}:$PATH"
 
+          # Point the Giswater plugin at the native EPA solvers for THIS user's
+          # profile. Greeter mode gives every user their own home directory, so
+          # the wiring has to happen per session rather than once at boot.
+          # No-op when the plugin is not installed.
+          ${epaTool}/bin/epa install \
+            || echo "WARN: could not wire up the EPA solvers — run 'epa status' for detail"
+
           # Background XFCE so we can force the wallpaper via xfconf-query
           # once xfconfd has come up (mirrors start-desktop.sh's post-start
           # nudge for the different monitor property paths KasmVNC uses).
@@ -156,7 +266,8 @@
             coreutils
             gawk
             gnugrep
-            glibc.bin     # getent
+            getent        # resolves allowlist hostnames; NOT part of glibc.bin
+            glibc.bin     # ldd/ldconfig and friends
             shadow        # chpasswd (kept for later reuse; runtime uses openssl+sed)
             openssl       # openssl passwd -6 to hash user passwords (greeter mode)
             gnused        # sed -i to edit /etc/shadow in place (greeter mode)
@@ -166,6 +277,10 @@
             kasmvnc       # Xkasmvnc on PATH so the lightdm xserver wrapper finds it
             xkeyboard_config # XKB_BASE_DIR sanity in greeter mode
             startupScript # so `start-desktop` is on PATH for setpriv --exec
+          ] ++ [
+            oidcConfigScript      # kasm-oidc-config (root: validates + writes secrets)
+            oidcProxyScript       # kasm-oidc-proxy  (uid 1000: runs oauth2-proxy)
+            disableTerminalScript # kasm-disable-terminal (root: KASM_ALLOW_TERMINAL=0)
           ];
           text = builtins.readFile ./entrypoint.sh;
         };
@@ -214,13 +329,37 @@
             open-sans
 
             # Applications
-            qgis
+            qgisWithGiswater
+
+            # Giswater's EPA hydraulic solvers, on PATH under both their
+            # upstream names (runepanet / runswmm) and the aliases Giswater
+            # and the wider tooling use (epanet, epanet2, swmm5).
+            epanet
+            swmm
+            epaTool
 
             # Egress lockdown deps
             nftables
             util-linux    # setpriv
             iproute2
-            glibc.bin     # getent for hostname resolution
+            # Hostname resolution for the egress allowlist. `getent` is its own
+            # package in nixpkgs — it is NOT in glibc.bin, and without it every
+            # hostname in KASM_EGRESS_ALLOW silently fails to resolve.
+            getent
+            glibc.bin
+
+            # TLS trust store. Needed by oauth2-proxy to verify the identity
+            # provider in KASM_AUTH_MODE=oidc, and by QGIS for any HTTPS
+            # service — the image previously shipped no CA bundle at all.
+            cacert
+
+            # OIDC auth mode (KASM_AUTH_MODE=oidc). The oauth2-proxy binary
+            # itself arrives through kasm-oidc-proxy's wrapper.
+            oidcConfigScript
+            oidcProxyScript
+
+            # Terminal lockdown (KASM_ALLOW_TERMINAL=0).
+            disableTerminalScript
 
             # Greeter mode (KASM_AUTH_MODE=greeter): LightDM + GTK greeter.
             # Kept out of the runtime path when mode != greeter, so basic /
@@ -240,6 +379,9 @@
           fakeRootCommands = ''
             mkdir -p ./tmp ./run ./var/run ./var/log
             mkdir -p ./etc ./root
+            # Runtime state the entrypoint writes: the listener override that
+            # tells both KasmVNC launchers to move behind the OIDC proxy.
+            mkdir -p ./run/kasm
             mkdir -p ./home/user/.vnc
             mkdir -p ./home/user/.config/xfce4/panel
             mkdir -p ./etc/xdg/xfce4/xfconf/xfce-perchannel-xml
@@ -280,6 +422,13 @@
             ln -sfn ${pkgs.coreutils}/bin/cut   ./usr/bin/cut
             ln -sfn ${pkgs.coreutils}/bin/tr    ./usr/bin/tr
             ln -sfn ${pkgs.gawk}/bin/awk        ./usr/bin/awk
+
+            # TLS trust store at the conventional path. oauth2-proxy honours
+            # SSL_CERT_FILE (set in Env below), but plenty of other tooling —
+            # curl, python, GDAL — only looks here.
+            mkdir -p ./etc/ssl/certs
+            ln -sfn ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt ./etc/ssl/certs/ca-certificates.crt
+            ln -sfn ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt ./etc/ssl/certs/ca-bundle.crt
 
             # LightDM strips the image env vars (incl. XKB_BASE_DIR) before
             # spawning children. Give the wrapper a fixed fallback path to
@@ -503,9 +652,15 @@ DBUSEOF
               "VNC_PORT=8443"
               "VNC_RESOLUTION=1280x720"
               "VNC_COL_DEPTH=24"
-              # Auth mode: basic (default) | none | greeter.
+              # Auth mode: basic (default) | none | greeter | oidc.
               # See docs/configuration/authentication.md.
               "KASM_AUTH_MODE=basic"
+              # Terminal access. Set to 0 to remove the terminal emulators and
+              # command-runner dialogs from the desktop entirely.
+              "KASM_ALLOW_TERMINAL=1"
+              # Where the desktop listens when the OIDC proxy is in front of
+              # it. Only consulted in KASM_AUTH_MODE=oidc.
+              "KASM_OIDC_UPSTREAM_PORT=6901"
               # Egress lockdown defaults ON. Requires --cap-add=NET_ADMIN
               # on `docker run`. Set to 0 to disable (dev only).
               "KASM_EGRESS_LOCKDOWN=1"
@@ -522,7 +677,7 @@ DBUSEOF
                 "${pkgs.xfce4-settings}/share"
                 "${pkgs.xfconf}/share"
                 "${pkgs.thunar}/share"
-                "${pkgs.qgis}/share"
+                "${qgisWithGiswater}/share"
               ]}"
               "XDG_CONFIG_DIRS=${pkgs.lib.concatStringsSep ":" [
                 "${pkgs.xfce4-session}/etc/xdg"
@@ -539,6 +694,15 @@ DBUSEOF
               "XKB_DEFAULT_LAYOUT=us"
               "XKB_BASE_DIR=${pkgs.xkeyboard_config}/share/X11/xkb"
               "XKB_RULES_DIR=${pkgs.xkeyboard_config}/share/X11/xkb/rules"
+              # TLS trust store for anything that reads the environment rather
+              # than /etc/ssl/certs (oauth2-proxy, python, requests).
+              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              # Giswater reads these to locate the EPA solvers directly, for the
+              # code paths that do not go through the QGIS wrapper.
+              "GISWATER_EPANET_EXE=${epanet}/bin/runepanet"
+              "GISWATER_SWMM_EXE=${swmm}/bin/runswmm"
+              "GISWATER_SWMM_SMOKE_MODEL=${./nix/swmm-smoke.inp}"
             ];
             ExposedPorts = {
               "8443/tcp" = {};
@@ -562,6 +726,9 @@ DBUSEOF
         # Compose file for the "analyst locked-down" scenario. Pinned into the
         # nix store so `nix run .#run-analyst-scenario` works from any PWD.
         analystComposeFile = ./examples/analyst-locked-down/docker-compose.yml;
+
+        # Self-contained Keycloak + desktop demo for KASM_AUTH_MODE=oidc.
+        keycloakComposeDir = ./examples/keycloak-oidc;
 
         # Python environment with mkdocs + Material + IM's plugin set.
         mkdocsPython = pkgs.python3.withPackages (ps: with ps; [
@@ -634,6 +801,12 @@ DBUSEOF
           dockerImage = dockerImage;
           docker = dockerImage;
           default = dockerImage;
+          # Giswater building blocks, exposed so they can be built and smoke
+          # tested on their own: `nix build .#epanet` runs a real model through
+          # the solver as part of the derivation's install check.
+          inherit epanet swmm;
+          qgis = qgisWithGiswater;
+          epa = epaTool;
         };
 
         apps = {
@@ -726,6 +899,79 @@ DBUSEOF
               nix-xfce-kasm:latest
           '';
 
+          # OIDC / Keycloak mode against a real identity provider. Everything
+          # comes from the caller's environment, so no flake edit is needed:
+          #   KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+          #   KASM_OIDC_CLIENT_ID=qgis-desktop \
+          #   KASM_OIDC_CLIENT_SECRET=… \
+          #   nix run .#run-oidc
+          # For a batteries-included local IdP, use nix run .#run-keycloak-demo.
+          run-oidc = mkApp "run-oidc" ''
+            : "''${KASM_OIDC_ISSUER_URL:?set KASM_OIDC_ISSUER_URL (e.g. https://sso.example.com/realms/gis)}"
+            : "''${KASM_OIDC_CLIENT_ID:?set KASM_OIDC_CLIENT_ID}"
+            : "''${KASM_OIDC_CLIENT_SECRET:?set KASM_OIDC_CLIENT_SECRET}"
+            REDIRECT_URL="''${KASM_OIDC_REDIRECT_URL:-http://localhost:8443/oauth2/callback}"
+            docker rm -f qgis-desktop 2>/dev/null || true
+            echo "▶ Auth mode: oidc — oauth2-proxy fronting KasmVNC"
+            echo "  Issuer:    $KASM_OIDC_ISSUER_URL"
+            echo "  Client:    $KASM_OIDC_CLIENT_ID"
+            echo "  Redirect:  $REDIRECT_URL"
+            echo "  The identity provider's host is added to the egress allowlist"
+            echo "  automatically. Open http://localhost:8443 to be sent to the IdP."
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e KASM_AUTH_MODE=oidc \
+              -e KASM_OIDC_ISSUER_URL \
+              -e KASM_OIDC_CLIENT_ID \
+              -e KASM_OIDC_CLIENT_SECRET \
+              -e KASM_OIDC_REDIRECT_URL="$REDIRECT_URL" \
+              -e KASM_OIDC_ALLOWED_GROUPS \
+              -e KASM_OIDC_ALLOWED_ROLES \
+              -e KASM_OIDC_EMAIL_DOMAINS \
+              -e KASM_OIDC_INNER_MODE \
+              nix-xfce-kasm:latest
+          '';
+
+          # End-to-end OIDC demo: a throwaway Keycloak with a pre-imported
+          # realm, plus the desktop wired to it. See
+          # examples/keycloak-oidc/README.md — the one manual step is a hosts
+          # entry, because the browser and the container must resolve the
+          # issuer to the same name.
+          run-keycloak-demo = mkApp "run-keycloak-demo" ''
+            cat <<'BANNER'
+            ▶ Keycloak single sign-on demo
+
+              Login:     alice / hunter2   (realm: qgis)
+              Admin:     http://localhost:8080  (admin / admin)
+              Desktop:   http://keycloak:8443   ← note the host name
+              Docs:      examples/keycloak-oidc/README.md
+
+              REQUIRED once, on the host running the browser:
+                echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+
+              The browser and the container have to reach the issuer under the
+              same name, or the token's `iss` will not match what the proxy
+              expects. Press Ctrl-C to stop and remove both containers.
+            BANNER
+
+            if ! docker image inspect nix-xfce-kasm:latest >/dev/null 2>&1; then
+              echo ""
+              echo "ERROR: image 'nix-xfce-kasm:latest' not found."
+              echo "       Build it first with:  nix run .#build-docker"
+              exit 1
+            fi
+
+            cleanup() {
+              echo ""
+              echo "Stopping demo…"
+              docker compose --project-name keycloak-oidc \
+                -f ${keycloakComposeDir}/docker-compose.yml down -v --remove-orphans 2>/dev/null || true
+            }
+            trap cleanup EXIT INT TERM
+
+            docker compose --project-name keycloak-oidc \
+              -f ${keycloakComposeDir}/docker-compose.yml up
+          '';
+
           # Locked-down demo: auth on, clipboard blocked, watermarked, DLP info logging.
           # Handy for validating the permission controls end-to-end.
           run-locked-down = mkApp "run-locked-down" ''
@@ -735,11 +981,13 @@ DBUSEOF
             echo "  - Clipboard IN and OUT blocked"
             echo "  - Watermark overlay enabled"
             echo "  - DLP audit log = info"
+            echo "  - Terminal access removed"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e KASM_WATERMARK_TEXT='CONFIDENTIAL - ''${USER} %H:%M' \
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
+              -e KASM_ALLOW_TERMINAL=0 \
               nix-xfce-kasm:latest
           '';
 
@@ -834,6 +1082,7 @@ DBUSEOF
                 nix run .#run-no-auth       Auth DISABLED (dev only)
                 nix run .#run-greeter       LightDM greeter (in-session login form)
                 nix run .#run-greeter-multi Greeter with alice + bob accounts
+                nix run .#run-oidc          Keycloak/OIDC SSO (reads KASM_OIDC_* from your env)
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)
@@ -842,9 +1091,22 @@ DBUSEOF
                 nix run .#run-analyst-scenario   bob / password123 + kartoza/postgis db;
                                                   clipboard blocked, egress restricted to db.
                                                   See docs/scenarios/analyst-locked-down.md
+                nix run .#run-keycloak-demo      Throwaway Keycloak + SSO desktop.
+                                                  See examples/keycloak-oidc/README.md
+
+              Giswater
+                nix build .#epanet          EPA water-supply solver (runs a model on build)
+                nix build .#swmm            EPA drainage solver (runs a model on build)
+                epa status                  Solver + plugin wiring state (inside the desktop)
 
               All run-* targets pass --cap-add=NET_ADMIN so the entrypoint can
               manage nftables. Egress lockdown is ON by default in the image.
+
+              Test
+                nix run .#test              Run every check that needs no Docker
+                nix run .#test-oidc         Unit-test the OIDC plumbing
+                nix run .#test-terminal-lockdown
+                                            Unit-test KASM_ALLOW_TERMINAL=0
 
               Manage
                 nix run .#stop              Stop and remove the qgis-desktop container
@@ -861,6 +1123,55 @@ DBUSEOF
                 make run                    Run via Make
             HELP
           '';
+
+          # Unit tests for the OIDC plumbing: configuration validation, secret
+          # handling and the flag list handed to oauth2-proxy. Runs in a couple
+          # of seconds with no Docker, no container and no identity provider —
+          # the proxy binary is stubbed out.
+          test-oidc = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-oidc";
+              # oauth2-proxy is here so the suite can validate every flag the
+              # launcher emits against the real binary's --help.
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk oauth2-proxy ];
+              text = ''
+                export KASM_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-oidc-config.sh
+              '';
+            }}/bin/test-oidc";
+          };
+
+          # Unit tests for the terminal lockdown, driven against a throwaway
+          # tree shaped like the container's /bin and /home.
+          test-terminal-lockdown = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-terminal-lockdown";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep ];
+              text = ''
+                export KASM_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-terminal-lockdown.sh
+              '';
+            }}/bin/test-terminal-lockdown";
+          };
+
+          # Everything that can be checked without Docker.
+          test = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk oauth2-proxy ];
+              text = ''
+                export KASM_PROJECT_ROOT=${self}
+                rc=0
+                bash ${self}/scripts/test-oidc-config.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-terminal-lockdown.sh || rc=1
+                exit "$rc"
+              '';
+            }}/bin/test";
+          };
 
           summary = mkApp "summary" ''
             bash build-summary.sh nix-xfce-kasm:latest build-summary.md
@@ -956,9 +1267,11 @@ DBUSEOF
               "$DOCS_DIR/configuration/kasm-permissions.md"
               "$DOCS_DIR/configuration/authentication.md"
               "$DOCS_DIR/configuration/egress-lockdown.md"
+              "$DOCS_DIR/configuration/giswater.md"
               "$DOCS_DIR/scenarios/index.md"
               "$DOCS_DIR/scenarios/analyst-locked-down.md"
               "$DOCS_DIR/scenarios/multi-user-greeter.md"
+              "$DOCS_DIR/scenarios/keycloak-sso.md"
               "$DOCS_DIR/developer-guide/index.md"
               "$DOCS_DIR/developer-guide/architecture.md"
               "$DOCS_DIR/developer-guide/nix-flake.md"
@@ -1073,12 +1386,17 @@ META
                 nix run .#run-no-auth       Auth DISABLED (dev only)
                 nix run .#run-greeter       LightDM greeter (in-session login form)
                 nix run .#run-greeter-multi Greeter with alice + bob accounts
+                nix run .#run-oidc          Keycloak/OIDC SSO (reads KASM_OIDC_* from your env)
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)
 
               Scenario
                 nix run .#run-analyst-scenario   bob + kartoza/postgis (see docs/)
+                nix run .#run-keycloak-demo      Keycloak SSO demo (see examples/)
+
+              Test
+                nix run .#test-oidc         Unit-test the OIDC plumbing
 
               Manage
                 nix run .#stop              Stop the qgis-desktop container

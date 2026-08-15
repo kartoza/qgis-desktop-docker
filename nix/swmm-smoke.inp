@@ -1,0 +1,36 @@
+[TITLE]
+;; Minimal SWMM 5.2 model used as a build-time smoke test.
+;; A single junction draining to an outfall through one circular pipe:
+;; enough to route a complete simulation without any external data.
+Nix build smoke test
+
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2024
+START_TIME           00:00:00
+END_DATE             01/01/2024
+END_TIME             01:00:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         00:00:30
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       10    3         0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       9     FREE             NO
+
+[CONDUITS]
+;;Name  Node1  Node2  Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
+C1      J1     O1     100     0.01       0         0          0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  1      0      0      0      1
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J1        0        0
+O1      100        0

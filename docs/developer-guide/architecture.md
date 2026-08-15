@@ -8,6 +8,11 @@ tamper with it. Since 1.4.0 the boot path branches on `KASM_AUTH_MODE` —
 route, and `greeter` keeps LightDM running as root inside the container
 so it can spawn each user session under its own UID.
 
+Since 1.5.0 there is a fourth mode, `oidc`, which is not a fifth boot path but
+a *wrapper* around the others: an OIDC proxy takes over the published port, the
+desktop is rebound to loopback, and the boot then continues into whichever
+inner mode was asked for (`none` by default, or `greeter`).
+
 ## Boot flow — `basic` / `none` (default)
 
 ```mermaid
@@ -54,6 +59,38 @@ graph TD
     PAM -->|"on match"| XSESS --> XFCE --> QGIS
 ```
 
+## Boot flow — `oidc`
+
+```mermaid
+graph TD
+    PID1["PID 1: qgis-entrypoint (root)"]
+    RESOLVE["resolve KASM_AUTH_MODE<br/>+ add issuer host to allowlist"]
+    NFT["setup nftables egress filter<br/>policy drop + allowlist"]
+    CONFIG["kasm-oidc-config (root)<br/>writes /run/kasm-oidc/secrets.cfg 0400"]
+    LISTEN["write /run/kasm/listen.env<br/>VNC_PORT=6901, bind 127.0.0.1"]
+    PROXY["setpriv → kasm-oidc-proxy (uid 1000)<br/>oauth2-proxy on :8443"]
+    WATCH["watchdog: proxy exits → kill PID 1"]
+    INNER{"KASM_OIDC_INNER_MODE"}
+    NONE["basic/none boot flow<br/>(Xkasmvnc on 127.0.0.1:6901)"]
+    GREET["greeter boot flow<br/>(wrapper reads listen.env)"]
+
+    PID1 --> RESOLVE --> NFT --> CONFIG --> LISTEN --> PROXY --> WATCH
+    PROXY --> INNER
+    INNER -->|none| NONE
+    INNER -->|greeter| GREET
+```
+
+Two details are load-bearing:
+
+- **The auth mode is resolved *before* the firewall is installed.** The proxy
+  performs OIDC discovery and the code exchange server-side, so the issuer's
+  host has to be in the allowlist — the entrypoint appends it itself.
+- **The listener override is written to a file, not just exported.** LightDM
+  spawns the X server with a scrubbed environment, so in `oidc` + `greeter` the
+  only channel that reaches `xkasmvnc-wrapper` is `/run/kasm/listen.env`. Both
+  launchers parse it key by key rather than sourcing it: it is written by root
+  and read by an unprivileged process.
+
 ## Stages — common to all modes
 
 **1. `qgis-entrypoint` (root, PID 1)**
@@ -73,8 +110,10 @@ The `Cmd` set by the flake. It:
   any privilege drop keeps Xkasmvnc and xfce4-session happy.
 - Reads `KASM_AUTH_MODE` (default `basic`) and dispatches:
 
-    * `basic` / `none` — [stage 2A](#2a-basic-none) below.
-    * `greeter` — [stage 2B](#2b-greeter) below.
+    * `basic` / `none` — [stage 2A](#stage-2a-basic-none) below.
+    * `greeter` — [stage 2B](#stage-2b-greeter) below.
+    * `oidc` — [stage 2C](#stage-2c-oidc) below, which then continues into
+      2A or 2B depending on `KASM_OIDC_INNER_MODE`.
 
 ## Stage 2A — `basic` / `none`
 
@@ -174,6 +213,32 @@ user. It:
   the wallpaper via `xfconf-query` on all three candidate monitor paths
   (`monitorscreen`, `monitor0`, `monitorVNC-0`) — KasmVNC's monitor name
   varies with client capabilities.
+
+## Stage 2C — `oidc`
+
+**`kasm-oidc-config` (root) → `setpriv` → `kasm-oidc-proxy` (uid 1000)**
+
+Before the desktop starts at all, the entrypoint:
+
+- Runs `kasm-oidc-config`, which validates the `KASM_OIDC_*` configuration,
+  reads the client secret (from a file that may be root-only), generates a
+  cookie secret if none was supplied, and writes both to
+  `/run/kasm-oidc/secrets.cfg` mode `0400` owned by UID 1000. A non-zero exit
+  is fatal — the container refuses to boot rather than serve unauthenticated.
+- Writes `/run/kasm/listen.env` with `VNC_PORT=6901` and
+  `KASM_BIND_INTERFACE=127.0.0.1`. Both KasmVNC launchers parse it (key by
+  key, never sourced) so the desktop binds loopback only.
+- Starts `kasm-oidc-proxy` under `setpriv --reuid=1000 --inh-caps=-all
+  --ambient-caps=-all`. It builds the oauth2-proxy flag list from the
+  environment — everything except the secrets, which come from the config
+  file — and execs it on the published port.
+- Forks a watchdog that polls the proxy's PID (checking `/proc` for the zombie
+  state, since an unreaped child still answers `kill -0`) and sends `SIGTERM`
+  to PID 1 when it dies.
+
+Control then falls through to stage 2A or 2B for the desktop itself, with
+`KASM_AUTH_MODE` rewritten to the inner mode so `start-desktop.sh` sees a mode
+it knows.
 
 ## XFCE + QGIS
 

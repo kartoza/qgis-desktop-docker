@@ -62,6 +62,24 @@ DISPLAY_ARG="${DISPLAY_ARG:-${DISPLAY:-:1}}"
 VNC_PORT="${VNC_PORT:-8443}"
 VNC_RESOLUTION="${VNC_RESOLUTION:-1280x720}"
 VNC_COL_DEPTH="${VNC_COL_DEPTH:-24}"
+KASM_BIND_INTERFACE="${KASM_BIND_INTERFACE:-0.0.0.0}"
+
+# LightDM spawns the X server with a scrubbed environment, so the entrypoint's
+# exports never reach us. In KASM_AUTH_MODE=oidc it also writes the listener
+# override to a file, which is the only channel that survives — without this,
+# Xkasmvnc would try to bind the public port that the OIDC proxy already owns.
+# Parsed key by key rather than sourced: root writes it, we are not root, and
+# sourcing would turn it into an arbitrary-code channel.
+KASM_LISTEN_ENV="${KASM_LISTEN_ENV:-/run/kasm/listen.env}"
+if [ -r "${KASM_LISTEN_ENV}" ]; then
+  while IFS='=' read -r _key _value; do
+    case "${_key}" in
+      VNC_PORT) VNC_PORT="${_value}" ;;
+      KASM_BIND_INTERFACE) KASM_BIND_INTERFACE="${_value}" ;;
+      *) : ;;
+    esac
+  done < "${KASM_LISTEN_ENV}"
+fi
 
 KASM_ALLOW_CLIPBOARD_IN="${KASM_ALLOW_CLIPBOARD_IN:-0}"
 KASM_ALLOW_CLIPBOARD_OUT="${KASM_ALLOW_CLIPBOARD_OUT:-0}"
@@ -129,6 +147,7 @@ fi
 XKB_DIR="${XKB_BASE_DIR:-/usr/share/X11/xkb}"
 
 wlog "display=${DISPLAY_ARG} auth=${AUTH_FILE:-<none>} bin=${XKASMVNC_BIN} www=${WWW_DIR} xkb=${XKB_DIR}"
+wlog "listening on ${KASM_BIND_INTERFACE}:${VNC_PORT}"
 
 # Route Xkasmvnc's stderr through PID 1 so its own failure messages reach
 # docker logs, not just /var/log/lightdm/x-0.log (which vanishes with --rm).
@@ -163,7 +182,7 @@ rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}"
   -geometry "${VNC_RESOLUTION}" \
   -depth "${VNC_COL_DEPTH}" \
   -websocketPort "${VNC_PORT}" \
-  -interface 0.0.0.0 \
+  -interface "${KASM_BIND_INTERFACE}" \
   -SecurityTypes None \
   -DisableBasicAuth \
   -RawKeyboard \

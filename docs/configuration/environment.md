@@ -13,7 +13,14 @@ and on which X display.
 
 Authentication lives on its own page — see
 [Authentication](authentication.md) for `KASM_AUTH_MODE`, `KASM_USERS_FILE`,
-`KASM_USERS`, and the credential-resolution order.
+`KASM_USERS`, the `KASM_OIDC_*` single sign-on settings, and the
+credential-resolution order.
+
+!!! note "`VNC_PORT` in `oidc` mode"
+    With `KASM_AUTH_MODE=oidc`, `VNC_PORT` stays the *published* port — it is
+    the OIDC proxy that listens on it. KasmVNC itself is moved to
+    `127.0.0.1:$KASM_OIDC_UPSTREAM_PORT` (default `6901`) so that nothing can
+    reach the desktop except through the proxy.
 
 ## Examples
 

@@ -51,6 +51,13 @@ services:
       # the content. Do NOT switch to "verbose" without a legal review.
       - KASM_DLP_LOG=info
 
+      # No shell. Deletes the terminal emulators and the "run a command"
+      # dialogs at boot, and strips the launcher and menu entries — so the
+      # panel launcher, the applications menu, Ctrl-Alt-T and Thunar's
+      # "Open Terminal Here" all lead nowhere. Bob gets QGIS, not a prompt.
+      # Not a sandbox: QGIS's Python console can still start subprocesses.
+      - KASM_ALLOW_TERMINAL=0
+
       # Egress lockdown: only the co-located `db` service is reachable.
       # Hostname is resolved once at container start against the Docker
       # embedded resolver, so it picks up whatever IP `db` has on `analyst-net`.

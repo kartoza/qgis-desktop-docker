@@ -78,9 +78,23 @@ For a full worked example with a co-located PostGIS container see
 
 ## How the drop happens
 
-The entrypoint sets `chain output { policy drop; }`, then adds `accept`
-rules for the allowlist. After the ruleset is installed, `setpriv` clears
+The entrypoint installs a table of its own, `inet kasm_egress`, whose output
+chain is `policy drop` plus `accept` rules for loopback, established traffic,
+DNS and the allowlist. After the ruleset is installed, `setpriv` clears
 `NET_ADMIN` from the inheritable and ambient sets before it execs
 `start-desktop`. From that point on, `nft` inside the desktop returns
 `Operation not permitted`, even though the container was launched with
 `--cap-add=NET_ADMIN`.
+
+```bash
+docker exec <container> nft list table inet kasm_egress
+```
+
+!!! note "Only our own table is replaced"
+    The rules go into `inet kasm_egress`, and only that table is deleted and
+    recreated on boot. Flushing the whole ruleset would also delete Docker's
+    `ip nat` table — the one holding the DNAT rules that make the embedded
+    resolver at `127.0.0.11:53` answer at all — and nftables labels that table
+    "managed by iptables-nft, do not touch". Releases before 1.5.0 flushed it,
+    which broke *all* name resolution inside the container on user-defined and
+    Compose networks, allowlisted or not.

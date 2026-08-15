@@ -14,6 +14,13 @@ entrypoint can install the nftables egress filter.
 | `nix run .#run-multi-user` | Foreground run with `KASM_USERS='alice:pw1,bob:pw2'` set. |
 | `nix run .#run-users-file` | Foreground run that generates a temp `user:password` file, mounts it at `/etc/kasmvnc/users:ro`, and cleans it up on exit. |
 | `nix run .#run-no-auth` | Foreground run with `KASM_AUTH=0`. No prompt, no auth. Dev only. |
+| `nix run .#run-greeter` | LightDM greeter inside the desktop. Log in as `user` / `password`. |
+| `nix run .#run-greeter-multi` | Greeter mode with `alice` and `bob` as real Linux accounts. |
+| `nix run .#run-oidc` | Single sign-on against your own identity provider. Reads `KASM_OIDC_ISSUER_URL`, `KASM_OIDC_CLIENT_ID` and `KASM_OIDC_CLIENT_SECRET` from your shell and refuses to start without them. |
+| `nix run .#run-keycloak-demo` | Throwaway Keycloak with a pre-imported realm plus the SSO desktop. Needs a `127.0.0.1 keycloak` hosts entry — see [Keycloak SSO](../scenarios/keycloak-sso.md). |
+| `nix run .#test` | Run every check that needs no Docker. |
+| `nix run .#test-oidc` | Unit-test the OIDC plumbing. No Docker, no identity provider, a couple of seconds. |
+| `nix run .#test-terminal-lockdown` | Unit-test `KASM_ALLOW_TERMINAL=0` against a throwaway tree. |
 | `nix run .#run-locked-down` | Auth on plus full DLP: clipboard blocked, watermark, DLP `info` log, 500 ms clipboard delay. |
 | `nix run .#run-egress-locked` | Demo egress allowlist (`1.1.1.1`, `example.com`). Everything else is dropped. |
 | `nix run .#run-no-lockdown` | Auth off **and** egress lockdown off. Full-open dev mode; do not expose. |
@@ -21,6 +28,14 @@ entrypoint can install the nftables egress filter.
 | `nix run .#stop` | Remove the running `qgis-desktop` container. |
 | `nix run .#logs` | Follow the container logs (`docker logs -f qgis-desktop`). |
 | `nix run .#summary` | Regenerate `build-summary.md` (image size, SBOM table, CVE table). |
+
+Building blocks, for when you only want one piece:
+
+| Target | What it does |
+|--------|--------------|
+| `nix build .#epanet` | Build the EPANET solver. Solves a bundled network as part of the build. |
+| `nix build .#swmm` | Build the SWMM solver. Routes a one-pipe model as part of the build. |
+| `nix build .#qgis` | QGIS with the Giswater Python packages and both solvers wrapped in. |
 
 ## Dev shell
 

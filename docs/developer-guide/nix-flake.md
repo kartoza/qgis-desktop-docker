@@ -30,8 +30,25 @@ flake pins nixpkgs and produces the image as a
 `entrypoint.sh`
 : The root entrypoint. Wrapped in a `pkgs.writeShellApplication` called
   `qgis-entrypoint` with `nftables`, `util-linux` (for `setpriv`),
-  `iproute2`, `glibc.bin` (for `getent`), and `start-desktop` as
-  runtime inputs.
+  `iproute2`, `glibc.bin` (for `getent`), `start-desktop`, and the two
+  OIDC scripts as runtime inputs.
+
+`config/oidc/oidc-config.sh` and `config/oidc/oidc-proxy.sh`
+: The single sign-on pathway, as two `writeShellApplication`s —
+  `kasm-oidc-config` (root; validates and materialises secrets) and
+  `kasm-oidc-proxy` (unprivileged; execs `oauth2-proxy`). Split so that only
+  the first needs root, and only the second is long-running.
+
+`config/lockdown/disable-terminal.sh`
+: The terminal lockdown, as a `writeShellApplication` called
+  `kasm-disable-terminal`. Its paths are overridable (`KASM_LOCKDOWN_BIN_DIR`,
+  `KASM_LOCKDOWN_HOME_ROOT`) purely so the test suite can drive it against a
+  throwaway tree.
+
+`nix/epanet.nix` and `nix/swmm.nix`
+: Giswater's EPA hydraulic solvers, built from upstream source because neither
+  is in nixpkgs. Both run a real model in `installCheckPhase`, so a solver that
+  cannot solve fails the build.
 
 ## Derivations
 
@@ -44,7 +61,17 @@ flake pins nixpkgs and produces the image as a
   core (session, panel, terminal, desktop, wm, settings, xfconf, thunar),
   X11 essentials, dbus, shared-mime-info, icon themes, fonts, QGIS, and
   the egress-lockdown tooling (`nftables`, `setpriv`, `iproute2`,
-  `getent`), plus `startupScript` and `entrypointScript`.
+  `getent`), plus `startupScript` and `entrypointScript`. Since 1.5.0 it also
+  carries the EPA solvers, the `epa` tool, a CA bundle, and the OIDC scripts.
+
+`packages.qgis`
+: QGIS as the image ships it: `pkgs.qgis` with the Giswater Python packages
+  overridden into its interpreter, then `symlinkJoin`-wrapped so every binary
+  has EPANET and SWMM on `PATH` and `LD_LIBRARY_PATH`.
+
+`packages.epanet`, `packages.swmm`, `packages.epa`
+: The Giswater building blocks on their own, so they can be built and smoke
+  tested without building the whole image.
 
 ## Apps
 

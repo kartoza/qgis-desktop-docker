@@ -1,0 +1,101 @@
+{
+  "realm": "qgis",
+  "enabled": true,
+  "displayName": "QGIS Desktop (demo) — public credentials, never use for real",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "qgis-user",
+        "description": "May open the QGIS desktop"
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "gis-users",
+      "path": "/gis-users",
+      "realmRoles": ["qgis-user"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "qgis-desktop",
+      "name": "QGIS Desktop",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "secret": "qgis-desktop-demo-secret-not-for-real-use",
+      "redirectUris": [
+        "http://keycloak:8443/oauth2/callback",
+        "http://localhost:8443/oauth2/callback"
+      ],
+      "webOrigins": ["http://keycloak:8443", "http://localhost:8443"],
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": ["address", "phone", "offline_access"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "alice@example.com",
+      "firstName": "Alice",
+      "lastName": "Analyst",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "hunter2",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["qgis-user"],
+      "groups": ["/gis-users"]
+    },
+    {
+      "username": "mallory",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "mallory@example.com",
+      "firstName": "Mallory",
+      "lastName": "Nomapsforyou",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "hunter2",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

@@ -16,7 +16,26 @@ env:
   NIX_IMAGE: nix-xfce-kasm
 
 jobs:
+  # Fast, hermetic checks. Runs first so a broken auth path fails in seconds
+  # rather than after a full image build.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Run the test suite
+        run: nix run .#test
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

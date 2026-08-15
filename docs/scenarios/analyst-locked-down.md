@@ -24,6 +24,7 @@ how to run and verify it end-to-end.
 | R8 | The desktop cannot reach the general internet. | Egress policy `drop`; no other allow rules. |
 | R9 | If lockdown can't be enforced, the container must not start. | Entrypoint fails closed on missing `NET_ADMIN`. |
 | R10 | Postgres is not reachable from the Docker host. | The `db` service has no published ports; both containers share a bridge network. |
+| R11 | Bob gets a mapping application, not a shell. | `KASM_ALLOW_TERMINAL=0` deletes the terminal emulators and the command-runner dialogs at boot, and strips the panel launcher and menu entries. See the caveat under [Terminal access](../configuration/kasm-permissions.md#terminal-access) — it is an affordance control, not a sandbox. |
 
 ---
 
@@ -115,6 +116,7 @@ services:
       - KASM_ALLOW_PRIMARY_SELECTION=0
       - KASM_WATERMARK_TEXT=RESTRICTED - $${USER} %H:%M
       - KASM_DLP_LOG=info
+      - KASM_ALLOW_TERMINAL=0          # no shell for bob
       - KASM_EGRESS_LOCKDOWN=1
       - KASM_EGRESS_ALLOW=db           # resolved once at startup
     ports: ["8443:8443"]
@@ -176,17 +178,22 @@ open <http://localhost:8443>. The browser will prompt for credentials; enter
 Once logged in, work through this checklist to confirm every requirement is
 enforced:
 
+The desktop has no terminal in this scenario (R11), so the checks that need a
+shell are run from the *host* with `docker exec` — which is exactly the
+asymmetry the scenario is after: the operator has one, bob does not.
+
 | Test | Expected result |
 |------|-----------------|
 | Enter wrong password at the browser prompt. | Browser re-prompts; `Auth:` log line unchanged in the container. |
 | Right-click on the QGIS canvas → try to copy features. | Nothing lands on the local clipboard. |
-| Ctrl-C in the container's XFCE terminal, then Ctrl-V into local browser. | Local paste is empty (blocked). |
-| Look at the desktop background. | Watermark reads `RESTRICTED — bob HH:MM`. |
+| Copy text inside the desktop, then Ctrl-V into a local application. | Local paste is empty (blocked). |
+| Look at the desktop background. | Watermark reads `RESTRICTED - bob HH:MM`. |
+| In the desktop: panel launcher, applications menu, Ctrl-Alt-T, and Thunar → right-click → *Open Terminal Here*. | No terminal launcher or menu entry; the remaining routes fail to start anything. |
 | In QGIS: *Layer → Add Layer → Add PostGIS Layer* with `host=db`, `db=gis`, `user=bob`, `password=password123`. | Connection succeeds; PostGIS tables listed. |
-| In the terminal: `psql -h db -U bob -d gis -c 'select postgis_full_version();'`. | Returns the PostGIS build string. |
-| In the terminal: `curl -m5 https://example.com`. | Hangs, then `Connection timed out`. |
-| In the terminal: `getent hosts db`. | Resolves — DNS is allowed. |
-| In the terminal: `nft list ruleset`. | `Operation not permitted` (capabilities dropped). |
+| From the host: `docker exec qgis-desktop curl -m5 https://example.com`. | Hangs, then `Connection timed out`. |
+| From the host: `docker exec qgis-desktop getent hosts db`. | Resolves — DNS is allowed. |
+| From the host: `docker exec -u 1000 qgis-desktop nft list ruleset`. | `Operation not permitted` (capabilities dropped for the desktop user). |
+| From the host: `docker exec qgis-desktop nft list table inet kasm_egress`. | Output chain `policy drop` plus the `db` allow rule. |
 
 ---
 

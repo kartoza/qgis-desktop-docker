@@ -2,11 +2,13 @@
 # Root entrypoint for the QGIS Desktop container.
 #
 # Responsibilities (in order):
-#   1. Read KASM_EGRESS_* env vars.
+#   1. Read KASM_EGRESS_* env vars and resolve the authentication mode.
 #   2. If lockdown is enabled, resolve allowlist hostnames and install nftables
 #      rules that drop all egress traffic except to the allowlist + DNS.
-#   3. Drop capabilities and switch to the unprivileged `user` account.
-#   4. Exec start-desktop (KasmVNC + XFCE + QGIS).
+#   3. In KASM_AUTH_MODE=oidc, start oauth2-proxy as the public listener with
+#      the desktop moved behind it on loopback.
+#   4. Drop capabilities and switch to the unprivileged `user` account.
+#   5. Exec start-desktop (KasmVNC + XFCE + QGIS), or lightdm in greeter mode.
 #
 # Requires --cap-add=NET_ADMIN on `docker run` when lockdown is enabled.
 
@@ -66,6 +68,16 @@ MISSING_CAP
     exit 1
   fi
 
+  # Hostname entries are useless without a resolver. Say so loudly rather than
+  # letting every name quietly fall off the allowlist — the filter still fails
+  # closed, but an operator who allowlisted `db` deserves to know why nothing
+  # can reach it.
+  if ! command -v getent >/dev/null 2>&1; then
+    echo "ERROR: getent is not on PATH — hostname entries in KASM_EGRESS_ALLOW" >&2
+    echo "       cannot be resolved and will be dropped. IP and CIDR entries still" >&2
+    echo "       work. This is a packaging fault; please report it." >&2
+  fi
+
   # Build the resolved allow list. Accept IPs/CIDRs verbatim; resolve hostnames.
   local -a allow_ips=()
   local raw resolved
@@ -88,12 +100,20 @@ MISSING_CAP
     fi
   done < <(printf '%s\n' "${KASM_EGRESS_ALLOW}" | tr ',' '\n')
 
-  # Install the ruleset atomically.
-  nft flush ruleset
+  # Replace only OUR table, never the whole ruleset.
+  #
+  # `nft flush ruleset` would take Docker's `ip nat` table with it — the table
+  # holding the DNAT rules that make the embedded resolver at 127.0.0.11:53
+  # answer at all. nftables even labels it "managed by iptables-nft, do not
+  # touch". Flushing it leaves the container unable to resolve any hostname for
+  # the rest of its life on any user-defined or compose network, which looks
+  # like a broken allowlist but is really a broken resolver.
+  nft delete table inet kasm_egress 2>/dev/null || true
 
   nft -f - <<'NFTABLES'
-table inet filter {
+table inet kasm_egress {
     chain input {
+        # Ingress is not filtered — the published port has to stay reachable.
         type filter hook input priority filter; policy accept;
     }
     chain forward {
@@ -102,7 +122,8 @@ table inet filter {
     chain output {
         type filter hook output priority filter; policy drop;
 
-        # Always: loopback traffic.
+        # Always: loopback traffic. This also covers DNS to Docker's embedded
+        # resolver, which by then has been DNAT'ed to a high port on 127.0.0.11.
         oif "lo" accept
 
         # Always: return traffic for connections we initiated.
@@ -113,15 +134,15 @@ NFTABLES
 
   # DNS: Docker's embedded resolver is always at 127.0.0.11 on user-defined
   # bridge networks. Allow it plus anything currently in /etc/resolv.conf.
-  nft add rule inet filter output ip daddr 127.0.0.11 udp dport 53 accept
-  nft add rule inet filter output ip daddr 127.0.0.11 tcp dport 53 accept
+  nft add rule inet kasm_egress output ip daddr 127.0.0.11 udp dport 53 accept
+  nft add rule inet kasm_egress output ip daddr 127.0.0.11 tcp dport 53 accept
   if [ -r /etc/resolv.conf ]; then
     local ns
     while IFS= read -r ns; do
       [ -z "$ns" ] && continue
       [ "$ns" = "127.0.0.11" ] && continue
-      nft add rule inet filter output ip daddr "$ns" udp dport 53 accept
-      nft add rule inet filter output ip daddr "$ns" tcp dport 53 accept
+      nft add rule inet kasm_egress output ip daddr "$ns" udp dport 53 accept
+      nft add rule inet kasm_egress output ip daddr "$ns" tcp dport 53 accept
     done < <(awk '/^nameserver /{print $2}' /etc/resolv.conf)
   fi
 
@@ -129,15 +150,96 @@ NFTABLES
   local target
   for target in "${allow_ips[@]}"; do
     if [[ "$target" == *"/"* ]]; then
-      nft add rule inet filter output ip daddr "$target" accept
+      nft add rule inet kasm_egress output ip daddr "$target" accept
     else
-      nft add rule inet filter output ip daddr "$target" accept
+      nft add rule inet kasm_egress output ip daddr "$target" accept
     fi
   done
 
   echo "Egress lockdown: ACTIVE (${#allow_ips[@]} allowlist entries)"
   echo "======================="
 }
+
+# Authentication mode selection. Resolved BEFORE the egress filter is installed
+# because oidc mode has to add the identity provider to the allowlist — without
+# that, oauth2-proxy could never reach the IdP's discovery endpoint.
+#
+#   KASM_AUTH_MODE=basic    (default) — HTTP BasicAuth on the web endpoint,
+#                                        credentials from KASM_USERS_FILE /
+#                                        KASM_USERS / legacy VNC_USER+VNC_PW.
+#                                        start-desktop.sh drops to uid 1000.
+#   KASM_AUTH_MODE=none               — no auth (dev only).
+#   KASM_AUTH_MODE=greeter            — LightDM greeter inside the X session.
+#                                        Users materialised as real Linux
+#                                        accounts, lightdm run as root so it
+#                                        can spawn each session as its user.
+#   KASM_AUTH_MODE=oidc               — oauth2-proxy owns the published port and
+#                                        authenticates against an OIDC provider
+#                                        (Keycloak by default); KasmVNC is moved
+#                                        to a loopback-only port behind it.
+#                                        Added in 1.5.0.
+#
+# Back-compat: legacy KASM_AUTH=0 forces mode=none.
+KASM_AUTH_MODE="${KASM_AUTH_MODE:-basic}"
+KASM_AUTH="${KASM_AUTH:-}"
+if [ "$(kasm_bool "${KASM_AUTH:-1}")" = "0" ] && [ -n "${KASM_AUTH}" ]; then
+  # Legacy KASM_AUTH=0 wins.
+  KASM_AUTH_MODE="none"
+fi
+
+case "${KASM_AUTH_MODE,,}" in
+  none | basic | greeter) KASM_AUTH_MODE="${KASM_AUTH_MODE,,}" ;;
+  oidc | keycloak) KASM_AUTH_MODE="oidc" ;;
+  *)
+    echo "ERROR: KASM_AUTH_MODE='${KASM_AUTH_MODE}' is not one of none|basic|greeter|oidc." >&2
+    exit 1
+    ;;
+esac
+export KASM_AUTH_MODE
+
+echo "=== Auth mode ==="
+echo "KASM_AUTH_MODE=${KASM_AUTH_MODE}"
+
+# The mode the desktop itself boots in. Identical to KASM_AUTH_MODE except
+# under oidc, where the proxy is the auth boundary and the desktop runs in
+# whichever inner mode was requested.
+EFFECTIVE_AUTH_MODE="${KASM_AUTH_MODE}"
+KASM_OIDC_UPSTREAM_PORT="${KASM_OIDC_UPSTREAM_PORT:-6901}"
+
+# Host part of a URL: strip scheme, userinfo, path and port. IPv6 literals are
+# not handled — the nftables rules are IPv4-only anyway.
+url_host() {
+  local url="${1#*://}"
+  url="${url%%/*}"
+  url="${url##*@}"
+  url="${url%%:*}"
+  printf '%s' "${url}"
+}
+
+if [ "${KASM_AUTH_MODE}" = "oidc" ]; then
+  KASM_OIDC_INNER_MODE="${KASM_OIDC_INNER_MODE:-none}"
+  case "${KASM_OIDC_INNER_MODE,,}" in
+    none | greeter) EFFECTIVE_AUTH_MODE="${KASM_OIDC_INNER_MODE,,}" ;;
+    *)
+      echo "ERROR: KASM_OIDC_INNER_MODE='${KASM_OIDC_INNER_MODE}' is not one of none|greeter." >&2
+      echo "       ('basic' is deliberately unsupported: a second password prompt behind" >&2
+      echo "       single sign-on adds nothing.)" >&2
+      exit 1
+      ;;
+  esac
+  echo "KASM_OIDC_INNER_MODE=${EFFECTIVE_AUTH_MODE} (how the desktop behind the proxy authenticates)"
+
+  # oauth2-proxy runs OIDC discovery and the token exchange server-side, so the
+  # identity provider has to stay reachable with the egress filter on. Append
+  # rather than replace, so an operator-supplied allowlist survives.
+  if [ -n "${KASM_OIDC_ISSUER_URL:-}" ]; then
+    OIDC_ISSUER_HOST="$(url_host "${KASM_OIDC_ISSUER_URL}")"
+    if [ -n "${OIDC_ISSUER_HOST}" ]; then
+      KASM_EGRESS_ALLOW="${KASM_EGRESS_ALLOW:+${KASM_EGRESS_ALLOW},}${OIDC_ISSUER_HOST}"
+      echo "Egress: adding identity provider '${OIDC_ISSUER_HOST}' to the allowlist"
+    fi
+  fi
+fi
 
 if [ "${LOCKDOWN}" = "1" ]; then
   setup_egress_lockdown
@@ -169,38 +271,72 @@ mkdir -p /tmp/runtime-user
 chown 1000:1000 /tmp/runtime-user
 chmod 700 /tmp/runtime-user
 
-# Authentication mode selection. Tri-state env var, added in 1.4.0:
-#   KASM_AUTH_MODE=basic    (default) — HTTP BasicAuth on the web endpoint,
-#                                        credentials from KASM_USERS_FILE /
-#                                        KASM_USERS / legacy VNC_USER+VNC_PW.
-#                                        start-desktop.sh drops to uid 1000.
-#   KASM_AUTH_MODE=none               — no auth (dev only).
-#   KASM_AUTH_MODE=greeter            — LightDM greeter inside the X session.
-#                                        Users materialised as real Linux
-#                                        accounts, lightdm run as root so it
-#                                        can spawn each session as its user.
-#
-# Back-compat: legacy KASM_AUTH=0 forces mode=none.
-KASM_AUTH_MODE="${KASM_AUTH_MODE:-basic}"
-KASM_AUTH="${KASM_AUTH:-}"
-if [ "$(kasm_bool "${KASM_AUTH:-1}")" = "0" ] && [ -n "${KASM_AUTH}" ]; then
-  # Legacy KASM_AUTH=0 wins.
-  KASM_AUTH_MODE="none"
+# Terminal access. Secure deployments hand users a mapping application, not a
+# shell: KASM_ALLOW_TERMINAL=0 removes the terminal emulators (and the dialogs
+# that would run an arbitrary command) from the container before the desktop
+# starts. Must happen while we are still root, and before any user session
+# exists. See config/lockdown/disable-terminal.sh for what it closes and what
+# it deliberately does not claim to close.
+KASM_ALLOW_TERMINAL="${KASM_ALLOW_TERMINAL:-1}"
+if [ "$(kasm_bool "${KASM_ALLOW_TERMINAL}")" = "1" ]; then
+  # Clear any stale menu overrides from a previous locked-down run against the
+  # same mounted home, so re-enabling actually re-enables.
+  kasm-disable-terminal restore || true
+else
+  kasm-disable-terminal disable
 fi
 
-case "${KASM_AUTH_MODE,,}" in
-  none|basic|greeter) KASM_AUTH_MODE="${KASM_AUTH_MODE,,}" ;;
-  *)
-    echo "ERROR: KASM_AUTH_MODE='${KASM_AUTH_MODE}' is not one of none|basic|greeter." >&2
-    exit 1
-    ;;
-esac
-export KASM_AUTH_MODE
+if [ "${KASM_AUTH_MODE}" = "oidc" ]; then
+  echo "=== OIDC single sign-on ==="
 
-echo "=== Auth mode ==="
-echo "KASM_AUTH_MODE=${KASM_AUTH_MODE}"
+  # Validates the configuration and materialises the secrets into a config file
+  # only the proxy's UID can read. A non-zero exit is fatal on purpose: failing
+  # to boot beats serving a desktop with nothing in front of it.
+  kasm-oidc-config
 
-if [ "${KASM_AUTH_MODE}" = "greeter" ]; then
+  # Move the desktop's own web endpoint to loopback so the proxy becomes the
+  # only way in. Both launchers also read this file, because LightDM scrubs the
+  # environment before spawning the X server and env vars would not reach the
+  # xkasmvnc wrapper.
+  mkdir -p /run/kasm
+  cat > /run/kasm/listen.env <<LISTEN
+VNC_PORT=${KASM_OIDC_UPSTREAM_PORT}
+KASM_BIND_INTERFACE=127.0.0.1
+LISTEN
+  chmod 0644 /run/kasm/listen.env
+
+  export KASM_OIDC_LISTEN_PORT="${VNC_PORT:-8443}"
+  export KASM_OIDC_UPSTREAM_PORT
+  export VNC_PORT="${KASM_OIDC_UPSTREAM_PORT}"
+  export KASM_BIND_INTERFACE="127.0.0.1"
+
+  # The proxy needs no privileges: its port is unprivileged and its config file
+  # is owned by uid 1000. Same capability-clearing shape as the desktop below.
+  setpriv \
+    --reuid=1000 --regid=1000 --init-groups \
+    --inh-caps=-all --ambient-caps=-all \
+    -- kasm-oidc-proxy &
+  OIDC_PROXY_PID=$!
+
+  # If the proxy dies, the container must die with it — otherwise the desktop
+  # would keep serving with nothing enforcing authentication. This shell is
+  # about to exec into the desktop (so it becomes PID 1); the watchdog brings
+  # the whole container down by signalling PID 1.
+  (
+    # A dead-but-unreaped child still answers `kill -0`, so check /proc for the
+    # zombie state rather than trusting the signal alone.
+    while [ -d "/proc/${OIDC_PROXY_PID}" ] &&
+      ! grep -qE '^State:[[:space:]]+Z' "/proc/${OIDC_PROXY_PID}/status" 2>/dev/null; do
+      sleep 5
+    done
+    echo "FATAL: the OIDC proxy exited — stopping the container." >&2
+    kill -TERM 1 2>/dev/null || true
+  ) &
+
+  echo "OIDC proxy running as pid ${OIDC_PROXY_PID}; desktop bound to 127.0.0.1:${KASM_OIDC_UPSTREAM_PORT}"
+fi
+
+if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
   # Materialise users from the same credential sources basic mode uses, so
   # KASM_USERS / KASM_USERS_FILE / VNC_USER+VNC_PW all work identically.
   # PAM will authenticate against the resulting /etc/shadow entries. LightDM
@@ -339,6 +475,13 @@ if [ "${KASM_AUTH_MODE}" = "greeter" ]; then
   # g_spawn_async for the X server fails with "not found in path".
   export PATH="/usr/bin:${PATH}"
 
+  # The terminal lockdown ran before these accounts existed, so their home
+  # directories missed the menu overrides. The executables are already gone —
+  # this is the cosmetic half — and the call is idempotent.
+  if [ "$(kasm_bool "${KASM_ALLOW_TERMINAL}")" = "0" ]; then
+    kasm-disable-terminal disable
+  fi
+
   echo "Starting LightDM..."
   exec lightdm --debug
 fi
@@ -346,6 +489,10 @@ fi
 # basic / none: existing behaviour. Drop root and any inheritable capabilities
 # before running the desktop. Clears NET_ADMIN so the desktop process cannot
 # alter the firewall.
+#
+# start-desktop.sh only knows the desktop-level modes, so hand it the effective
+# one — under oidc that is the inner mode, with the proxy already listening.
+export KASM_AUTH_MODE="${EFFECTIVE_AUTH_MODE}"
 exec setpriv \
   --reuid=1000 --regid=1000 --init-groups \
   --inh-caps=-all --ambient-caps=-all \

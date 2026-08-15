@@ -12,6 +12,27 @@ VNC_USER="${VNC_USER:-user}"
 VNC_PW="${VNC_PW:-password}"
 DISPLAY_NUM="${DISPLAY#:}"
 
+# Interface the web endpoint binds to. 0.0.0.0 normally; the root entrypoint
+# pins it to 127.0.0.1 in KASM_AUTH_MODE=oidc so the only reachable listener is
+# the OIDC proxy in front of us.
+KASM_BIND_INTERFACE="${KASM_BIND_INTERFACE:-0.0.0.0}"
+
+# The entrypoint writes the listener override here as well as into the
+# environment: LightDM scrubs the environment before spawning the X server, so
+# the greeter path can only be reached through a file. Parsed key by key rather
+# than sourced — this file is written by root and read by an unprivileged
+# process, and sourcing it would make it an arbitrary-code channel.
+KASM_LISTEN_ENV="${KASM_LISTEN_ENV:-/run/kasm/listen.env}"
+if [ -r "${KASM_LISTEN_ENV}" ]; then
+  while IFS='=' read -r _key _value; do
+    case "${_key}" in
+      VNC_PORT) VNC_PORT="${_value}" ;;
+      KASM_BIND_INTERFACE) KASM_BIND_INTERFACE="${_value}" ;;
+      *) : ;;
+    esac
+  done < "${KASM_LISTEN_ENV}"
+fi
+
 # Kasm permission controls (secure-by-default).
 # See README.md ("Kasm permission controls") for the full matrix.
 # Clipboard is OFF in both directions unless explicitly enabled.
@@ -25,11 +46,14 @@ KASM_CLIPBOARD_MIME_TYPES="${KASM_CLIPBOARD_MIME_TYPES:-}" # comma-sep MIME allo
 KASM_WATERMARK_TEXT="${KASM_WATERMARK_TEXT:-}"             # empty = no watermark
 KASM_DLP_LOG="${KASM_DLP_LOG:-off}"                        # off | info | verbose
 
-# Authentication controls (tri-state as of 1.4.0; legacy KASM_AUTH still honoured).
+# Authentication controls (four modes as of 1.5.0; legacy KASM_AUTH still honoured).
 #   KASM_AUTH_MODE=basic (default) — HTTP BasicAuth on the web endpoint + VncAuth on RFB.
 #   KASM_AUTH_MODE=none            — no auth (dev only; never expose to the network).
 #   KASM_AUTH_MODE=greeter         — handled by the root entrypoint; start-desktop
 #                                     is not invoked in that mode.
+#   KASM_AUTH_MODE=oidc            — also handled by the root entrypoint, which
+#                                     starts the OIDC proxy and then invokes us
+#                                     with the inner mode (none or greeter).
 # Credentials come from (in order): KASM_USERS_FILE if readable, else KASM_USERS
 # env var, else legacy single-user VNC_USER / VNC_PW.
 #   KASM_USERS_FILE — path to a file with one 'user:password' per line, '#' comments.
@@ -43,9 +67,16 @@ case "${KASM_AUTH_MODE,,}" in
     echo "       entrypoint should have execed lightdm instead." >&2
     exit 1
     ;;
+  oidc|keycloak)
+    echo "ERROR: start-desktop invoked with KASM_AUTH_MODE=oidc — the root" >&2
+    echo "       entrypoint resolves that to an inner mode (none or greeter)" >&2
+    echo "       before handing over. Never invoke this script directly in" >&2
+    echo "       oidc mode: the desktop would come up without the proxy." >&2
+    exit 1
+    ;;
   "")      : ;;  # No mode override — fall back to legacy KASM_AUTH.
   *)
-    echo "ERROR: KASM_AUTH_MODE='${KASM_AUTH_MODE}' is not one of none|basic|greeter." >&2
+    echo "ERROR: KASM_AUTH_MODE='${KASM_AUTH_MODE}' is not one of none|basic|greeter|oidc." >&2
     exit 1
     ;;
 esac
@@ -78,7 +109,7 @@ esac
 echo "=== Starting XFCE Desktop with KasmVNC ==="
 echo "Display:    ${DISPLAY}"
 echo "Resolution: ${VNC_RESOLUTION}"
-echo "Web port:   ${VNC_PORT}"
+echo "Web port:   ${KASM_BIND_INTERFACE}:${VNC_PORT}"
 echo "Clipboard:  in=${CLIP_IN} out=${CLIP_OUT} primary=${CLIP_PRIMARY} delay=${KASM_CLIPBOARD_DELAY_MS}ms"
 echo "DLP:        log=${DLP_LOG} watermark=$([ -n "${KASM_WATERMARK_TEXT}" ] && echo on || echo off)"
 
@@ -245,7 +276,7 @@ Xkasmvnc "${DISPLAY}" \
   -geometry "${VNC_RESOLUTION}" \
   -depth "${VNC_COL_DEPTH}" \
   -websocketPort "${VNC_PORT}" \
-  -interface 0.0.0.0 \
+  -interface "${KASM_BIND_INTERFACE}" \
   -SecurityTypes "${SECURITY_TYPES}" \
   -RawKeyboard \
   -AlwaysShared \
@@ -277,6 +308,15 @@ if [ ! -e "/tmp/.X11-unix/X${DISPLAY_NUM}" ]; then
   exit 1
 fi
 
+# Point the Giswater plugin at the natively built EPA solvers, if it is
+# installed in this home directory. Giswater shells out to Windows binaries it
+# ships inside its own plugin folder; `epa install` replaces them with symlinks
+# to EPANET/SWMM from the image. Idempotent, and a no-op when the plugin is
+# absent — which is why it is safe to run on every boot.
+if command -v epa >/dev/null 2>&1; then
+  epa install || echo "WARN: could not wire up the EPA solvers — run 'epa status' for detail"
+fi
+
 # Start the desktop session
 echo "Starting XFCE desktop..."
 "$HOME/.vnc/xstartup" &
@@ -286,7 +326,12 @@ export DE_PID
 echo ""
 echo "============================================"
 echo "  Desktop is ready!"
-echo "  Open: http://localhost:${VNC_PORT}"
+if [ "${KASM_BIND_INTERFACE}" = "0.0.0.0" ]; then
+  echo "  Open: http://localhost:${VNC_PORT}"
+else
+  echo "  Bound to ${KASM_BIND_INTERFACE}:${VNC_PORT} behind the OIDC proxy."
+  echo "  Open: http://localhost:${KASM_OIDC_LISTEN_PORT:-8443}"
+fi
 echo "============================================"
 echo ""
 

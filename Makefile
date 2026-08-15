@@ -1,4 +1,4 @@
-.PHONY: help build-docker run stop summary clean
+.PHONY: help build-docker run stop summary test clean
 
 IMAGE_NAME := nix-xfce-kasm
 IMAGE_TAG := latest
@@ -30,6 +30,10 @@ run-persistent: ## Run with persistent home directory
 
 stop: ## Stop the running container
 	docker stop qgis-desktop 2>/dev/null || true
+
+test: ## Run the test suite (no Docker required)
+	bash scripts/test-oidc-config.sh
+	bash scripts/test-terminal-lockdown.sh
 
 summary: ## Generate build summary
 	bash build-summary.sh $(IMAGE_NAME):$(IMAGE_TAG) build-summary.md

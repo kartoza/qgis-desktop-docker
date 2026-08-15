@@ -16,11 +16,16 @@ SBOM and a Grype CVE scan as release artefacts.
 
 - A full QGIS 4.0 desktop in a browser tab, on any device.
 - Multi-monitor and dynamic resolution via KasmVNC.
-- **Three auth pathways** (choose per deployment via `KASM_AUTH_MODE`):
+- **Four auth pathways** (choose per deployment via `KASM_AUTH_MODE`):
   the browser's HTTP BasicAuth dialog (`basic`, default), a LightDM
   greeter *inside* the desktop that re-prompts cleanly on failure
-  (`greeter`), or no auth for local dev (`none`). File- or env-based
-  multi-user credentials work with all three.
+  (`greeter`), Keycloak/OIDC single sign-on in front of the desktop
+  (`oidc`), or no auth for local dev (`none`). File- or env-based
+  multi-user credentials work with all but `oidc`, which takes its accounts
+  from your identity provider.
+- **Giswater-ready QGIS**: the EPANET and SWMM hydraulic solvers built from
+  source, the Python packages the plugin imports, and the `epa` command that
+  makes Giswater find the solvers on Linux.
 - Data-loss-prevention knobs: clipboard direction and size caps, MIME
   allowlist, screen watermark, DLP audit log.
 - An nftables egress lockdown with a hostname/CIDR allowlist that runs

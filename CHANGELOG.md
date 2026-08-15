@@ -7,6 +7,153 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-08-15
+
+Two additions: a fourth authentication pathway that puts Keycloak (or any
+OIDC provider) in front of the desktop, and everything the Giswater QGIS
+plugin needs to actually run — including the two EPA hydraulic solvers, built
+from source.
+
+### Added
+
+#### Authentication — `KASM_AUTH_MODE=oidc`
+- `oidc` (alias `keycloak`) fronts the desktop with
+  [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/). The proxy owns
+  the published port; KasmVNC is rebound to `127.0.0.1:6901`, so an
+  unauthenticated request never reaches the desktop at all.
+- Provider defaults to `keycloak-oidc` (realm/client role filtering) but speaks
+  plain OIDC discovery, so `KASM_OIDC_ISSUER_URL` can point at any compliant
+  identity provider. `KASM_OIDC_PROVIDER=oidc` selects the generic provider.
+- Configuration: `KASM_OIDC_ISSUER_URL`, `KASM_OIDC_CLIENT_ID`,
+  `KASM_OIDC_CLIENT_SECRET[_FILE]`, `KASM_OIDC_REDIRECT_URL`,
+  `KASM_OIDC_COOKIE_SECRET[_FILE]`, `KASM_OIDC_SCOPE`,
+  `KASM_OIDC_EMAIL_DOMAINS`, `KASM_OIDC_EMAIL_CLAIM`,
+  `KASM_OIDC_ALLOWED_GROUPS`, `KASM_OIDC_ALLOWED_ROLES`,
+  `KASM_OIDC_COOKIE_SECURE`, `KASM_OIDC_COOKIE_EXPIRE`,
+  `KASM_OIDC_TLS_CERT_FILE` / `_KEY_FILE`, `KASM_OIDC_REVERSE_PROXY`,
+  `KASM_OIDC_INSECURE_SKIP_VERIFY`, `KASM_OIDC_UPSTREAM_PORT`,
+  `KASM_OIDC_INNER_MODE`, `KASM_OIDC_EXTRA_ARGS`.
+- `KASM_OIDC_INNER_MODE` composes with the existing modes: `none` (default —
+  one shared desktop behind SSO) or `greeter` (SSO at the edge *and* a per-user
+  Linux session inside).
+- Secrets never reach a command line. `kasm-oidc-config` runs as root at boot,
+  reads `*_FILE` secrets (so a `0400 root:root` mount works), and writes them
+  to `/run/kasm-oidc/secrets.cfg` mode `0400` owned by UID 1000. `ps` inside the
+  container and `docker inspect` outside it both stay clean.
+- The proxy runs unprivileged under `setpriv` with all capabilities cleared,
+  and a watchdog stops the container if it ever exits — the desktop cannot be
+  left serving with nothing in front of it.
+- The identity provider's host is added to the nftables egress allowlist
+  automatically, since discovery and the code exchange happen server-side.
+- Session cookies are marked `Secure` automatically when
+  `KASM_OIDC_REDIRECT_URL` is `https://`, and the container warns at boot when
+  it is not.
+- New `nix run .#run-oidc` (against your own IdP) and
+  `nix run .#run-keycloak-demo` (throwaway Keycloak with a pre-imported realm)
+  targets, plus `examples/keycloak-oidc/`.
+
+#### Giswater support
+- QGIS is built with the Python packages the Giswater plugin imports —
+  `jsonschema`, `debugpy`, `psutil`, `pyproj`, `matplotlib` — inside its own
+  interpreter.
+- **EPANET 2.2** and **SWMM 5.2.4**, the two US EPA solvers Giswater drives,
+  built from upstream source in `nix/` (neither is in nixpkgs) and available as
+  `runepanet`/`epanet`/`epanet2` and `runswmm`/`swmm5`. Both derivations solve a
+  real model during `installCheckPhase`.
+- `epa` command (`epa status|install|uninstall|test`). Giswater executes Windows
+  binaries from fixed paths inside its own plugin folder; `epa install` replaces
+  them with symlinks to the native solvers, keeping the originals as
+  `*.shipped-windows`. It runs automatically on every desktop start and, in
+  `greeter` mode, on every session start.
+- `GISWATER_EPANET_EXE` and `GISWATER_SWMM_EXE` set image-wide; QGIS itself is
+  wrapped so both solvers are on `PATH` and `LD_LIBRARY_PATH` for anything it
+  spawns.
+- New flake outputs: `packages.epanet`, `packages.swmm`, `packages.qgis`,
+  `packages.epa`.
+
+#### Terminal lockdown — `KASM_ALLOW_TERMINAL`
+- `KASM_ALLOW_TERMINAL=0` removes terminal access from the desktop. The
+  entrypoint deletes the terminal emulators (the `/bin` symlink *and* the
+  binary behind it) and the command-runner dialogs (`xfce4-appfinder`,
+  `xfrun4`, `exo-open`) from the container's own filesystem layer, then strips
+  the panel launcher and hides the menu entries. Closes the panel launcher, the
+  applications menu, Ctrl-Alt-T and Thunar's *Open Terminal Here*.
+- Idempotent and per-container: nothing is written to the image, and restarting
+  without the variable brings the terminal back.
+- Documented honestly as an affordance control rather than a sandbox — QGIS's
+  Python console can still start subprocesses. See
+  [Terminal access](docs/configuration/kasm-permissions.md#terminal-access).
+- The analyst locked-down scenario and `nix run .#run-locked-down` now set it.
+
+#### Testing
+- `scripts/test-oidc-config.sh` (`nix run .#test-oidc`) — 46 assertions over
+  configuration validation, secret handling, TOML escaping, cookie-security
+  defaults, authorisation lists and the TLS listener. No Docker and no identity
+  provider needed; the proxy binary is stubbed. The last assertion checks every
+  flag the launcher emits against the real `oauth2-proxy --help`, which is what
+  caught `--silence-ping-logger` before release.
+- `scripts/test-terminal-lockdown.sh` (`nix run .#test-terminal-lockdown`) — 27
+  assertions driving the lockdown against a throwaway tree shaped like the
+  container's `/bin` and `/home`.
+- `nix run .#test` runs both; `make test` does the same without Nix.
+- CI runs them as a gate before the image build.
+
+#### Packages
+- `oauth2-proxy` and `cacert` added to the image. The image previously shipped
+  **no CA bundle at all**, so TLS verification now works for the identity
+  provider and for any HTTPS service QGIS talks to. Roughly +30 MB uncompressed,
+  plus the Giswater Python packages and solvers.
+
+### Fixed
+
+Both of these were found while testing the OIDC path end to end against a real
+Keycloak, and both affect every release since the egress lockdown landed in
+1.3.0.
+
+- **DNS was broken inside the container whenever the egress lockdown was on.**
+  The entrypoint ran `nft flush ruleset`, which also deleted Docker's `ip nat`
+  table — the one carrying the DNAT rules that make the embedded resolver at
+  `127.0.0.11:53` answer at all, and which nftables explicitly labels
+  "managed by iptables-nft, do not touch". On any user-defined or Compose
+  network, every name lookup after startup failed with connection refused, so
+  allowlisted hosts were reachable only by IP. The rules now live in a table of
+  our own, `inet kasm_egress`, and only that table is replaced.
+- **Hostnames in `KASM_EGRESS_ALLOW` never resolved.** `getent` is its own
+  package in current nixpkgs and is no longer part of `glibc.bin`, so
+  `resolve_host` silently failed for every name and logged
+  `could not resolve '<host>' at startup; skipping`. `getent` is now an
+  explicit image dependency, and a missing one is reported as an error rather
+  than a per-host warning.
+
+### Changed
+- `KASM_BIND_INTERFACE` (default `0.0.0.0`) is honoured by both KasmVNC
+  launchers. The entrypoint sets it to `127.0.0.1` in `oidc` mode.
+- The authentication mode is now resolved *before* the egress filter is
+  installed, so the issuer host can be allowlisted.
+- `start-desktop.sh` and the greeter's `Xsession` run `epa install` before
+  starting XFCE.
+- Docs: new [Giswater](docs/configuration/giswater.md) and
+  [Keycloak SSO](docs/scenarios/keycloak-sso.md) pages; authentication,
+  kasm-permissions, egress-lockdown, architecture, project-structure, nix-flake
+  and nix-workflow pages updated.
+- The analyst locked-down scenario's verification checklist now runs the
+  shell-based checks from the host via `docker exec`, since the desktop it
+  describes no longer has a terminal.
+
+### Notes
+- The desktop session is shared across users in `oidc` mode unless
+  `KASM_OIDC_INNER_MODE=greeter` is set — the same caveat that already applies
+  to `basic`.
+- Over plain HTTP the session cookie cannot be marked `Secure`. Terminate TLS in
+  front of the container (or set `KASM_OIDC_TLS_CERT_FILE`) for anything beyond
+  localhost.
+- The egress allowlist resolves the IdP's hostname once at startup. Providers
+  behind rotating IPs need an explicit `KASM_EGRESS_ALLOW` CIDR.
+- The Giswater plugin itself is not pre-installed — install it from the QGIS
+  plugin manager (and allow `plugins.qgis.org` through the egress filter).
+- The EPA solver derivations are vendored from Kartoza's GISWater development
+  environment and kept in sync by hand.
+
 ## [1.4.0] — 2026-07-08
 
 Adds a third authentication pathway: an in-desktop LightDM greeter that
@@ -174,7 +321,8 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.1.0...v1.2.0

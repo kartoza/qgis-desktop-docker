@@ -16,9 +16,10 @@ services:
       - VNC_COL_DEPTH=24
       - VNC_PORT=8443
       # --- Authentication ---------------------------------------------------
-      # Tri-state mode selector (default: basic).
+      # Mode selector (default: basic).
       #   basic   — HTTP Basic Auth on the web endpoint (browser dialog).
       #   greeter — LightDM login form inside the desktop (see docs).
+      #   oidc    — Keycloak/OIDC single sign-on in front of the desktop.
       #   none    — no auth (DEV ONLY — never expose to network).
       # - KASM_AUTH_MODE=greeter
       # Legacy: KASM_AUTH=0 still forces mode=none.
@@ -28,6 +29,24 @@ services:
       # Mounted user file (one 'user:password' per line, '#' for comments).
       # File wins over KASM_USERS which wins over legacy VNC_USER/VNC_PW.
       # - KASM_USERS_FILE=/etc/kasmvnc/users
+      # --- Single sign-on (KASM_AUTH_MODE=oidc) -----------------------------
+      # oauth2-proxy takes over the published port and KasmVNC moves to
+      # 127.0.0.1:6901 behind it, so nothing reaches the desktop unauthenticated.
+      # The identity provider's host is added to the egress allowlist for you.
+      # A full worked example lives in examples/keycloak-oidc/.
+      # - KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis
+      # - KASM_OIDC_CLIENT_ID=qgis-desktop
+      # Prefer the _FILE form: an env var is visible to `docker inspect`.
+      # - KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
+      # Public URL of THIS container + /oauth2/callback, registered on the client.
+      # - KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+      # Keep sessions alive across restarts (otherwise a key is generated per boot).
+      # - KASM_OIDC_COOKIE_SECRET_FILE=/run/secrets/oidc-cookie-secret
+      # Optional authorisation filters — omit to admit anyone in the realm.
+      # - KASM_OIDC_ALLOWED_ROLES=qgis-user
+      # - KASM_OIDC_ALLOWED_GROUPS=/gis-users
+      # Give each SSO user their own Linux session inside the container.
+      # - KASM_OIDC_INNER_MODE=greeter
       # --- Kasm permission controls (secure-by-default) ---
       # Clipboard is OFF in both directions unless explicitly enabled.
       # Set to 1 (or yes/true/on) to allow.
@@ -46,6 +65,10 @@ services:
       # DLP logging level: off | info | verbose.
       # WARNING: 'verbose' logs KEYSTROKES AND CLIPBOARD CONTENT to the server log.
       # - KASM_DLP_LOG=info
+      # Remove terminal access from the desktop: deletes the terminal emulators
+      # and the "run a command" dialogs, and strips the launcher/menu entries.
+      # Not a sandbox — QGIS's Python console can still start subprocesses.
+      # - KASM_ALLOW_TERMINAL=0
       # --- Egress network lockdown (ON by default) ---
       # When on, the container may only initiate outbound connections to hosts
       # on KASM_EGRESS_ALLOW (plus DNS to the Docker embedded resolver).

@@ -14,6 +14,8 @@ A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) 
 - **Fully reproducible** -- the entire image is defined declaratively in a Nix flake
 - **Persistent workspaces** -- mount a volume to keep your QGIS projects, plugins, and settings across restarts
 - **Minimal footprint** -- only the packages needed to run QGIS and the desktop environment
+- **Four ways to log in** -- no auth, HTTP Basic Auth, an in-desktop LightDM greeter, or Keycloak/OIDC single sign-on
+- **Giswater-ready** -- the EPANET and SWMM solvers, the Python packages the plugin imports, and the wiring that makes Giswater find them on Linux
 - **SBOM & CVE scanning** -- every build produces a Software Bill of Materials and vulnerability scan
 
 ## Quick Start
@@ -135,6 +137,7 @@ directions until you explicitly enable it. Boolean values accept
 | `KASM_CLIPBOARD_MIME_TYPES` | *(kasm default)* | `-DLP_ClipTypes` | Comma-separated MIME allowlist, e.g. `text/plain,text/html` |
 | `KASM_WATERMARK_TEXT` | *(none)* | `-DLP_WatermarkText` | Overlay text on the desktop as a screenshot deterrent. `${USER}` / `$USER` is expanded by `start-desktop.sh` to the first `KASM_USERS` entry (or `VNC_USER`). strftime tokens (`%H:%M` etc.) are expanded by KasmVNC at render time. Stick to ASCII — the default watermark font lacks glyphs like em dash (U+2014). |
 | `KASM_DLP_LOG` | `off` | `-DLP_Log` | `off`, `info`, or `verbose`. **`verbose` logs KEYSTROKES AND CLIPBOARD CONTENT to the server log** |
+| `KASM_ALLOW_TERMINAL` | `1` | *(not a Kasm flag)* | `0` deletes the terminal emulators and the command-runner dialogs from the container at boot, and strips the launcher and menu entries. Closes the panel launcher, the applications menu, Ctrl-Alt-T and Thunar's "Open Terminal Here". **Not a sandbox** — QGIS's Python console can still start subprocesses; see [docs](docs/configuration/kasm-permissions.md#terminal-access). |
 
 ### Examples
 
@@ -234,11 +237,39 @@ hangs and times out.
   restrict traffic between multiple containers on a shared Docker network
   unless each container has its own filter.
 
+## Giswater
+
+QGIS in this image is equipped for the
+[Giswater](https://www.giswater.org/) plugin: the Python packages it imports
+(`jsonschema`, `psutil`, `pyproj`, `matplotlib`, `debugpy`) are inside QGIS's
+own interpreter, and both EPA hydraulic solvers are built from source and on
+`PATH`:
+
+| Solver | Commands | Giswater project type |
+|--------|----------|-----------------------|
+| EPANET 2.2 | `runepanet`, `epanet`, `epanet2` | `ws` — water supply |
+| SWMM 5.2.4 | `runswmm`, `swmm5` | `ud` — urban drainage |
+
+Giswater does not search `PATH` — it executes Windows binaries shipped inside
+its own plugin folder, which exist on Linux but cannot run. The `epa` command
+replaces them with symlinks to the native solvers and runs automatically on
+every desktop (and greeter session) start:
+
+```bash
+epa status      # solver paths and per-plugin wiring
+epa install     # point the Giswater plugin(s) at the native solvers
+epa test        # run a real model through both solvers
+```
+
+Install the plugin itself from the QGIS plugin manager — remember to allow
+`plugins.qgis.org` and your PostGIS host through the egress lockdown. Full
+details in [docs/configuration/giswater.md](docs/configuration/giswater.md).
+
 ## Endpoints
 
 | URL | Description |
 |-----|-------------|
-| `http://localhost:8443` | KasmVNC web client (full desktop) |
+| `http://localhost:8443` | KasmVNC web client (full desktop) — or the OIDC proxy in `oidc` mode |
 
 ## Scenarios
 
@@ -248,6 +279,11 @@ Worked-example deployments combining several of the knobs above:
   single user `bob`, clipboard blocked in both directions, egress restricted
   to a co-located `kartoza/postgis` container. Includes UML diagrams and a
   ready-to-run `docker-compose.yml`. Try it with `nix run .#run-analyst-scenario`.
+
+- **[Keycloak single sign-on](docs/scenarios/keycloak-sso.md)** — no user
+  accounts in the container at all: an OIDC proxy authenticates against your
+  identity provider and admits only users holding the right role. Ships with a
+  throwaway Keycloak realm. Try it with `nix run .#run-keycloak-demo`.
 
 ## Architecture
 
@@ -310,6 +346,7 @@ make run             # Run in foreground
 make run-detached    # Run in background
 make run-persistent  # Run with persistent home volume
 make stop            # Stop the container
+make test            # Run the test suite (no Docker required)
 make summary         # Generate build summary
 make compose-up      # Start with docker-compose
 make compose-down    # Stop docker-compose
@@ -318,10 +355,14 @@ make compose-down    # Stop docker-compose
 ### Available `nix run` commands
 
 ```bash
-nix run .#build-docker  # Build the Docker image
-nix run .#run           # Run the container
-nix run .#summary       # Generate build summary
-nix run                 # Show help
+nix run .#build-docker      # Build the Docker image
+nix run .#run               # Run the container
+nix run .#run-greeter       # LightDM greeter login
+nix run .#run-oidc          # Keycloak/OIDC SSO (reads KASM_OIDC_* from your env)
+nix run .#run-keycloak-demo # Throwaway Keycloak + SSO desktop
+nix run .#test              # Run the test suite (no Docker needed)
+nix run .#summary           # Generate build summary
+nix run                     # Show help
 ```
 
 ### Development shell
@@ -338,12 +379,23 @@ Provides docker, python3, syft, grype, jq, and other tools.
 flake.nix                    # Main flake: packages, Docker image, apps, dev shell
 kasmvnc.nix                  # KasmVNC package (v1.4.0 from Debian Bookworm deb)
 libcrypt-compat.nix          # libcrypt.so.1 compat lib from Debian
-start-desktop.sh             # Entrypoint: launches Xkasmvnc + XFCE
-config/                      # XFCE panel and desktop configuration
+entrypoint.sh                # Root entrypoint: egress filter, auth mode, privilege drop
+start-desktop.sh             # Launches Xkasmvnc + XFCE as the desktop user
+config/
+  xfce4/                     # XFCE panel and desktop configuration
+  lightdm/                   # Greeter mode: config, PAM verifier, X server wrapper
+  oidc/                      # OIDC mode: secret materialisation + oauth2-proxy launcher
+nix/
+  epanet.nix, swmm.nix       # EPA hydraulic solvers for Giswater (built from source)
 docker-compose.yml           # Docker Compose example
+examples/
+  analyst-locked-down/       # Locked-down analyst scenario
+  keycloak-oidc/             # Keycloak single sign-on demo
 Makefile                     # Make targets for build/run/summary
 build-summary.sh             # Build summary generator
 scripts/
+  epa.sh                     # Points the Giswater plugin at the native solvers
+  test-oidc-config.sh        # Unit tests for the OIDC plumbing
   sbom_table.py              # SBOM JSON to markdown table
   cve_table.py               # Grype CVE JSON to markdown table
 .github/workflows/
@@ -383,18 +435,20 @@ Both are attached to every release and available as artifacts on every PR build.
 
 ### Authentication
 
-The container offers three auth pathways selected by `KASM_AUTH_MODE`
+The container offers four auth pathways selected by `KASM_AUTH_MODE`
 (default: `basic`):
 
 | Mode | What the user sees | When to use |
 |------|--------------------|-------------|
 | `basic` | Browser's HTTP Basic Auth dialog | Fast to set up. Fine for a single trusted user. |
 | `greeter` | In-desktop LightDM login form | Multi-user, or wherever users may need to log out / re-authenticate without closing the browser tab. |
+| `oidc` | Your identity provider's login page | Single sign-on against Keycloak (or any OIDC provider): central accounts, MFA, role-based access. |
 | `none` | No prompt — desktop appears immediately | Local dev only. Never expose to any untrusted network. |
 
 Legacy `KASM_AUTH=0` still forces `none` for backwards compatibility.
 
-All three modes read credentials from the same sources (first wins):
+`basic`, `greeter` and `none` read credentials from the same sources (first
+wins); `oidc` gets its accounts from the identity provider instead:
 
 1. `KASM_USERS_FILE` — path to a file containing `user:password` per line;
    default `/etc/kasmvnc/users`. `#` comments and blank lines ignored.
@@ -404,10 +458,17 @@ All three modes read credentials from the same sources (first wins):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` |
+| `KASM_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` \| `oidc` |
 | `KASM_AUTH` | *(unset)* | Legacy: `0` forces `none`. |
 | `KASM_USERS_FILE` | `/etc/kasmvnc/users` | Bind-mount target for a `user:password` file |
 | `KASM_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list |
+| `KASM_OIDC_ISSUER_URL` | *(none)* | Required in `oidc` mode: the realm/issuer URL |
+| `KASM_OIDC_CLIENT_ID` | *(none)* | Required in `oidc` mode |
+| `KASM_OIDC_CLIENT_SECRET_FILE` | *(none)* | Required in `oidc` mode (or `KASM_OIDC_CLIENT_SECRET`) |
+| `KASM_OIDC_REDIRECT_URL` | *(none)* | Required in `oidc` mode: public URL + `/oauth2/callback` |
+
+The full `KASM_OIDC_*` table is in
+[docs/configuration/authentication.md](docs/configuration/authentication.md).
 
 **Basic (default), multi-user via file:**
 
@@ -432,6 +493,25 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 # no browser tab to close, no cache to clear.
 ```
 
+**Single sign-on against Keycloak (or any OIDC provider):**
+
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e KASM_AUTH_MODE=oidc \
+  -e KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+  -e KASM_OIDC_CLIENT_ID=qgis-desktop \
+  -e KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
+  -e KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  -e KASM_OIDC_ALLOWED_ROLES=qgis-user \
+  -v /path/to/secret:/run/secrets/oidc:ro \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+`oauth2-proxy` takes over the published port and KasmVNC moves to
+`127.0.0.1:6901` behind it, so an unauthenticated request never reaches the
+desktop. Try it end to end — including a user who is deliberately refused —
+with `nix run .#run-keycloak-demo`.
+
 **Disable auth for local dev only:**
 
 ```bash
@@ -445,13 +525,18 @@ Notes:
   dialog — unstyled and hard to re-prompt after a failed login (browsers
   cache the credentials for the tab). `greeter` runs LightDM inside the
   X session, so failures and logouts return to a proper login form.
-- **Privileges.** `basic` and `none` run the desktop as UID 1000 after
-  the root entrypoint drops privileges. `greeter` keeps LightDM running as
-  root inside the container so it can spawn each session as its target
-  user; XFCE itself still runs unprivileged.
-- **Custom brand or SSO/OIDC.** Front the container with a reverse proxy
-  (nginx + OAuth2 Proxy, Traefik, Caddy + `basic_auth`, etc.) and set
-  `KASM_AUTH_MODE=none`.
+- **`oidc` composes.** `KASM_OIDC_INNER_MODE=greeter` requires single sign-on
+  at the edge *and* gives each user their own Linux session inside.
+- **Privileges.** `basic`, `none` and `oidc` run the desktop as UID 1000 after
+  the root entrypoint drops privileges — the OIDC proxy runs unprivileged too.
+  `greeter` keeps LightDM running as root inside the container so it can spawn
+  each session as its target user; XFCE itself still runs unprivileged.
+- **Secrets stay off the command line.** With the `_FILE` variables the client
+  secret is read as root at boot and written to a `0400` config file owned by
+  the proxy's UID — never visible in `ps` or `docker inspect`.
+- **Custom brand or another SSO stack.** Front the container with your own
+  reverse proxy (nginx, Traefik, Caddy + `basic_auth`, …) and set
+  `KASM_AUTH_MODE=none` — but only when that proxy is the sole route in.
 
 ## License
 

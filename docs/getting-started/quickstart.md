@@ -19,9 +19,13 @@ handshake so you only see one prompt.
     Set `-e KASM_AUTH_MODE=greeter` on `docker run` to boot with a
     LightDM greeter inside the desktop instead of the browser's Basic
     Auth dialog. Wrong password re-prompts in place — no browser tab to
-    close, no cache to clear. See
-    [Authentication](../configuration/authentication.md) for the full
-    tri-state selector.
+    close, no cache to clear.
+
+!!! tip "Single sign-on?"
+    Set `-e KASM_AUTH_MODE=oidc` plus the `KASM_OIDC_*` variables to put
+    Keycloak (or any OIDC provider) in front of the desktop. See
+    [Authentication](../configuration/authentication.md) for every mode and
+    variable.
 
 !!! warning "NET_ADMIN is required"
     The container starts an nftables egress firewall as its first act. It

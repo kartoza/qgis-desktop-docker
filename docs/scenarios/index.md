@@ -15,6 +15,11 @@ setup.
   homes, and clean log-out → re-prompt without closing the browser.
   Try it with `nix run .#run-greeter-multi`.
 
+- **[Keycloak single sign-on](keycloak-sso.md)** — no user accounts in
+  the container at all: an OIDC proxy authenticates against your identity
+  provider and admits only users holding the right role. Ships with a
+  throwaway Keycloak realm. Try it with `nix run .#run-keycloak-demo`.
+
 Each scenario page describes the requirements, the topology, the
 container internals, the compose file, how to run it, and a checklist for
 confirming every requirement is enforced.

@@ -1,11 +1,12 @@
 # Authentication
 
-The container offers three auth pathways, selected by `KASM_AUTH_MODE`:
+The container offers four auth pathways, selected by `KASM_AUTH_MODE`:
 
 | Mode | What the user sees | When to use |
 |------|--------------------|-------------|
 | `basic` *(default)* | Browser's HTTP Basic Auth dialog | Fast to set up. Fine for a single trusted user. |
 | `greeter` | In-desktop LightDM login form | Multiple users, or anywhere users may need to log out / re-authenticate without closing the browser tab. |
+| `oidc` | Your identity provider's login page | Single sign-on against Keycloak (or any OIDC provider). Central accounts, MFA, group/role-based access. |
 | `none` | No prompt — desktop appears immediately | Local dev only. Never expose to any untrusted network. |
 
 Legacy `KASM_AUTH=0` still forces `none` for backwards compatibility.
@@ -14,16 +15,19 @@ Legacy `KASM_AUTH=0` still forces `none` for backwards compatibility.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` |
+| `KASM_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` \| `oidc` |
 | `KASM_AUTH` | *(unset)* | Legacy: `0` forces `none`. |
 | `KASM_USERS_FILE` | `/etc/kasmvnc/users` | Bind-mount target for a `user:password` file. |
 | `KASM_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list. Comma or newline separated. |
 | `VNC_USER` / `VNC_PW` | `user` / `password` | Legacy single-user fallback. Used when neither of the above are set. |
 
+The `oidc` variables have [their own table](#oidc-variables) below.
+
 ## Credential resolution
 
-All three modes read credentials from the same sources in the same order,
-first wins:
+The `basic`, `greeter` and `none` modes read credentials from the same sources
+in the same order, first wins (`oidc` gets its accounts from the identity
+provider instead):
 
 1. **`KASM_USERS_FILE`** — path to a file containing `user:password` per
    line. Lines starting with `#` and blank lines are ignored. Passwords
@@ -94,6 +98,120 @@ flowchart LR
 - **Basic mode is unchanged.** Existing deployments continue to work
   bit-identically. The greeter mode is opt-in.
 
+## `oidc` — single sign-on via Keycloak (new in 1.5.0)
+
+`KASM_AUTH_MODE=oidc` puts [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
+in front of the desktop. It becomes the only listener on the published port,
+and KasmVNC is moved to `127.0.0.1:6901` behind it — so an unauthenticated
+request never reaches the desktop at all, not even to be refused by it.
+
+The provider defaults to `keycloak-oidc`, which understands Keycloak's realm and
+client roles. It speaks ordinary OIDC discovery underneath, so **any** compliant
+identity provider works: point `KASM_OIDC_ISSUER_URL` at it, and set
+`KASM_OIDC_PROVIDER=oidc` if you do not need the Keycloak role filtering.
+
+```mermaid
+flowchart LR
+    Browser["Web Browser"] -->|":8443"| Proxy["oauth2-proxy<br/>(the only public listener)"]
+    Proxy <-->|"OIDC discovery<br/>+ code exchange"| IdP["Keycloak<br/>(configurable issuer)"]
+    Proxy -->|"127.0.0.1:6901<br/>HTTP + WebSocket"| KasmVNC["Xkasmvnc"]
+    KasmVNC -->|"X11 :1"| XFCE["XFCE + QGIS"]
+```
+
+### Setting up the Keycloak client
+
+In your realm, create a client:
+
+| Setting | Value |
+|---------|-------|
+| Client ID | `qgis-desktop` (anything — it goes in `KASM_OIDC_CLIENT_ID`) |
+| Client authentication | **On** (a confidential client; the proxy holds a secret) |
+| Standard flow | **Enabled** — this is the authorization-code flow |
+| Direct access grants | Disabled (not used) |
+| Valid redirect URI | `https://gis.example.com/oauth2/callback` |
+| Valid web origin | `https://gis.example.com` |
+
+Copy the client secret from the **Credentials** tab. That is everything the
+container needs; group or role filtering is optional and configured below.
+
+### Running it
+
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e KASM_AUTH_MODE=oidc \
+  -e KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+  -e KASM_OIDC_CLIENT_ID=qgis-desktop \
+  -e KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
+  -e KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  -e KASM_OIDC_ALLOWED_ROLES=qgis-user \
+  -v /path/to/secret:/run/secrets/oidc:ro \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+Or, with the same variables exported in your shell, `nix run .#run-oidc`.
+
+For a complete, runnable example — including a throwaway Keycloak with a
+pre-imported realm and a user who is deliberately *refused* — see
+[Keycloak SSO](../scenarios/keycloak-sso.md).
+
+### OIDC variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KASM_OIDC_ISSUER_URL` | *(required)* | Realm/issuer URL, e.g. `https://sso.example.com/realms/gis`. Discovery happens at `<issuer>/.well-known/openid-configuration`. |
+| `KASM_OIDC_CLIENT_ID` | *(required)* | Client ID registered with the provider. |
+| `KASM_OIDC_CLIENT_SECRET` | *(required)* | Client secret. Prefer the `_FILE` form below. |
+| `KASM_OIDC_CLIENT_SECRET_FILE` | *(none)* | Path to a file holding the secret. Read as root before privileges are dropped, so a `0400 root:root` mount works. |
+| `KASM_OIDC_REDIRECT_URL` | *(required)* | Browser-facing callback URL — this container's public URL + `/oauth2/callback`. Must be registered on the client. |
+| `KASM_OIDC_COOKIE_SECRET` | *(generated)* | Session encryption key. Generated per boot if unset, which invalidates sessions on restart and breaks multi-replica setups. |
+| `KASM_OIDC_COOKIE_SECRET_FILE` | *(none)* | File form of the above. Generate with `head -c 32 /dev/urandom \| base64 \| tr -d '=' \| tr '+/' '-_'`. |
+| `KASM_OIDC_PROVIDER` | `keycloak-oidc` | oauth2-proxy provider. Use `oidc` for a strictly generic provider. |
+| `KASM_OIDC_SCOPE` | `openid email profile` | Scopes requested. |
+| `KASM_OIDC_EMAIL_DOMAINS` | `*` | Comma-separated allowlist of email domains. `*` means any account the IdP issues a token for. |
+| `KASM_OIDC_EMAIL_CLAIM` | `email` | Claim used as the identity. Set to `preferred_username` for realms without verified emails. |
+| `KASM_OIDC_ALLOWED_GROUPS` | *(none)* | Comma-separated group allowlist, e.g. `/gis-users`. Needs a groups claim mapper on the client. |
+| `KASM_OIDC_ALLOWED_ROLES` | *(none)* | Comma-separated realm/client role allowlist. Keycloak only. |
+| `KASM_OIDC_INNER_MODE` | `none` | How the desktop behind the proxy authenticates: `none` (shared session) or `greeter` (per-user Linux session). |
+| `KASM_OIDC_UPSTREAM_PORT` | `6901` | Loopback port KasmVNC is moved to. |
+| `KASM_OIDC_COOKIE_SECURE` | *(from redirect URL)* | `1` marks session cookies Secure. Defaults on for an `https://` redirect URL, off otherwise. |
+| `KASM_OIDC_COOKIE_EXPIRE` | `8h` | Session lifetime. |
+| `KASM_OIDC_TLS_CERT_FILE` / `_KEY_FILE` | *(none)* | Serve HTTPS directly instead of plain HTTP. Both or neither. |
+| `KASM_OIDC_REVERSE_PROXY` | `0` | Set to `1` only when a trusted proxy in front sets `X-Forwarded-*`. Enabling it without one lets clients spoof their address. |
+| `KASM_OIDC_INSECURE_SKIP_VERIFY` | `0` | Skip TLS verification of the IdP. Dev only. |
+| `KASM_OIDC_EXTRA_ARGS` | *(none)* | Extra oauth2-proxy flags, appended verbatim. |
+
+### How it is wired
+
+- **Secrets never hit a command line.** `kasm-oidc-config` runs as root at boot,
+  reads the secrets, and writes them to `/run/kasm-oidc/secrets.cfg` mode `0400`
+  owned by UID 1000. Neither `ps` inside the container nor `docker inspect`
+  outside it shows the secret when you use the `_FILE` variables.
+- **The proxy is unprivileged.** It runs under `setpriv` as UID 1000 with all
+  capabilities cleared, exactly like the desktop.
+- **If the proxy dies, the container dies.** A watchdog signals PID 1 the moment
+  the proxy exits, so the desktop can never end up serving with nothing in front
+  of it.
+- **The IdP is allowlisted automatically.** The egress lockdown is on by default
+  with an empty allowlist; the entrypoint adds the issuer's host to it, because
+  discovery and the code exchange happen server-side. Everything else stays
+  blocked.
+- **Nothing is forwarded upstream.** Access tokens and identity headers are not
+  passed to KasmVNC — it has no use for them, and forwarding would only widen
+  what a compromised desktop process can see.
+
+### Trade-offs
+
+- **The desktop session is shared.** With `KASM_OIDC_INNER_MODE=none` every
+  authenticated user attaches to the *same* X session and sees the same screen,
+  as they do in `basic` mode. Use `greeter` for per-user sessions, or one
+  container per user for real isolation.
+- **Cookies need TLS.** Over plain HTTP the session cookie cannot be marked
+  Secure, and the container says so at boot. Terminate TLS in front of it (or
+  set `KASM_OIDC_TLS_CERT_FILE`) for anything beyond localhost.
+- **Image size.** oauth2-proxy plus a CA bundle add roughly 30 MB uncompressed.
+- **DNS is resolved once.** The egress allowlist pins the IdP's addresses at
+  startup. If your provider's IPs rotate, add its CIDR to `KASM_EGRESS_ALLOW`.
+
 ## Examples
 
 **Basic mode (default), multi-user via file:**
@@ -135,14 +253,42 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
+**Single sign-on against Keycloak:**
+
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e KASM_AUTH_MODE=oidc \
+  -e KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+  -e KASM_OIDC_CLIENT_ID=qgis-desktop \
+  -e KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
+  -e KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  -v /path/to/secret:/run/secrets/oidc:ro \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
 ## Branded login page
 
 `greeter` mode ships with a Kartoza-branded LightDM GTK greeter (wallpaper,
-Adwaita theme, credit footer). If you want an entirely custom brand or
-SSO/OIDC, front the container with a reverse proxy (nginx + OAuth2 Proxy,
-Traefik, Caddy + `basic_auth`, etc.) and set `KASM_AUTH_MODE=none`.
+Adwaita theme, credit footer). `oidc` mode hands the whole login experience to
+your identity provider, so branding lives in the realm's login theme.
+
+If you want something else entirely, front the container with your own reverse
+proxy (nginx, Traefik, Caddy + `basic_auth`, …) and set `KASM_AUTH_MODE=none` —
+but only when that proxy is the sole route to the published port.
 
 !!! tip
-    In `basic` and `none` modes the desktop process runs as UID 1000 after
-    the root entrypoint drops privileges. In `greeter` mode LightDM runs
-    as root but transitions each session to its target user via PAM.
+    In `basic`, `none` and `oidc` modes the desktop process runs as UID 1000
+    after the root entrypoint drops privileges — as does the OIDC proxy. In
+    `greeter` mode LightDM runs as root but transitions each session to its
+    target user via PAM.
+
+## Troubleshooting `oidc`
+
+| Symptom | Likely cause |
+|---------|--------------|
+| Container exits at boot with an `ERROR:` from `kasm-oidc-config` | A required variable is missing or a secret file is unreadable. The message names it. |
+| `FATAL: the OIDC proxy exited` | oauth2-proxy could not start — usually discovery failing. Check the IdP is reachable and that the issuer URL has no trailing slash. |
+| Redirect loop back to the login page | The session cookie is being dropped: `cookie_secure` is on over plain HTTP, or the browser reaches the container on a different host than `KASM_OIDC_REDIRECT_URL`. |
+| `Invalid redirect_uri` from Keycloak | The callback URL is not registered on the client. |
+| Login succeeds, then *Permission Denied* | Authentication worked but authorisation did not — check `KASM_OIDC_ALLOWED_ROLES` / `_GROUPS` and that the client has a groups mapper. |
+| Timeout reaching the IdP | Egress lockdown. The issuer host is allowlisted automatically; a *different* host for the token endpoint, or rotating IPs, needs an explicit `KASM_EGRESS_ALLOW` entry. |
