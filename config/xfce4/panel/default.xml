@@ -13,7 +13,7 @@
       <property name="size" type="uint" value="26"/>
       <property name="plugin-ids" type="array">
         <value type="int" value="1"/>
-        <value type="int" value="2"/><!-- KASM_TERMINAL_LAUNCHER_ID -->
+        <value type="int" value="2"/><!-- QGIS_DESKTOP_TERMINAL_LAUNCHER_ID -->
         <value type="int" value="3"/>
         <value type="int" value="4"/>
         <value type="int" value="5"/>
@@ -28,16 +28,16 @@
   </property>
   <property name="plugins" type="empty">
     <property name="plugin-1" type="string" value="applicationsmenu"/>
-    <!-- KASM_TERMINAL_LAUNCHER_BEGIN
+    <!-- QGIS_DESKTOP_TERMINAL_LAUNCHER_BEGIN
          These markers are load-bearing: config/lockdown/disable-terminal.sh
          deletes everything between them (and the matching plugin id above)
-         when KASM_ALLOW_TERMINAL=0. Keep them wrapped around the launcher. -->
+         when QGIS_DESKTOP_ALLOW_TERMINAL=0. Keep them wrapped around the launcher. -->
     <property name="plugin-2" type="string" value="launcher">
       <property name="items" type="array">
         <value type="string" value="xfce4-terminal.desktop"/>
       </property>
     </property>
-    <!-- KASM_TERMINAL_LAUNCHER_END -->
+    <!-- QGIS_DESKTOP_TERMINAL_LAUNCHER_END -->
     <property name="plugin-3" type="string" value="launcher">
       <property name="items" type="array">
         <value type="string" value="thunar.desktop"/>

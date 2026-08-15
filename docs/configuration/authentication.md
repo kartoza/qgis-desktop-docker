@@ -1,6 +1,6 @@
 # Authentication
 
-The container offers four auth pathways, selected by `KASM_AUTH_MODE`:
+The container offers four auth pathways, selected by `QGIS_DESKTOP_AUTH_MODE`:
 
 | Mode | What the user sees | When to use |
 |------|--------------------|-------------|
@@ -9,16 +9,17 @@ The container offers four auth pathways, selected by `KASM_AUTH_MODE`:
 | `oidc` | Your identity provider's login page | Single sign-on against Keycloak (or any OIDC provider). Central accounts, MFA, group/role-based access. |
 | `none` | No prompt — desktop appears immediately | Local dev only. Never expose to any untrusted network. |
 
-Legacy `KASM_AUTH=0` still forces `none` for backwards compatibility.
+The `KASM_*` names these settings used before 2.0.0 are no longer read — the
+container refuses to start and names the replacement. See
+[Migrating from 1.x](index.md#migrating-from-1x).
 
 ## Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` \| `oidc` |
-| `KASM_AUTH` | *(unset)* | Legacy: `0` forces `none`. |
-| `KASM_USERS_FILE` | `/etc/kasmvnc/users` | Bind-mount target for a `user:password` file. |
-| `KASM_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list. Comma or newline separated. |
+| `QGIS_DESKTOP_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` \| `oidc` |
+| `QGIS_DESKTOP_USERS_FILE` | `/etc/qgis-desktop/users` | Bind-mount target for a `user:password` file. |
+| `QGIS_DESKTOP_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list. Comma or newline separated. |
 | `VNC_USER` / `VNC_PW` | `user` / `password` | Legacy single-user fallback. Used when neither of the above are set. |
 
 The `oidc` variables have [their own table](#oidc-variables) below.
@@ -29,11 +30,11 @@ The `basic`, `greeter` and `none` modes read credentials from the same sources
 in the same order, first wins (`oidc` gets its accounts from the identity
 provider instead):
 
-1. **`KASM_USERS_FILE`** — path to a file containing `user:password` per
+1. **`QGIS_DESKTOP_USERS_FILE`** — path to a file containing `user:password` per
    line. Lines starting with `#` and blank lines are ignored. Passwords
    may contain colons; only the first `:` on the line is the separator.
    Mount with mode `0600`.
-2. **`KASM_USERS`** — inline list. Same semantics as the file.
+2. **`QGIS_DESKTOP_USERS`** — inline list. Same semantics as the file.
 3. **Legacy `VNC_USER` / `VNC_PW`** — single user.
 
 ## `basic` — HTTP Basic Auth (default)
@@ -60,11 +61,11 @@ motivation for `greeter` mode below.
 
 ## `greeter` — LightDM login form (new in 1.4.0)
 
-`KASM_AUTH_MODE=greeter` boots the container with LightDM as the first X
+`QGIS_DESKTOP_AUTH_MODE=greeter` boots the container with LightDM as the first X
 client on the KasmVNC-served display. HTTP Basic Auth is disabled — the
 greeter is the auth boundary. The browser connects, sees the LightDM
 login form, and the user authenticates against real Linux accounts that
-the entrypoint materialises from `KASM_USERS_FILE` / `KASM_USERS` /
+the entrypoint materialises from `QGIS_DESKTOP_USERS_FILE` / `QGIS_DESKTOP_USERS` /
 `VNC_USER`+`VNC_PW`.
 
 Why this exists:
@@ -73,7 +74,7 @@ Why this exists:
   re-prompts. No browser tab to close.
 - **Log out affordance.** XFCE's log-out returns to the greeter, so a
   second user can sign in on the same browser tab.
-- **Multi-user.** Each entry in `KASM_USERS` gets its own real Linux
+- **Multi-user.** Each entry in `QGIS_DESKTOP_USERS` gets its own real Linux
   account and home directory. Users see each other's session boundaries
   via UNIX permissions.
 
@@ -98,17 +99,17 @@ flowchart LR
 - **Basic mode is unchanged.** Existing deployments continue to work
   bit-identically. The greeter mode is opt-in.
 
-## `oidc` — single sign-on via Keycloak (new in 1.5.0)
+## `oidc` — single sign-on via Keycloak (new in 2.0.0)
 
-`KASM_AUTH_MODE=oidc` puts [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
+`QGIS_DESKTOP_AUTH_MODE=oidc` puts [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
 in front of the desktop. It becomes the only listener on the published port,
 and KasmVNC is moved to `127.0.0.1:6901` behind it — so an unauthenticated
 request never reaches the desktop at all, not even to be refused by it.
 
 The provider defaults to `keycloak-oidc`, which understands Keycloak's realm and
 client roles. It speaks ordinary OIDC discovery underneath, so **any** compliant
-identity provider works: point `KASM_OIDC_ISSUER_URL` at it, and set
-`KASM_OIDC_PROVIDER=oidc` if you do not need the Keycloak role filtering.
+identity provider works: point `QGIS_DESKTOP_OIDC_ISSUER_URL` at it, and set
+`QGIS_DESKTOP_OIDC_PROVIDER=oidc` if you do not need the Keycloak role filtering.
 
 ```mermaid
 flowchart LR
@@ -124,7 +125,7 @@ In your realm, create a client:
 
 | Setting | Value |
 |---------|-------|
-| Client ID | `qgis-desktop` (anything — it goes in `KASM_OIDC_CLIENT_ID`) |
+| Client ID | `qgis-desktop` (anything — it goes in `QGIS_DESKTOP_OIDC_CLIENT_ID`) |
 | Client authentication | **On** (a confidential client; the proxy holds a secret) |
 | Standard flow | **Enabled** — this is the authorization-code flow |
 | Direct access grants | Disabled (not used) |
@@ -138,12 +139,12 @@ container needs; group or role filtering is optional and configured below.
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=oidc \
-  -e KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
-  -e KASM_OIDC_CLIENT_ID=qgis-desktop \
-  -e KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
-  -e KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  -e KASM_OIDC_ALLOWED_ROLES=qgis-user \
+  -e QGIS_DESKTOP_AUTH_MODE=oidc \
+  -e QGIS_DESKTOP_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+  -e QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop \
+  -e QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
+  -e QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
   -v /path/to/secret:/run/secrets/oidc:ro \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
@@ -158,32 +159,34 @@ pre-imported realm and a user who is deliberately *refused* — see
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_OIDC_ISSUER_URL` | *(required)* | Realm/issuer URL, e.g. `https://sso.example.com/realms/gis`. Discovery happens at `<issuer>/.well-known/openid-configuration`. |
-| `KASM_OIDC_CLIENT_ID` | *(required)* | Client ID registered with the provider. |
-| `KASM_OIDC_CLIENT_SECRET` | *(required)* | Client secret. Prefer the `_FILE` form below. |
-| `KASM_OIDC_CLIENT_SECRET_FILE` | *(none)* | Path to a file holding the secret. Read as root before privileges are dropped, so a `0400 root:root` mount works. |
-| `KASM_OIDC_REDIRECT_URL` | *(required)* | Browser-facing callback URL — this container's public URL + `/oauth2/callback`. Must be registered on the client. |
-| `KASM_OIDC_COOKIE_SECRET` | *(generated)* | Session encryption key. Generated per boot if unset, which invalidates sessions on restart and breaks multi-replica setups. |
-| `KASM_OIDC_COOKIE_SECRET_FILE` | *(none)* | File form of the above. Generate with `head -c 32 /dev/urandom \| base64 \| tr -d '=' \| tr '+/' '-_'`. |
-| `KASM_OIDC_PROVIDER` | `keycloak-oidc` | oauth2-proxy provider. Use `oidc` for a strictly generic provider. |
-| `KASM_OIDC_SCOPE` | `openid email profile` | Scopes requested. |
-| `KASM_OIDC_EMAIL_DOMAINS` | `*` | Comma-separated allowlist of email domains. `*` means any account the IdP issues a token for. |
-| `KASM_OIDC_EMAIL_CLAIM` | `email` | Claim used as the identity. Set to `preferred_username` for realms without verified emails. |
-| `KASM_OIDC_ALLOWED_GROUPS` | *(none)* | Comma-separated group allowlist, e.g. `/gis-users`. Needs a groups claim mapper on the client. |
-| `KASM_OIDC_ALLOWED_ROLES` | *(none)* | Comma-separated realm/client role allowlist. Keycloak only. |
-| `KASM_OIDC_INNER_MODE` | `none` | How the desktop behind the proxy authenticates: `none` (shared session) or `greeter` (per-user Linux session). |
-| `KASM_OIDC_UPSTREAM_PORT` | `6901` | Loopback port KasmVNC is moved to. |
-| `KASM_OIDC_COOKIE_SECURE` | *(from redirect URL)* | `1` marks session cookies Secure. Defaults on for an `https://` redirect URL, off otherwise. |
-| `KASM_OIDC_COOKIE_EXPIRE` | `8h` | Session lifetime. |
-| `KASM_OIDC_TLS_CERT_FILE` / `_KEY_FILE` | *(none)* | Serve HTTPS directly instead of plain HTTP. Both or neither. |
-| `KASM_OIDC_REVERSE_PROXY` | `0` | Set to `1` only when a trusted proxy in front sets `X-Forwarded-*`. Enabling it without one lets clients spoof their address. |
-| `KASM_OIDC_INSECURE_SKIP_VERIFY` | `0` | Skip TLS verification of the IdP. Dev only. |
-| `KASM_OIDC_EXTRA_ARGS` | *(none)* | Extra oauth2-proxy flags, appended verbatim. |
+| `QGIS_DESKTOP_OIDC_ISSUER_URL` | *(required)* | Realm/issuer URL, e.g. `https://sso.example.com/realms/gis`. Discovery happens at `<issuer>/.well-known/openid-configuration`. |
+| `QGIS_DESKTOP_OIDC_CLIENT_ID` | *(required)* | Client ID registered with the provider. |
+| `QGIS_DESKTOP_OIDC_CLIENT_SECRET` | *(required)* | Client secret. Prefer the `_FILE` form below. |
+| `QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE` | *(none)* | Path to a file holding the secret. Read as root before privileges are dropped, so a `0400 root:root` mount works. |
+| `QGIS_DESKTOP_OIDC_REDIRECT_URL` | *(required)* | Browser-facing callback URL — this container's public URL + `/oauth2/callback`. Must be registered on the client. |
+| `QGIS_DESKTOP_OIDC_COOKIE_SECRET` | *(generated)* | Session encryption key. Generated per boot if unset, which invalidates sessions on restart and breaks multi-replica setups. |
+| `QGIS_DESKTOP_OIDC_COOKIE_SECRET_FILE` | *(none)* | File form of the above. Generate with `head -c 32 /dev/urandom \| base64 \| tr -d '=' \| tr '+/' '-_'`. |
+| `QGIS_DESKTOP_OIDC_PROVIDER` | `keycloak-oidc` | oauth2-proxy provider. Use `oidc` for a strictly generic provider. |
+| `QGIS_DESKTOP_OIDC_SCOPE` | `openid email profile` | Scopes requested. |
+| `QGIS_DESKTOP_OIDC_EMAIL_DOMAINS` | `*` | Comma-separated allowlist of email domains. `*` means any account the IdP issues a token for. |
+| `QGIS_DESKTOP_OIDC_EMAIL_CLAIM` | `email` | Claim used as the identity. Set to `preferred_username` for realms without verified emails. |
+| `QGIS_DESKTOP_OIDC_ALLOWED_GROUPS` | *(none)* | Comma-separated group allowlist, e.g. `/gis-users`. Needs a groups claim mapper on the client. |
+| `QGIS_DESKTOP_OIDC_ALLOWED_ROLES` | *(none)* | Comma-separated realm/client role allowlist. Keycloak only. |
+| `QGIS_DESKTOP_OIDC_INNER_MODE` | `none` | How the desktop behind the proxy authenticates: `none` (shared session) or `greeter` (per-user Linux session). |
+| `QGIS_DESKTOP_OIDC_UPSTREAM_PORT` | `6901` | Loopback port KasmVNC is moved to. |
+| `QGIS_DESKTOP_OIDC_LISTEN_PORT` | *(`VNC_PORT`)* | Port the proxy listens on. Defaults to the published port; only set this if the proxy must listen somewhere other than where `VNC_PORT` points. |
+| `QGIS_DESKTOP_OIDC_COOKIE_SECURE` | *(from redirect URL)* | `1` marks session cookies Secure. Defaults on for an `https://` redirect URL, off otherwise. |
+| `QGIS_DESKTOP_OIDC_COOKIE_EXPIRE` | `8h` | Session lifetime. |
+| `QGIS_DESKTOP_OIDC_TLS_CERT_FILE` | *(none)* | Serve HTTPS directly instead of plain HTTP. Requires the key below; setting one without the other is refused. |
+| `QGIS_DESKTOP_OIDC_TLS_KEY_FILE` | *(none)* | Private key for the certificate above. |
+| `QGIS_DESKTOP_OIDC_REVERSE_PROXY` | `0` | Set to `1` only when a trusted proxy in front sets `X-Forwarded-*`. Enabling it without one lets clients spoof their address. |
+| `QGIS_DESKTOP_OIDC_INSECURE_SKIP_VERIFY` | `0` | Skip TLS verification of the IdP. Dev only. |
+| `QGIS_DESKTOP_OIDC_EXTRA_ARGS` | *(none)* | Extra oauth2-proxy flags, appended verbatim. |
 
 ### How it is wired
 
-- **Secrets never hit a command line.** `kasm-oidc-config` runs as root at boot,
-  reads the secrets, and writes them to `/run/kasm-oidc/secrets.cfg` mode `0400`
+- **Secrets never hit a command line.** `qgis-desktop-oidc-config` runs as root at boot,
+  reads the secrets, and writes them to `/run/qgis-desktop/oidc/secrets.cfg` mode `0400`
   owned by UID 1000. Neither `ps` inside the container nor `docker inspect`
   outside it shows the secret when you use the `_FILE` variables.
 - **The proxy is unprivileged.** It runs under `setpriv` as UID 1000 with all
@@ -201,16 +204,16 @@ pre-imported realm and a user who is deliberately *refused* — see
 
 ### Trade-offs
 
-- **The desktop session is shared.** With `KASM_OIDC_INNER_MODE=none` every
+- **The desktop session is shared.** With `QGIS_DESKTOP_OIDC_INNER_MODE=none` every
   authenticated user attaches to the *same* X session and sees the same screen,
   as they do in `basic` mode. Use `greeter` for per-user sessions, or one
   container per user for real isolation.
 - **Cookies need TLS.** Over plain HTTP the session cookie cannot be marked
   Secure, and the container says so at boot. Terminate TLS in front of it (or
-  set `KASM_OIDC_TLS_CERT_FILE`) for anything beyond localhost.
+  set `QGIS_DESKTOP_OIDC_TLS_CERT_FILE`) for anything beyond localhost.
 - **Image size.** oauth2-proxy plus a CA bundle add roughly 30 MB uncompressed.
 - **DNS is resolved once.** The egress allowlist pins the IdP's addresses at
-  startup. If your provider's IPs rotate, add its CIDR to `KASM_EGRESS_ALLOW`.
+  startup. If your provider's IPs rotate, add its CIDR to `QGIS_DESKTOP_EGRESS_ALLOW`.
 
 ## Examples
 
@@ -223,7 +226,7 @@ bob:correct-horse-battery-staple
 EOF
 chmod 600 users
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -v "$PWD/users:/etc/kasmvnc/users:ro" \
+  -v "$PWD/users:/etc/qgis-desktop/users:ro" \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -231,7 +234,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=greeter \
+  -e QGIS_DESKTOP_AUTH_MODE=greeter \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 # Browser at :8443 shows the LightDM login. Log in as user / password.
 ```
@@ -240,8 +243,8 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=greeter \
-  -e KASM_USERS='alice:pw1,bob:pw2' \
+  -e QGIS_DESKTOP_AUTH_MODE=greeter \
+  -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -249,7 +252,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=none \
+  -e QGIS_DESKTOP_AUTH_MODE=none \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -257,11 +260,11 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=oidc \
-  -e KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
-  -e KASM_OIDC_CLIENT_ID=qgis-desktop \
-  -e KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
-  -e KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  -e QGIS_DESKTOP_AUTH_MODE=oidc \
+  -e QGIS_DESKTOP_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+  -e QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop \
+  -e QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
+  -e QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
   -v /path/to/secret:/run/secrets/oidc:ro \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
@@ -273,7 +276,7 @@ Adwaita theme, credit footer). `oidc` mode hands the whole login experience to
 your identity provider, so branding lives in the realm's login theme.
 
 If you want something else entirely, front the container with your own reverse
-proxy (nginx, Traefik, Caddy + `basic_auth`, …) and set `KASM_AUTH_MODE=none` —
+proxy (nginx, Traefik, Caddy + `basic_auth`, …) and set `QGIS_DESKTOP_AUTH_MODE=none` —
 but only when that proxy is the sole route to the published port.
 
 !!! tip
@@ -286,9 +289,9 @@ but only when that proxy is the sole route to the published port.
 
 | Symptom | Likely cause |
 |---------|--------------|
-| Container exits at boot with an `ERROR:` from `kasm-oidc-config` | A required variable is missing or a secret file is unreadable. The message names it. |
+| Container exits at boot with an `ERROR:` from `qgis-desktop-oidc-config` | A required variable is missing or a secret file is unreadable. The message names it. |
 | `FATAL: the OIDC proxy exited` | oauth2-proxy could not start — usually discovery failing. Check the IdP is reachable and that the issuer URL has no trailing slash. |
-| Redirect loop back to the login page | The session cookie is being dropped: `cookie_secure` is on over plain HTTP, or the browser reaches the container on a different host than `KASM_OIDC_REDIRECT_URL`. |
+| Redirect loop back to the login page | The session cookie is being dropped: `cookie_secure` is on over plain HTTP, or the browser reaches the container on a different host than `QGIS_DESKTOP_OIDC_REDIRECT_URL`. |
 | `Invalid redirect_uri` from Keycloak | The callback URL is not registered on the client. |
-| Login succeeds, then *Permission Denied* | Authentication worked but authorisation did not — check `KASM_OIDC_ALLOWED_ROLES` / `_GROUPS` and that the client has a groups mapper. |
-| Timeout reaching the IdP | Egress lockdown. The issuer host is allowlisted automatically; a *different* host for the token endpoint, or rotating IPs, needs an explicit `KASM_EGRESS_ALLOW` entry. |
+| Login succeeds, then *Permission Denied* | Authentication worked but authorisation did not — check `QGIS_DESKTOP_OIDC_ALLOWED_ROLES` / `_GROUPS` and that the client has a groups mapper. |
+| Timeout reaching the IdP | Egress lockdown. The issuer host is allowlisted automatically; a *different* host for the token endpoint, or rotating IPs, needs an explicit `QGIS_DESKTOP_EGRESS_ALLOW` entry. |

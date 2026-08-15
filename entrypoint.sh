@@ -2,10 +2,10 @@
 # Root entrypoint for the QGIS Desktop container.
 #
 # Responsibilities (in order):
-#   1. Read KASM_EGRESS_* env vars and resolve the authentication mode.
+#   1. Read QGIS_DESKTOP_* env vars and resolve the authentication mode.
 #   2. If lockdown is enabled, resolve allowlist hostnames and install nftables
 #      rules that drop all egress traffic except to the allowlist + DNS.
-#   3. In KASM_AUTH_MODE=oidc, start oauth2-proxy as the public listener with
+#   3. In QGIS_DESKTOP_AUTH_MODE=oidc, start oauth2-proxy as the public listener with
 #      the desktop moved behind it on loopback.
 #   4. Drop capabilities and switch to the unprivileged `user` account.
 #   5. Exec start-desktop (KasmVNC + XFCE + QGIS), or lightdm in greeter mode.
@@ -14,17 +14,113 @@
 
 set -euo pipefail
 
-KASM_EGRESS_LOCKDOWN="${KASM_EGRESS_LOCKDOWN:-1}"
-KASM_EGRESS_ALLOW="${KASM_EGRESS_ALLOW:-}"
+QGIS_DESKTOP_EGRESS_LOCKDOWN="${QGIS_DESKTOP_EGRESS_LOCKDOWN:-1}"
+QGIS_DESKTOP_EGRESS_ALLOW="${QGIS_DESKTOP_EGRESS_ALLOW:-}"
 
-kasm_bool() {
+to_bool() {
   case "${1,,}" in
     1|yes|true|on|enabled) echo 1 ;;
     *) echo 0 ;;
   esac
 }
 
-LOCKDOWN=$(kasm_bool "${KASM_EGRESS_LOCKDOWN}")
+LOCKDOWN=$(to_bool "${QGIS_DESKTOP_EGRESS_LOCKDOWN}")
+
+# --- Renamed variables ------------------------------------------------------
+# Everything that is this project's own behaviour moved from the KASM_ prefix
+# to QGIS_DESKTOP_ in 2.0.0. Only the knobs that map straight onto a KasmVNC
+# flag — the clipboard, watermark and DLP controls — kept theirs.
+#
+# A container started with the old names must not come up: silently ignoring
+# QGIS_DESKTOP_EGRESS_ALLOW or QGIS_DESKTOP_AUTH_MODE would mean a deployment
+# that thinks it is locked down running wide open on a default password. So we
+# refuse to boot and name the replacement for each one.
+check_renamed_variables() {
+  local -a renames=(
+    "KASM_AUTH_MODE=QGIS_DESKTOP_AUTH_MODE"
+    "KASM_AUTH=QGIS_DESKTOP_AUTH_MODE (use =none instead of =0)"
+    "KASM_USERS=QGIS_DESKTOP_USERS"
+    "KASM_USERS_FILE=QGIS_DESKTOP_USERS_FILE"
+    "KASM_EGRESS_LOCKDOWN=QGIS_DESKTOP_EGRESS_LOCKDOWN"
+    "KASM_EGRESS_ALLOW=QGIS_DESKTOP_EGRESS_ALLOW"
+    "KASM_ALLOW_TERMINAL=QGIS_DESKTOP_ALLOW_TERMINAL"
+    "KASM_BIND_INTERFACE=QGIS_DESKTOP_BIND_INTERFACE"
+    "KASM_OIDC_ISSUER_URL=QGIS_DESKTOP_OIDC_ISSUER_URL"
+    "KASM_OIDC_CLIENT_ID=QGIS_DESKTOP_OIDC_CLIENT_ID"
+    "KASM_OIDC_CLIENT_SECRET=QGIS_DESKTOP_OIDC_CLIENT_SECRET"
+    "KASM_OIDC_CLIENT_SECRET_FILE=QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE"
+    "KASM_OIDC_REDIRECT_URL=QGIS_DESKTOP_OIDC_REDIRECT_URL"
+    "KASM_OIDC_COOKIE_SECRET=QGIS_DESKTOP_OIDC_COOKIE_SECRET"
+    "KASM_OIDC_COOKIE_SECRET_FILE=QGIS_DESKTOP_OIDC_COOKIE_SECRET_FILE"
+    "KASM_OIDC_PROVIDER=QGIS_DESKTOP_OIDC_PROVIDER"
+    "KASM_OIDC_SCOPE=QGIS_DESKTOP_OIDC_SCOPE"
+    "KASM_OIDC_EMAIL_DOMAINS=QGIS_DESKTOP_OIDC_EMAIL_DOMAINS"
+    "KASM_OIDC_EMAIL_CLAIM=QGIS_DESKTOP_OIDC_EMAIL_CLAIM"
+    "KASM_OIDC_ALLOWED_GROUPS=QGIS_DESKTOP_OIDC_ALLOWED_GROUPS"
+    "KASM_OIDC_ALLOWED_ROLES=QGIS_DESKTOP_OIDC_ALLOWED_ROLES"
+    "KASM_OIDC_INNER_MODE=QGIS_DESKTOP_OIDC_INNER_MODE"
+    "KASM_OIDC_UPSTREAM_PORT=QGIS_DESKTOP_OIDC_UPSTREAM_PORT"
+    "KASM_OIDC_LISTEN_PORT=QGIS_DESKTOP_OIDC_LISTEN_PORT"
+    "KASM_OIDC_COOKIE_SECURE=QGIS_DESKTOP_OIDC_COOKIE_SECURE"
+    "KASM_OIDC_COOKIE_EXPIRE=QGIS_DESKTOP_OIDC_COOKIE_EXPIRE"
+    "KASM_OIDC_TLS_CERT_FILE=QGIS_DESKTOP_OIDC_TLS_CERT_FILE"
+    "KASM_OIDC_TLS_KEY_FILE=QGIS_DESKTOP_OIDC_TLS_KEY_FILE"
+    "KASM_OIDC_REVERSE_PROXY=QGIS_DESKTOP_OIDC_REVERSE_PROXY"
+    "KASM_OIDC_INSECURE_SKIP_VERIFY=QGIS_DESKTOP_OIDC_INSECURE_SKIP_VERIFY"
+    "KASM_OIDC_EXTRA_ARGS=QGIS_DESKTOP_OIDC_EXTRA_ARGS"
+  )
+
+  local -a found=()
+  local entry old new
+  for entry in "${renames[@]}"; do
+    old="${entry%%=*}"
+    new="${entry#*=}"
+    if [ -n "${!old:-}" ]; then
+      found+=("  ${old}  ->  ${new}")
+    fi
+  done
+
+  if [ "${#found[@]}" -gt 0 ]; then
+    {
+      echo "ERROR: these environment variables were renamed in 2.0.0 and are no longer read:"
+      echo ""
+      printf '%s\n' "${found[@]}"
+      echo ""
+      echo "       The KASM_ prefix now means 'a KasmVNC setting' and nothing else —"
+      echo "       the clipboard, watermark and DLP controls keep it because they map"
+      echo "       directly onto Xkasmvnc flags. Everything above is this project's own"
+      echo "       behaviour and moved to QGIS_DESKTOP_."
+      echo ""
+      echo "       Refusing to start rather than ignoring them: a container that was"
+      echo "       locked down under the old names would otherwise come up with no"
+      echo "       allowlist and a default password."
+      echo ""
+      echo "       See docs/configuration/index.md#migrating-from-1x"
+    } >&2
+    exit 1
+  fi
+}
+
+check_renamed_variables
+
+# The default credentials file moved with the variables: /etc/kasmvnc/users was
+# never a KasmVNC path, only one that looked like one. A file still mounted at
+# the old location would be silently ignored and the container would fall back
+# to the default VNC_USER/VNC_PW — so treat it like a renamed variable.
+if [ -z "${QGIS_DESKTOP_USERS_FILE:-}" ] &&
+  [ -r /etc/kasmvnc/users ] && [ ! -r /etc/qgis-desktop/users ]; then
+  {
+    echo "ERROR: found a credentials file at the old path /etc/kasmvnc/users."
+    echo ""
+    echo "       The default moved to /etc/qgis-desktop/users in 2.0.0. Mount it"
+    echo "       there instead, or set QGIS_DESKTOP_USERS_FILE=/etc/kasmvnc/users"
+    echo "       explicitly to keep the old location."
+    echo ""
+    echo "       Refusing to start rather than ignoring it: the fallback would be"
+    echo "       the default single user and password."
+  } >&2
+  exit 1
+fi
 
 # Return 0 if the given token looks like an IPv4 address or CIDR (very loose).
 is_ipv4_or_cidr() {
@@ -45,12 +141,12 @@ resolve_host() {
 
 setup_egress_lockdown() {
   echo "=== Egress lockdown ==="
-  echo "Configured allowlist: ${KASM_EGRESS_ALLOW:-<empty>}"
+  echo "Configured allowlist: ${QGIS_DESKTOP_EGRESS_ALLOW:-<empty>}"
 
   # Confirm we actually have permission to touch nftables.
   if ! nft list ruleset >/dev/null 2>&1; then
     cat >&2 <<'MISSING_CAP'
-ERROR: KASM_EGRESS_LOCKDOWN=1 but the container cannot manage nftables rules.
+ERROR: QGIS_DESKTOP_EGRESS_LOCKDOWN=1 but the container cannot manage nftables rules.
        This almost always means the container was started without NET_ADMIN.
 
        Fix by adding --cap-add=NET_ADMIN to `docker run`:
@@ -63,7 +159,7 @@ ERROR: KASM_EGRESS_LOCKDOWN=1 but the container cannot manage nftables rules.
            - NET_ADMIN
 
        If you REALLY want unrestricted network access (dev only), set
-       KASM_EGRESS_LOCKDOWN=0 explicitly. The default is on for safety.
+       QGIS_DESKTOP_EGRESS_LOCKDOWN=0 explicitly. The default is on for safety.
 MISSING_CAP
     exit 1
   fi
@@ -73,7 +169,7 @@ MISSING_CAP
   # closed, but an operator who allowlisted `db` deserves to know why nothing
   # can reach it.
   if ! command -v getent >/dev/null 2>&1; then
-    echo "ERROR: getent is not on PATH — hostname entries in KASM_EGRESS_ALLOW" >&2
+    echo "ERROR: getent is not on PATH — hostname entries in QGIS_DESKTOP_EGRESS_ALLOW" >&2
     echo "       cannot be resolved and will be dropped. IP and CIDR entries still" >&2
     echo "       work. This is a packaging fault; please report it." >&2
   fi
@@ -98,7 +194,7 @@ MISSING_CAP
     else
       echo "WARN: could not resolve '${raw}' at startup; skipping" >&2
     fi
-  done < <(printf '%s\n' "${KASM_EGRESS_ALLOW}" | tr ',' '\n')
+  done < <(printf '%s\n' "${QGIS_DESKTOP_EGRESS_ALLOW}" | tr ',' '\n')
 
   # Replace only OUR table, never the whole ruleset.
   #
@@ -108,10 +204,10 @@ MISSING_CAP
   # touch". Flushing it leaves the container unable to resolve any hostname for
   # the rest of its life on any user-defined or compose network, which looks
   # like a broken allowlist but is really a broken resolver.
-  nft delete table inet kasm_egress 2>/dev/null || true
+  nft delete table inet qgis_desktop_egress 2>/dev/null || true
 
   nft -f - <<'NFTABLES'
-table inet kasm_egress {
+table inet qgis_desktop_egress {
     chain input {
         # Ingress is not filtered — the published port has to stay reachable.
         type filter hook input priority filter; policy accept;
@@ -134,15 +230,15 @@ NFTABLES
 
   # DNS: Docker's embedded resolver is always at 127.0.0.11 on user-defined
   # bridge networks. Allow it plus anything currently in /etc/resolv.conf.
-  nft add rule inet kasm_egress output ip daddr 127.0.0.11 udp dport 53 accept
-  nft add rule inet kasm_egress output ip daddr 127.0.0.11 tcp dport 53 accept
+  nft add rule inet qgis_desktop_egress output ip daddr 127.0.0.11 udp dport 53 accept
+  nft add rule inet qgis_desktop_egress output ip daddr 127.0.0.11 tcp dport 53 accept
   if [ -r /etc/resolv.conf ]; then
     local ns
     while IFS= read -r ns; do
       [ -z "$ns" ] && continue
       [ "$ns" = "127.0.0.11" ] && continue
-      nft add rule inet kasm_egress output ip daddr "$ns" udp dport 53 accept
-      nft add rule inet kasm_egress output ip daddr "$ns" tcp dport 53 accept
+      nft add rule inet qgis_desktop_egress output ip daddr "$ns" udp dport 53 accept
+      nft add rule inet qgis_desktop_egress output ip daddr "$ns" tcp dport 53 accept
     done < <(awk '/^nameserver /{print $2}' /etc/resolv.conf)
   fi
 
@@ -150,9 +246,9 @@ NFTABLES
   local target
   for target in "${allow_ips[@]}"; do
     if [[ "$target" == *"/"* ]]; then
-      nft add rule inet kasm_egress output ip daddr "$target" accept
+      nft add rule inet qgis_desktop_egress output ip daddr "$target" accept
     else
-      nft add rule inet kasm_egress output ip daddr "$target" accept
+      nft add rule inet qgis_desktop_egress output ip daddr "$target" accept
     fi
   done
 
@@ -164,47 +260,40 @@ NFTABLES
 # because oidc mode has to add the identity provider to the allowlist — without
 # that, oauth2-proxy could never reach the IdP's discovery endpoint.
 #
-#   KASM_AUTH_MODE=basic    (default) — HTTP BasicAuth on the web endpoint,
-#                                        credentials from KASM_USERS_FILE /
-#                                        KASM_USERS / legacy VNC_USER+VNC_PW.
+#   QGIS_DESKTOP_AUTH_MODE=basic    (default) — HTTP BasicAuth on the web endpoint,
+#                                        credentials from QGIS_DESKTOP_USERS_FILE /
+#                                        QGIS_DESKTOP_USERS / legacy VNC_USER+VNC_PW.
 #                                        start-desktop.sh drops to uid 1000.
-#   KASM_AUTH_MODE=none               — no auth (dev only).
-#   KASM_AUTH_MODE=greeter            — LightDM greeter inside the X session.
+#   QGIS_DESKTOP_AUTH_MODE=none               — no auth (dev only).
+#   QGIS_DESKTOP_AUTH_MODE=greeter            — LightDM greeter inside the X session.
 #                                        Users materialised as real Linux
 #                                        accounts, lightdm run as root so it
 #                                        can spawn each session as its user.
-#   KASM_AUTH_MODE=oidc               — oauth2-proxy owns the published port and
+#   QGIS_DESKTOP_AUTH_MODE=oidc               — oauth2-proxy owns the published port and
 #                                        authenticates against an OIDC provider
 #                                        (Keycloak by default); KasmVNC is moved
 #                                        to a loopback-only port behind it.
-#                                        Added in 1.5.0.
-#
-# Back-compat: legacy KASM_AUTH=0 forces mode=none.
-KASM_AUTH_MODE="${KASM_AUTH_MODE:-basic}"
-KASM_AUTH="${KASM_AUTH:-}"
-if [ "$(kasm_bool "${KASM_AUTH:-1}")" = "0" ] && [ -n "${KASM_AUTH}" ]; then
-  # Legacy KASM_AUTH=0 wins.
-  KASM_AUTH_MODE="none"
-fi
+#                                        Added in 2.0.0.
+QGIS_DESKTOP_AUTH_MODE="${QGIS_DESKTOP_AUTH_MODE:-basic}"
 
-case "${KASM_AUTH_MODE,,}" in
-  none | basic | greeter) KASM_AUTH_MODE="${KASM_AUTH_MODE,,}" ;;
-  oidc | keycloak) KASM_AUTH_MODE="oidc" ;;
+case "${QGIS_DESKTOP_AUTH_MODE,,}" in
+  none | basic | greeter) QGIS_DESKTOP_AUTH_MODE="${QGIS_DESKTOP_AUTH_MODE,,}" ;;
+  oidc | keycloak) QGIS_DESKTOP_AUTH_MODE="oidc" ;;
   *)
-    echo "ERROR: KASM_AUTH_MODE='${KASM_AUTH_MODE}' is not one of none|basic|greeter|oidc." >&2
+    echo "ERROR: QGIS_DESKTOP_AUTH_MODE='${QGIS_DESKTOP_AUTH_MODE}' is not one of none|basic|greeter|oidc." >&2
     exit 1
     ;;
 esac
-export KASM_AUTH_MODE
+export QGIS_DESKTOP_AUTH_MODE
 
 echo "=== Auth mode ==="
-echo "KASM_AUTH_MODE=${KASM_AUTH_MODE}"
+echo "QGIS_DESKTOP_AUTH_MODE=${QGIS_DESKTOP_AUTH_MODE}"
 
-# The mode the desktop itself boots in. Identical to KASM_AUTH_MODE except
+# The mode the desktop itself boots in. Identical to QGIS_DESKTOP_AUTH_MODE except
 # under oidc, where the proxy is the auth boundary and the desktop runs in
 # whichever inner mode was requested.
-EFFECTIVE_AUTH_MODE="${KASM_AUTH_MODE}"
-KASM_OIDC_UPSTREAM_PORT="${KASM_OIDC_UPSTREAM_PORT:-6901}"
+EFFECTIVE_AUTH_MODE="${QGIS_DESKTOP_AUTH_MODE}"
+QGIS_DESKTOP_OIDC_UPSTREAM_PORT="${QGIS_DESKTOP_OIDC_UPSTREAM_PORT:-6901}"
 
 # Host part of a URL: strip scheme, userinfo, path and port. IPv6 literals are
 # not handled — the nftables rules are IPv4-only anyway.
@@ -216,26 +305,26 @@ url_host() {
   printf '%s' "${url}"
 }
 
-if [ "${KASM_AUTH_MODE}" = "oidc" ]; then
-  KASM_OIDC_INNER_MODE="${KASM_OIDC_INNER_MODE:-none}"
-  case "${KASM_OIDC_INNER_MODE,,}" in
-    none | greeter) EFFECTIVE_AUTH_MODE="${KASM_OIDC_INNER_MODE,,}" ;;
+if [ "${QGIS_DESKTOP_AUTH_MODE}" = "oidc" ]; then
+  QGIS_DESKTOP_OIDC_INNER_MODE="${QGIS_DESKTOP_OIDC_INNER_MODE:-none}"
+  case "${QGIS_DESKTOP_OIDC_INNER_MODE,,}" in
+    none | greeter) EFFECTIVE_AUTH_MODE="${QGIS_DESKTOP_OIDC_INNER_MODE,,}" ;;
     *)
-      echo "ERROR: KASM_OIDC_INNER_MODE='${KASM_OIDC_INNER_MODE}' is not one of none|greeter." >&2
+      echo "ERROR: QGIS_DESKTOP_OIDC_INNER_MODE='${QGIS_DESKTOP_OIDC_INNER_MODE}' is not one of none|greeter." >&2
       echo "       ('basic' is deliberately unsupported: a second password prompt behind" >&2
       echo "       single sign-on adds nothing.)" >&2
       exit 1
       ;;
   esac
-  echo "KASM_OIDC_INNER_MODE=${EFFECTIVE_AUTH_MODE} (how the desktop behind the proxy authenticates)"
+  echo "QGIS_DESKTOP_OIDC_INNER_MODE=${EFFECTIVE_AUTH_MODE} (how the desktop behind the proxy authenticates)"
 
   # oauth2-proxy runs OIDC discovery and the token exchange server-side, so the
   # identity provider has to stay reachable with the egress filter on. Append
   # rather than replace, so an operator-supplied allowlist survives.
-  if [ -n "${KASM_OIDC_ISSUER_URL:-}" ]; then
-    OIDC_ISSUER_HOST="$(url_host "${KASM_OIDC_ISSUER_URL}")"
+  if [ -n "${QGIS_DESKTOP_OIDC_ISSUER_URL:-}" ]; then
+    OIDC_ISSUER_HOST="$(url_host "${QGIS_DESKTOP_OIDC_ISSUER_URL}")"
     if [ -n "${OIDC_ISSUER_HOST}" ]; then
-      KASM_EGRESS_ALLOW="${KASM_EGRESS_ALLOW:+${KASM_EGRESS_ALLOW},}${OIDC_ISSUER_HOST}"
+      QGIS_DESKTOP_EGRESS_ALLOW="${QGIS_DESKTOP_EGRESS_ALLOW:+${QGIS_DESKTOP_EGRESS_ALLOW},}${OIDC_ISSUER_HOST}"
       echo "Egress: adding identity provider '${OIDC_ISSUER_HOST}' to the allowlist"
     fi
   fi
@@ -244,7 +333,7 @@ fi
 if [ "${LOCKDOWN}" = "1" ]; then
   setup_egress_lockdown
 else
-  echo "WARN: Egress lockdown DISABLED (KASM_EGRESS_LOCKDOWN=${KASM_EGRESS_LOCKDOWN})."
+  echo "WARN: Egress lockdown DISABLED (QGIS_DESKTOP_EGRESS_LOCKDOWN=${QGIS_DESKTOP_EGRESS_LOCKDOWN})."
   echo "      Container has unrestricted network access."
 fi
 
@@ -272,50 +361,50 @@ chown 1000:1000 /tmp/runtime-user
 chmod 700 /tmp/runtime-user
 
 # Terminal access. Secure deployments hand users a mapping application, not a
-# shell: KASM_ALLOW_TERMINAL=0 removes the terminal emulators (and the dialogs
+# shell: QGIS_DESKTOP_ALLOW_TERMINAL=0 removes the terminal emulators (and the dialogs
 # that would run an arbitrary command) from the container before the desktop
 # starts. Must happen while we are still root, and before any user session
 # exists. See config/lockdown/disable-terminal.sh for what it closes and what
 # it deliberately does not claim to close.
-KASM_ALLOW_TERMINAL="${KASM_ALLOW_TERMINAL:-1}"
-if [ "$(kasm_bool "${KASM_ALLOW_TERMINAL}")" = "1" ]; then
+QGIS_DESKTOP_ALLOW_TERMINAL="${QGIS_DESKTOP_ALLOW_TERMINAL:-1}"
+if [ "$(to_bool "${QGIS_DESKTOP_ALLOW_TERMINAL}")" = "1" ]; then
   # Clear any stale menu overrides from a previous locked-down run against the
   # same mounted home, so re-enabling actually re-enables.
-  kasm-disable-terminal restore || true
+  qgis-desktop-disable-terminal restore || true
 else
-  kasm-disable-terminal disable
+  qgis-desktop-disable-terminal disable
 fi
 
-if [ "${KASM_AUTH_MODE}" = "oidc" ]; then
+if [ "${QGIS_DESKTOP_AUTH_MODE}" = "oidc" ]; then
   echo "=== OIDC single sign-on ==="
 
   # Validates the configuration and materialises the secrets into a config file
   # only the proxy's UID can read. A non-zero exit is fatal on purpose: failing
   # to boot beats serving a desktop with nothing in front of it.
-  kasm-oidc-config
+  qgis-desktop-oidc-config
 
   # Move the desktop's own web endpoint to loopback so the proxy becomes the
   # only way in. Both launchers also read this file, because LightDM scrubs the
   # environment before spawning the X server and env vars would not reach the
   # xkasmvnc wrapper.
-  mkdir -p /run/kasm
-  cat > /run/kasm/listen.env <<LISTEN
-VNC_PORT=${KASM_OIDC_UPSTREAM_PORT}
-KASM_BIND_INTERFACE=127.0.0.1
+  mkdir -p /run/qgis-desktop
+  cat > /run/qgis-desktop/listen.env <<LISTEN
+VNC_PORT=${QGIS_DESKTOP_OIDC_UPSTREAM_PORT}
+QGIS_DESKTOP_BIND_INTERFACE=127.0.0.1
 LISTEN
-  chmod 0644 /run/kasm/listen.env
+  chmod 0644 /run/qgis-desktop/listen.env
 
-  export KASM_OIDC_LISTEN_PORT="${VNC_PORT:-8443}"
-  export KASM_OIDC_UPSTREAM_PORT
-  export VNC_PORT="${KASM_OIDC_UPSTREAM_PORT}"
-  export KASM_BIND_INTERFACE="127.0.0.1"
+  export QGIS_DESKTOP_OIDC_LISTEN_PORT="${VNC_PORT:-8443}"
+  export QGIS_DESKTOP_OIDC_UPSTREAM_PORT
+  export VNC_PORT="${QGIS_DESKTOP_OIDC_UPSTREAM_PORT}"
+  export QGIS_DESKTOP_BIND_INTERFACE="127.0.0.1"
 
   # The proxy needs no privileges: its port is unprivileged and its config file
   # is owned by uid 1000. Same capability-clearing shape as the desktop below.
   setpriv \
     --reuid=1000 --regid=1000 --init-groups \
     --inh-caps=-all --ambient-caps=-all \
-    -- kasm-oidc-proxy &
+    -- qgis-desktop-oidc-proxy &
   OIDC_PROXY_PID=$!
 
   # If the proxy dies, the container must die with it — otherwise the desktop
@@ -333,25 +422,25 @@ LISTEN
     kill -TERM 1 2>/dev/null || true
   ) &
 
-  echo "OIDC proxy running as pid ${OIDC_PROXY_PID}; desktop bound to 127.0.0.1:${KASM_OIDC_UPSTREAM_PORT}"
+  echo "OIDC proxy running as pid ${OIDC_PROXY_PID}; desktop bound to 127.0.0.1:${QGIS_DESKTOP_OIDC_UPSTREAM_PORT}"
 fi
 
 if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
   # Materialise users from the same credential sources basic mode uses, so
-  # KASM_USERS / KASM_USERS_FILE / VNC_USER+VNC_PW all work identically.
+  # QGIS_DESKTOP_USERS / QGIS_DESKTOP_USERS_FILE / VNC_USER+VNC_PW all work identically.
   # PAM will authenticate against the resulting /etc/shadow entries. LightDM
   # then runs as root and spawns each successful login as its target user.
-  KASM_USERS_FILE="${KASM_USERS_FILE:-/etc/kasmvnc/users}"
-  KASM_USERS="${KASM_USERS:-}"
+  QGIS_DESKTOP_USERS_FILE="${QGIS_DESKTOP_USERS_FILE:-/etc/qgis-desktop/users}"
+  QGIS_DESKTOP_USERS="${QGIS_DESKTOP_USERS:-}"
   VNC_USER="${VNC_USER:-user}"
   VNC_PW="${VNC_PW:-password}"
 
-  if [ -r "${KASM_USERS_FILE}" ]; then
-    USER_LINES="$(grep -vE '^\s*(#|$)' "${KASM_USERS_FILE}" || true)"
-    CRED_SOURCE="file ${KASM_USERS_FILE}"
-  elif [ -n "${KASM_USERS}" ]; then
-    USER_LINES="$(printf '%s\n' "${KASM_USERS}" | tr ',' '\n' | sed '/^\s*$/d')"
-    CRED_SOURCE="KASM_USERS env"
+  if [ -r "${QGIS_DESKTOP_USERS_FILE}" ]; then
+    USER_LINES="$(grep -vE '^\s*(#|$)' "${QGIS_DESKTOP_USERS_FILE}" || true)"
+    CRED_SOURCE="file ${QGIS_DESKTOP_USERS_FILE}"
+  elif [ -n "${QGIS_DESKTOP_USERS}" ]; then
+    USER_LINES="$(printf '%s\n' "${QGIS_DESKTOP_USERS}" | tr ',' '\n' | sed '/^\s*$/d')"
+    CRED_SOURCE="QGIS_DESKTOP_USERS env"
   else
     USER_LINES="${VNC_USER}:${VNC_PW}"
     CRED_SOURCE="legacy VNC_USER/VNC_PW"
@@ -399,7 +488,7 @@ if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
 
     # If the user isn't in /etc/passwd yet, add them with a fresh UID and
     # a home directory. The baked image ships 'user' at UID 1000; the
-    # KASM_USERS list may reuse that name or add new ones from 1001.
+    # QGIS_DESKTOP_USERS list may reuse that name or add new ones from 1001.
     if ! getent passwd "${u}" >/dev/null 2>&1; then
       while getent passwd "${next_uid}" >/dev/null 2>&1; do
         next_uid=$((next_uid + 1))
@@ -426,8 +515,8 @@ if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
   done <<< "${USER_LINES}"
 
   if [ "${user_count}" -eq 0 ]; then
-    echo "ERROR: KASM_AUTH_MODE=greeter but no valid users could be loaded from ${CRED_SOURCE}." >&2
-    echo "Set KASM_USERS / KASM_USERS_FILE / VNC_USER+VNC_PW, or switch to KASM_AUTH_MODE=none for dev." >&2
+    echo "ERROR: QGIS_DESKTOP_AUTH_MODE=greeter but no valid users could be loaded from ${CRED_SOURCE}." >&2
+    echo "Set QGIS_DESKTOP_USERS / QGIS_DESKTOP_USERS_FILE / VNC_USER+VNC_PW, or switch to QGIS_DESKTOP_AUTH_MODE=none for dev." >&2
     exit 1
   fi
 
@@ -435,7 +524,7 @@ if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
 
   # Make the first username available to the wrapper (for $USER watermark
   # expansion) and to the greeter-branding steps.
-  export KASM_GREETER_FIRST_USER="${first_user}"
+  export QGIS_DESKTOP_GREETER_FIRST_USER="${first_user}"
 
   # LightDM runs as root inside the container so it can transition each
   # session to its target user via PAM + setuid. The greeter itself drops
@@ -478,8 +567,8 @@ if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
   # The terminal lockdown ran before these accounts existed, so their home
   # directories missed the menu overrides. The executables are already gone —
   # this is the cosmetic half — and the call is idempotent.
-  if [ "$(kasm_bool "${KASM_ALLOW_TERMINAL}")" = "0" ]; then
-    kasm-disable-terminal disable
+  if [ "$(to_bool "${QGIS_DESKTOP_ALLOW_TERMINAL}")" = "0" ]; then
+    qgis-desktop-disable-terminal disable
   fi
 
   echo "Starting LightDM..."
@@ -492,7 +581,7 @@ fi
 #
 # start-desktop.sh only knows the desktop-level modes, so hand it the effective
 # one — under oidc that is the inner mode, with the proxy already listening.
-export KASM_AUTH_MODE="${EFFECTIVE_AUTH_MODE}"
+export QGIS_DESKTOP_AUTH_MODE="${EFFECTIVE_AUTH_MODE}"
 exec setpriv \
   --reuid=1000 --regid=1000 --init-groups \
   --inh-caps=-all --ambient-caps=-all \

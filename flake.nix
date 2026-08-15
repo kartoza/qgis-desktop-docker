@@ -62,12 +62,41 @@
             inherit (qgisPackage) meta;
           };
 
-        # QGIS as the image ships it: the nixpkgs build, plus the Giswater
-        # Python dependencies inside its interpreter, plus the EPA solvers on
-        # its path.
-        qgisWithGiswater = withEpaSolvers (pkgs.qgis.override {
+        # --- QGIS channels ----------------------------------------------
+        # Two images are built from the same source: one on the long-term
+        # release, one on the current release.
+        #
+        #   ltr    (default) — what you put in front of users. QGIS's LTR line
+        #                      only takes bug fixes, so a project that opens
+        #                      today opens the same way next month.
+        #   latest           — the current release, for testing your projects,
+        #                      plugins and data against what will become the
+        #                      next LTR, before it becomes the next LTR.
+        #
+        # Same flake, same auth modes, same lockdown, same Giswater wiring —
+        # the QGIS package is the only difference.
+        withGiswater = qgisPackage: withEpaSolvers (qgisPackage.override {
           extraPythonPackages = giswaterPythonPackages;
         });
+
+        qgisChannels = {
+          ltr = {
+            package = withGiswater pkgs.qgis-ltr;
+            version = pkgs.qgis-ltr.version;
+            tag = "ltr";
+            description = "long-term release";
+          };
+          latest = {
+            package = withGiswater pkgs.qgis;
+            version = pkgs.qgis.version;
+            tag = "qgis-latest";
+            description = "current release";
+          };
+        };
+
+        # The channel the plain `nix build .#docker` and every `nix run .#run-*`
+        # target use.
+        defaultChannel = qgisChannels.ltr;
 
         # scripts/epa.sh in the store, so the desktop can wire the plugin up
         # without a checkout being present. Giswater executes the solvers from
@@ -93,24 +122,24 @@
             ])}"
         '';
 
-        # --- Terminal lockdown (KASM_ALLOW_TERMINAL=0) ------------------
+        # --- Terminal lockdown (QGIS_DESKTOP_ALLOW_TERMINAL=0) ------------------
         disableTerminalScript = pkgs.writeShellApplication {
-          name = "kasm-disable-terminal";
+          name = "qgis-desktop-disable-terminal";
           runtimeInputs = with pkgs; [ coreutils gnused gnugrep ];
           text = builtins.readFile ./config/lockdown/disable-terminal.sh;
         };
 
-        # --- OIDC (KASM_AUTH_MODE=oidc) ---------------------------------
+        # --- OIDC (QGIS_DESKTOP_AUTH_MODE=oidc) ---------------------------------
         # Secret materialisation, run as root by the entrypoint.
         oidcConfigScript = pkgs.writeShellApplication {
-          name = "kasm-oidc-config";
+          name = "qgis-desktop-oidc-config";
           runtimeInputs = with pkgs; [ coreutils gnused ];
           text = builtins.readFile ./config/oidc/oidc-config.sh;
         };
 
         # The proxy itself, run unprivileged.
         oidcProxyScript = pkgs.writeShellApplication {
-          name = "kasm-oidc-proxy";
+          name = "qgis-desktop-oidc-proxy";
           runtimeInputs = with pkgs; [ oauth2-proxy coreutils ];
           text = builtins.readFile ./config/oidc/oidc-proxy.sh;
         };
@@ -151,7 +180,9 @@
         # XDG_DATA_DIRS / XDG_CONFIG_DIRS for the XFCE session. Same set as
         # the image-level env vars in dockerImage.config.Env — repeated here
         # because lightdm strips those before spawning the user session.
-        xfceXdgDataDirs = pkgs.lib.concatStringsSep ":" [
+        # Parameterised on the QGIS package so each channel's image points at
+        # its own QGIS share directory.
+        mkXfceXdgDataDirs = qgisPackage: pkgs.lib.concatStringsSep ":" [
           "${pkgs.shared-mime-info}/share"
           "${pkgs.hicolor-icon-theme}/share"
           "${pkgs.adwaita-icon-theme}/share"
@@ -161,7 +192,7 @@
           "${pkgs.xfce4-settings}/share"
           "${pkgs.xfconf}/share"
           "${pkgs.thunar}/share"
-          "${qgisWithGiswater}/share"
+          "${qgisPackage}/share"
         ];
         xfceXdgConfigDirs = pkgs.lib.concatStringsSep ":" [
           "${pkgs.xfce4-session}/etc/xdg"
@@ -188,7 +219,7 @@
 
         # LightDM session-wrapper. Runs as the authenticated user with a
         # stripped env — bake all the paths XFCE needs directly in.
-        xsessionScript = pkgs.writeShellScript "Xsession" ''
+        mkXsessionScript = qgisPackage: pkgs.writeShellScript "Xsession" ''
           #!${pkgs.bash}/bin/bash
           set -uo pipefail
 
@@ -216,7 +247,7 @@
 
           # Env vars lightdm strips that XFCE needs.
           export FONTCONFIG_FILE="${desktopFontsConf}"
-          export XDG_DATA_DIRS="${xfceXdgDataDirs}"
+          export XDG_DATA_DIRS="${mkXfceXdgDataDirs qgisPackage}"
           export XDG_CONFIG_DIRS="${xfceXdgConfigDirs}"
           export XKB_BASE_DIR="${pkgs.xkeyboard_config}/share/X11/xkb"
           export XKB_DEFAULT_RULES=evdev
@@ -255,7 +286,7 @@
         '';
 
         # Root entrypoint: sets up nftables egress filter, drops privileges,
-        # then execs the desktop startup script. In KASM_AUTH_MODE=greeter it
+        # then execs the desktop startup script. In QGIS_DESKTOP_AUTH_MODE=greeter it
         # instead materialises Linux user accounts and execs lightdm as root.
         entrypointScript = pkgs.writeShellApplication {
           name = "qgis-entrypoint";
@@ -278,17 +309,19 @@
             xkeyboard_config # XKB_BASE_DIR sanity in greeter mode
             startupScript # so `start-desktop` is on PATH for setpriv --exec
           ] ++ [
-            oidcConfigScript      # kasm-oidc-config (root: validates + writes secrets)
-            oidcProxyScript       # kasm-oidc-proxy  (uid 1000: runs oauth2-proxy)
-            disableTerminalScript # kasm-disable-terminal (root: KASM_ALLOW_TERMINAL=0)
+            oidcConfigScript      # qgis-desktop-oidc-config (root: validates + writes secrets)
+            oidcProxyScript       # qgis-desktop-oidc-proxy  (uid 1000: runs oauth2-proxy)
+            disableTerminalScript # qgis-desktop-disable-terminal (root: QGIS_DESKTOP_ALLOW_TERMINAL=0)
           ];
           text = builtins.readFile ./entrypoint.sh;
         };
 
-        # Docker image built with Nix
-        dockerImage = pkgs.dockerTools.buildLayeredImage {
+        # Docker image built with Nix, once per QGIS channel. `channel` is one
+        # of the qgisChannels attrsets above; everything else about the two
+        # images is identical.
+        mkDockerImage = channel: pkgs.dockerTools.buildLayeredImage {
           name = "nix-xfce-kasm";
-          tag = "latest";
+          tag = channel.tag;
           maxLayers = 120;
 
           contents = with pkgs; [
@@ -329,7 +362,7 @@
             open-sans
 
             # Applications
-            qgisWithGiswater
+            channel.package
 
             # Giswater's EPA hydraulic solvers, on PATH under both their
             # upstream names (runepanet / runswmm) and the aliases Giswater
@@ -344,24 +377,24 @@
             iproute2
             # Hostname resolution for the egress allowlist. `getent` is its own
             # package in nixpkgs — it is NOT in glibc.bin, and without it every
-            # hostname in KASM_EGRESS_ALLOW silently fails to resolve.
+            # hostname in QGIS_DESKTOP_EGRESS_ALLOW silently fails to resolve.
             getent
             glibc.bin
 
             # TLS trust store. Needed by oauth2-proxy to verify the identity
-            # provider in KASM_AUTH_MODE=oidc, and by QGIS for any HTTPS
+            # provider in QGIS_DESKTOP_AUTH_MODE=oidc, and by QGIS for any HTTPS
             # service — the image previously shipped no CA bundle at all.
             cacert
 
-            # OIDC auth mode (KASM_AUTH_MODE=oidc). The oauth2-proxy binary
-            # itself arrives through kasm-oidc-proxy's wrapper.
+            # OIDC auth mode (QGIS_DESKTOP_AUTH_MODE=oidc). The oauth2-proxy binary
+            # itself arrives through qgis-desktop-oidc-proxy's wrapper.
             oidcConfigScript
             oidcProxyScript
 
-            # Terminal lockdown (KASM_ALLOW_TERMINAL=0).
+            # Terminal lockdown (QGIS_DESKTOP_ALLOW_TERMINAL=0).
             disableTerminalScript
 
-            # Greeter mode (KASM_AUTH_MODE=greeter): LightDM + GTK greeter.
+            # Greeter mode (QGIS_DESKTOP_AUTH_MODE=greeter): LightDM + GTK greeter.
             # Kept out of the runtime path when mode != greeter, so basic /
             # none users don't pay a startup cost — but they do pay the
             # image-size cost. Roughly +40 MB uncompressed.
@@ -381,7 +414,10 @@
             mkdir -p ./etc ./root
             # Runtime state the entrypoint writes: the listener override that
             # tells both KasmVNC launchers to move behind the OIDC proxy.
-            mkdir -p ./run/kasm
+            mkdir -p ./run/qgis-desktop
+            # Default mount point for a user:password file
+            # (QGIS_DESKTOP_USERS_FILE).
+            mkdir -p ./etc/qgis-desktop
             mkdir -p ./home/user/.vnc
             mkdir -p ./home/user/.config/xfce4/panel
             mkdir -p ./etc/xdg/xfce4/xfconf/xfce-perchannel-xml
@@ -498,7 +534,7 @@ shadow: files
 hosts: files dns
 EOF
 
-            # --- LightDM (KASM_AUTH_MODE=greeter) ---------------------------
+            # --- LightDM (QGIS_DESKTOP_AUTH_MODE=greeter) ---------------------------
             # Config, session wrapper, xserver command, PAM stack, runtime
             # dirs, and a shared session .desktop file. All baked in so the
             # image works in greeter mode with zero mounted config.
@@ -526,7 +562,7 @@ EOF
 
             install -Dm 0644 ${./config/lightdm/lightdm-gtk-greeter.conf} ./etc/lightdm/lightdm-gtk-greeter.conf
             install -Dm 0755 ${./config/lightdm/xkasmvnc-wrapper.sh}      ./etc/lightdm/xkasmvnc-wrapper
-            ln -sfn ${xsessionScript}                                     ./etc/lightdm/Xsession
+            ln -sfn ${mkXsessionScript channel.package}                                     ./etc/lightdm/Xsession
             ln -sfn ${checkPasswordScript}/bin/check-password             ./etc/lightdm/check-password
             install -Dm 0644 ${./config/lightdm/xfce.desktop}             ./usr/share/xsessions/xfce.desktop
 
@@ -635,7 +671,11 @@ DBUSEOF
           config = {
             Labels = {
               "org.opencontainers.image.title" = "QGIS Desktop";
-              "org.opencontainers.image.description" = "QGIS Desktop in a Docker container with KasmVNC web-based access, built with Nix";
+              "org.opencontainers.image.description" = "QGIS ${channel.version} (${channel.description}) in a Docker container with KasmVNC web-based access, built with Nix";
+              # Which QGIS is inside, without having to start the container.
+              "org.opencontainers.image.version" = channel.version;
+              "com.kartoza.qgis.channel" = channel.tag;
+              "com.kartoza.qgis.version" = channel.version;
               "org.opencontainers.image.url" = "https://github.com/kartoza/qgis-desktop-docker";
               "org.opencontainers.image.source" = "https://github.com/kartoza/qgis-desktop-docker";
               "org.opencontainers.image.documentation" = "https://github.com/kartoza/qgis-desktop-docker#readme";
@@ -652,19 +692,23 @@ DBUSEOF
               "VNC_PORT=8443"
               "VNC_RESOLUTION=1280x720"
               "VNC_COL_DEPTH=24"
+              # Which QGIS this image was built from. Read-only: changing it
+              # does not change the QGIS inside — pick the image tag instead.
+              "QGIS_DESKTOP_QGIS_CHANNEL=${channel.tag}"
+              "QGIS_DESKTOP_QGIS_VERSION=${channel.version}"
               # Auth mode: basic (default) | none | greeter | oidc.
               # See docs/configuration/authentication.md.
-              "KASM_AUTH_MODE=basic"
+              "QGIS_DESKTOP_AUTH_MODE=basic"
               # Terminal access. Set to 0 to remove the terminal emulators and
               # command-runner dialogs from the desktop entirely.
-              "KASM_ALLOW_TERMINAL=1"
+              "QGIS_DESKTOP_ALLOW_TERMINAL=1"
               # Where the desktop listens when the OIDC proxy is in front of
-              # it. Only consulted in KASM_AUTH_MODE=oidc.
-              "KASM_OIDC_UPSTREAM_PORT=6901"
+              # it. Only consulted in QGIS_DESKTOP_AUTH_MODE=oidc.
+              "QGIS_DESKTOP_OIDC_UPSTREAM_PORT=6901"
               # Egress lockdown defaults ON. Requires --cap-add=NET_ADMIN
               # on `docker run`. Set to 0 to disable (dev only).
-              "KASM_EGRESS_LOCKDOWN=1"
-              "KASM_EGRESS_ALLOW="
+              "QGIS_DESKTOP_EGRESS_LOCKDOWN=1"
+              "QGIS_DESKTOP_EGRESS_ALLOW="
               "XDG_RUNTIME_DIR=/tmp/runtime-user"
               "FONTCONFIG_FILE=${desktopFontsConf}"
               "XDG_DATA_DIRS=${pkgs.lib.concatStringsSep ":" [
@@ -677,7 +721,7 @@ DBUSEOF
                 "${pkgs.xfce4-settings}/share"
                 "${pkgs.xfconf}/share"
                 "${pkgs.thunar}/share"
-                "${qgisWithGiswater}/share"
+                "${channel.package}/share"
               ]}"
               "XDG_CONFIG_DIRS=${pkgs.lib.concatStringsSep ":" [
                 "${pkgs.xfce4-session}/etc/xdg"
@@ -727,7 +771,7 @@ DBUSEOF
         # nix store so `nix run .#run-analyst-scenario` works from any PWD.
         analystComposeFile = ./examples/analyst-locked-down/docker-compose.yml;
 
-        # Self-contained Keycloak + desktop demo for KASM_AUTH_MODE=oidc.
+        # Self-contained Keycloak + desktop demo for QGIS_DESKTOP_AUTH_MODE=oidc.
         keycloakComposeDir = ./examples/keycloak-oidc;
 
         # Python environment with mkdocs + Material + IM's plugin set.
@@ -798,27 +842,57 @@ DBUSEOF
       in {
         packages = {
           kasmvnc = kasmvnc;
-          dockerImage = dockerImage;
-          docker = dockerImage;
-          default = dockerImage;
+
+          # QGIS LTR is the default everywhere: it is the build you put in
+          # front of users.
+          dockerImage = mkDockerImage defaultChannel;
+          docker = mkDockerImage defaultChannel;
+          default = mkDockerImage defaultChannel;
+          docker-ltr = mkDockerImage qgisChannels.ltr;
+
+          # The current QGIS release, for testing projects and plugins against
+          # what becomes the next LTR.
+          docker-qgis-latest = mkDockerImage qgisChannels.latest;
+
           # Giswater building blocks, exposed so they can be built and smoke
           # tested on their own: `nix build .#epanet` runs a real model through
           # the solver as part of the derivation's install check.
           inherit epanet swmm;
-          qgis = qgisWithGiswater;
+          qgis = defaultChannel.package;
+          qgis-ltr = qgisChannels.ltr.package;
+          qgis-latest = qgisChannels.latest.package;
           epa = epaTool;
         };
 
         apps = {
+          # QGIS LTR — the default. Also tagged :latest, because that is the
+          # image every run-* target and the compose files expect, and because
+          # "latest" in Docker means "the one you should be using", not "the
+          # newest upstream release".
           build-docker = mkApp "build-docker" ''
-            echo "Building Docker image with Nix..."
+            echo "Building Docker image with Nix (QGIS ${qgisChannels.ltr.version}, ${qgisChannels.ltr.description})..."
             nix build .#docker -o result
             OUT=$(nix build .#docker --print-out-paths)
             nix store cat "$OUT" | docker load
+            docker tag nix-xfce-kasm:ltr nix-xfce-kasm:latest
             echo ""
-            echo "Image loaded: nix-xfce-kasm:latest"
+            echo "Image loaded: nix-xfce-kasm:ltr (also tagged :latest)"
             docker image inspect nix-xfce-kasm:latest --format \
               "Size: {{.Size}} bytes ($(docker image inspect nix-xfce-kasm:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+          '';
+
+          # The current QGIS release, side by side with the LTR image. Nothing
+          # else differs, so a project that works here and not there is a QGIS
+          # regression worth reporting upstream before it reaches an LTR.
+          build-docker-qgis-latest = mkApp "build-docker-qgis-latest" ''
+            echo "Building Docker image with Nix (QGIS ${qgisChannels.latest.version}, ${qgisChannels.latest.description})..."
+            OUT=$(nix build .#docker-qgis-latest --print-out-paths)
+            nix store cat "$OUT" | docker load
+            echo ""
+            echo "Image loaded: nix-xfce-kasm:qgis-latest"
+            echo "Run it with:  docker run --rm -p 8443:8443 --cap-add=NET_ADMIN nix-xfce-kasm:qgis-latest"
+            docker image inspect nix-xfce-kasm:qgis-latest --format \
+              "Size: {{.Size}} bytes ($(docker image inspect nix-xfce-kasm:qgis-latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
           '';
 
           # Foreground run with default single-user auth (Ctrl-C to stop).
@@ -833,11 +907,11 @@ DBUSEOF
           # Multi-user via inline env var.
           run-multi-user = mkApp "run-multi-user" ''
             docker rm -f qgis-desktop 2>/dev/null || true
-            echo "▶ Auth: multi-user via KASM_USERS env"
+            echo "▶ Auth: multi-user via QGIS_DESKTOP_USERS env"
             echo "  Log in as  alice / pw1   or   bob / pw2"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_USERS='alice:pw1,bob:pw2' \
+              -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
               nix-xfce-kasm:latest
           '';
 
@@ -857,7 +931,7 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -v "$USERS_FILE:/etc/kasmvnc/users:ro" \
+              -v "$USERS_FILE:/etc/qgis-desktop/users:ro" \
               nix-xfce-kasm:latest
           '';
 
@@ -867,7 +941,7 @@ DBUSEOF
             echo "⚠  Auth: DISABLED. Do NOT expose this port to any untrusted network."
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH_MODE=none \
+              -e QGIS_DESKTOP_AUTH_MODE=none \
               nix-xfce-kasm:latest
           '';
 
@@ -882,7 +956,7 @@ DBUSEOF
             echo "  For multi-user try:  nix run .#run-greeter-multi"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH_MODE=greeter \
+              -e QGIS_DESKTOP_AUTH_MODE=greeter \
               nix-xfce-kasm:latest
           '';
 
@@ -894,40 +968,40 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH_MODE=greeter \
-              -e KASM_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
+              -e QGIS_DESKTOP_AUTH_MODE=greeter \
+              -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
               nix-xfce-kasm:latest
           '';
 
           # OIDC / Keycloak mode against a real identity provider. Everything
           # comes from the caller's environment, so no flake edit is needed:
-          #   KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
-          #   KASM_OIDC_CLIENT_ID=qgis-desktop \
-          #   KASM_OIDC_CLIENT_SECRET=… \
+          #   QGIS_DESKTOP_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+          #   QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop \
+          #   QGIS_DESKTOP_OIDC_CLIENT_SECRET=… \
           #   nix run .#run-oidc
           # For a batteries-included local IdP, use nix run .#run-keycloak-demo.
           run-oidc = mkApp "run-oidc" ''
-            : "''${KASM_OIDC_ISSUER_URL:?set KASM_OIDC_ISSUER_URL (e.g. https://sso.example.com/realms/gis)}"
-            : "''${KASM_OIDC_CLIENT_ID:?set KASM_OIDC_CLIENT_ID}"
-            : "''${KASM_OIDC_CLIENT_SECRET:?set KASM_OIDC_CLIENT_SECRET}"
-            REDIRECT_URL="''${KASM_OIDC_REDIRECT_URL:-http://localhost:8443/oauth2/callback}"
+            : "''${QGIS_DESKTOP_OIDC_ISSUER_URL:?set QGIS_DESKTOP_OIDC_ISSUER_URL (e.g. https://sso.example.com/realms/gis)}"
+            : "''${QGIS_DESKTOP_OIDC_CLIENT_ID:?set QGIS_DESKTOP_OIDC_CLIENT_ID}"
+            : "''${QGIS_DESKTOP_OIDC_CLIENT_SECRET:?set QGIS_DESKTOP_OIDC_CLIENT_SECRET}"
+            REDIRECT_URL="''${QGIS_DESKTOP_OIDC_REDIRECT_URL:-http://localhost:8443/oauth2/callback}"
             docker rm -f qgis-desktop 2>/dev/null || true
             echo "▶ Auth mode: oidc — oauth2-proxy fronting KasmVNC"
-            echo "  Issuer:    $KASM_OIDC_ISSUER_URL"
-            echo "  Client:    $KASM_OIDC_CLIENT_ID"
+            echo "  Issuer:    $QGIS_DESKTOP_OIDC_ISSUER_URL"
+            echo "  Client:    $QGIS_DESKTOP_OIDC_CLIENT_ID"
             echo "  Redirect:  $REDIRECT_URL"
             echo "  The identity provider's host is added to the egress allowlist"
             echo "  automatically. Open http://localhost:8443 to be sent to the IdP."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH_MODE=oidc \
-              -e KASM_OIDC_ISSUER_URL \
-              -e KASM_OIDC_CLIENT_ID \
-              -e KASM_OIDC_CLIENT_SECRET \
-              -e KASM_OIDC_REDIRECT_URL="$REDIRECT_URL" \
-              -e KASM_OIDC_ALLOWED_GROUPS \
-              -e KASM_OIDC_ALLOWED_ROLES \
-              -e KASM_OIDC_EMAIL_DOMAINS \
-              -e KASM_OIDC_INNER_MODE \
+              -e QGIS_DESKTOP_AUTH_MODE=oidc \
+              -e QGIS_DESKTOP_OIDC_ISSUER_URL \
+              -e QGIS_DESKTOP_OIDC_CLIENT_ID \
+              -e QGIS_DESKTOP_OIDC_CLIENT_SECRET \
+              -e QGIS_DESKTOP_OIDC_REDIRECT_URL="$REDIRECT_URL" \
+              -e QGIS_DESKTOP_OIDC_ALLOWED_GROUPS \
+              -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES \
+              -e QGIS_DESKTOP_OIDC_EMAIL_DOMAINS \
+              -e QGIS_DESKTOP_OIDC_INNER_MODE \
               nix-xfce-kasm:latest
           '';
 
@@ -987,7 +1061,7 @@ DBUSEOF
               -e KASM_WATERMARK_TEXT='CONFIDENTIAL - ''${USER} %H:%M' \
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
-              -e KASM_ALLOW_TERMINAL=0 \
+              -e QGIS_DESKTOP_ALLOW_TERMINAL=0 \
               nix-xfce-kasm:latest
           '';
 
@@ -1001,7 +1075,7 @@ DBUSEOF
             echo "  Everything else is blocked. DNS to Docker's resolver stays open."
             echo "  Log in as user / password  ·  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_EGRESS_ALLOW='1.1.1.1,example.com' \
+              -e QGIS_DESKTOP_EGRESS_ALLOW='1.1.1.1,example.com' \
               nix-xfce-kasm:latest
           '';
 
@@ -1048,8 +1122,8 @@ DBUSEOF
             echo "⚠  Dev mode: auth OFF and egress lockdown OFF."
             echo "  Open http://localhost:8443 — connects with no prompt, full network access."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH=0 \
-              -e KASM_EGRESS_LOCKDOWN=0 \
+              -e QGIS_DESKTOP_AUTH_MODE=none \
+              -e QGIS_DESKTOP_EGRESS_LOCKDOWN=0 \
               nix-xfce-kasm:latest
           '';
 
@@ -1073,16 +1147,18 @@ DBUSEOF
             QGIS Desktop Docker — available commands
 
               Build
-                nix run .#build-docker      Build the Docker image with Nix
+                nix run .#build-docker      Build the image on QGIS LTR (default, tagged :ltr + :latest)
+                nix run .#build-docker-qgis-latest
+                                            Build the image on the current QGIS release (:qgis-latest)
 
               Run (foreground, Ctrl-C to stop)
                 nix run .#run               Default: auth on, egress locked (empty allowlist)
-                nix run .#run-multi-user    Multi-user via KASM_USERS env
+                nix run .#run-multi-user    Multi-user via QGIS_DESKTOP_USERS env
                 nix run .#run-users-file    Multi-user via bind-mounted file
                 nix run .#run-no-auth       Auth DISABLED (dev only)
                 nix run .#run-greeter       LightDM greeter (in-session login form)
                 nix run .#run-greeter-multi Greeter with alice + bob accounts
-                nix run .#run-oidc          Keycloak/OIDC SSO (reads KASM_OIDC_* from your env)
+                nix run .#run-oidc          Keycloak/OIDC SSO (reads QGIS_DESKTOP_OIDC_* from your env)
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)
@@ -1105,8 +1181,8 @@ DBUSEOF
               Test
                 nix run .#test              Run every check that needs no Docker
                 nix run .#test-oidc         Unit-test the OIDC plumbing
-                nix run .#test-terminal-lockdown
-                                            Unit-test KASM_ALLOW_TERMINAL=0
+                nix run .#test-terminal-lockdown   Unit-test the terminal lockdown
+                nix run .#test-renamed-variables   Unit-test the 2.0.0 rename guard
 
               Manage
                 nix run .#stop              Stop and remove the qgis-desktop container
@@ -1136,7 +1212,7 @@ DBUSEOF
               # launcher emits against the real binary's --help.
               runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk oauth2-proxy ];
               text = ''
-                export KASM_PROJECT_ROOT=${self}
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 exec bash ${self}/scripts/test-oidc-config.sh
               '';
             }}/bin/test-oidc";
@@ -1150,10 +1226,24 @@ DBUSEOF
               name = "test-terminal-lockdown";
               runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep ];
               text = ''
-                export KASM_PROJECT_ROOT=${self}
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 exec bash ${self}/scripts/test-terminal-lockdown.sh
               '';
             }}/bin/test-terminal-lockdown";
+          };
+
+          # Unit tests for the 2.0.0 rename guard: every legacy KASM_* name is
+          # refused, and KasmVNC's own settings are left alone.
+          test-renamed-variables = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-renamed-variables";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-renamed-variables.sh
+              '';
+            }}/bin/test-renamed-variables";
           };
 
           # Everything that can be checked without Docker.
@@ -1163,11 +1253,13 @@ DBUSEOF
               name = "test";
               runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk oauth2-proxy ];
               text = ''
-                export KASM_PROJECT_ROOT=${self}
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 rc=0
                 bash ${self}/scripts/test-oidc-config.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-terminal-lockdown.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-renamed-variables.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
@@ -1264,7 +1356,7 @@ DBUSEOF
               "$DOCS_DIR/getting-started/building.md"
               "$DOCS_DIR/configuration/index.md"
               "$DOCS_DIR/configuration/environment.md"
-              "$DOCS_DIR/configuration/kasm-permissions.md"
+              "$DOCS_DIR/configuration/permissions.md"
               "$DOCS_DIR/configuration/authentication.md"
               "$DOCS_DIR/configuration/egress-lockdown.md"
               "$DOCS_DIR/configuration/giswater.md"
@@ -1377,16 +1469,17 @@ META
             QGIS Desktop Docker — dev shell
 
               Build
-                nix run .#build-docker      Build the Docker image
+                nix run .#build-docker      Build the image on QGIS LTR (default)
+                nix run .#build-docker-qgis-latest   Build it on the current QGIS release
 
               Run (foreground, Ctrl-C to stop)
                 nix run .#run               Default: auth on, egress locked (empty allowlist)
-                nix run .#run-multi-user    Multi-user via KASM_USERS env
+                nix run .#run-multi-user    Multi-user via QGIS_DESKTOP_USERS env
                 nix run .#run-users-file    Multi-user via bind-mounted file
                 nix run .#run-no-auth       Auth DISABLED (dev only)
                 nix run .#run-greeter       LightDM greeter (in-session login form)
                 nix run .#run-greeter-multi Greeter with alice + bob accounts
-                nix run .#run-oidc          Keycloak/OIDC SSO (reads KASM_OIDC_* from your env)
+                nix run .#run-oidc          Keycloak/OIDC SSO (reads QGIS_DESKTOP_OIDC_* from your env)
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)

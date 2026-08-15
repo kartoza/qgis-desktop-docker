@@ -8,18 +8,18 @@ and on which X display.
 | `VNC_PORT` | `8443` | Port for the KasmVNC web interface. |
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution. Resizable in the browser. |
 | `VNC_COL_DEPTH` | `24` | Colour depth (`16`, `24`, or `32`). |
-| `VNC_PW` | `password` | Legacy single-user VNC password. Only used if `KASM_USERS_FILE` and `KASM_USERS` are both unset. |
+| `VNC_PW` | `password` | Legacy single-user VNC password. Only used if `QGIS_DESKTOP_USERS_FILE` and `QGIS_DESKTOP_USERS` are both unset. |
 | `DISPLAY` | `:1` | X display number the server binds to (basic/none mode). In `greeter` mode LightDM manages the display and pins it to `:0`. |
 
 Authentication lives on its own page — see
-[Authentication](authentication.md) for `KASM_AUTH_MODE`, `KASM_USERS_FILE`,
-`KASM_USERS`, the `KASM_OIDC_*` single sign-on settings, and the
+[Authentication](authentication.md) for `QGIS_DESKTOP_AUTH_MODE`, `QGIS_DESKTOP_USERS_FILE`,
+`QGIS_DESKTOP_USERS`, the `QGIS_DESKTOP_OIDC_*` single sign-on settings, and the
 credential-resolution order.
 
 !!! note "`VNC_PORT` in `oidc` mode"
-    With `KASM_AUTH_MODE=oidc`, `VNC_PORT` stays the *published* port — it is
+    With `QGIS_DESKTOP_AUTH_MODE=oidc`, `VNC_PORT` stays the *published* port — it is
     the OIDC proxy that listens on it. KasmVNC itself is moved to
-    `127.0.0.1:$KASM_OIDC_UPSTREAM_PORT` (default `6901`) so that nothing can
+    `127.0.0.1:$QGIS_DESKTOP_OIDC_UPSTREAM_PORT` (default `6901`) so that nothing can
     reach the desktop except through the proxy.
 
 ## Examples

@@ -14,9 +14,10 @@ SBOM and a Grype CVE scan as release artefacts.
 
 ## What it gives you
 
-- A full QGIS 4.0 desktop in a browser tab, on any device.
+- A full QGIS desktop in a browser tab, on any device — on the long-term
+  release by default, or the current release when you want to test ahead.
 - Multi-monitor and dynamic resolution via KasmVNC.
-- **Four auth pathways** (choose per deployment via `KASM_AUTH_MODE`):
+- **Four auth pathways** (choose per deployment via `QGIS_DESKTOP_AUTH_MODE`):
   the browser's HTTP BasicAuth dialog (`basic`, default), a LightDM
   greeter *inside* the desktop that re-prompts cleanly on failure
   (`greeter`), Keycloak/OIDC single sign-on in front of the desktop
@@ -26,6 +27,10 @@ SBOM and a Grype CVE scan as release artefacts.
 - **Giswater-ready QGIS**: the EPANET and SWMM hydraulic solvers built from
   source, the Python packages the plugin imports, and the `epa` command that
   makes Giswater find the solvers on Linux.
+- **Two QGIS channels**: the long-term release by default, and the current
+  release as a second image (`:qgis-latest`) so you can test projects and
+  plugins against the next LTR before it becomes the LTR. See
+  [Building from source](getting-started/building.md#choosing-the-qgis-channel).
 - Data-loss-prevention knobs: clipboard direction and size caps, MIME
   allowlist, screen watermark, DLP audit log.
 - An nftables egress lockdown with a hostname/CIDR allowlist that runs

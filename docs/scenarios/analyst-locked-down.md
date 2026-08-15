@@ -14,7 +14,7 @@ how to run and verify it end-to-end.
 
 | # | Requirement | How the container satisfies it |
 |---|-------------|--------------------------------|
-| R1 | Only bob may sign in. | `KASM_USERS=bob:password123` populates `~/.kasmpasswd`; all other legacy accounts wiped on boot. |
+| R1 | Only bob may sign in. | `QGIS_DESKTOP_USERS=bob:password123` populates `~/.kasmpasswd`; all other legacy accounts wiped on boot. |
 | R2 | The browser must prompt for user + password. | HTTP BasicAuth is on by default; browser returns `401 WWW-Authenticate: Basic` until valid creds are supplied. |
 | R3 | Bob cannot copy data out of the desktop. | `-SendCutText 0` (server → client). |
 | R4 | Bob cannot paste data into the desktop. | `-AcceptCutText 0` (client → server). |
@@ -24,7 +24,7 @@ how to run and verify it end-to-end.
 | R8 | The desktop cannot reach the general internet. | Egress policy `drop`; no other allow rules. |
 | R9 | If lockdown can't be enforced, the container must not start. | Entrypoint fails closed on missing `NET_ADMIN`. |
 | R10 | Postgres is not reachable from the Docker host. | The `db` service has no published ports; both containers share a bridge network. |
-| R11 | Bob gets a mapping application, not a shell. | `KASM_ALLOW_TERMINAL=0` deletes the terminal emulators and the command-runner dialogs at boot, and strips the panel launcher and menu entries. See the caveat under [Terminal access](../configuration/kasm-permissions.md#terminal-access) — it is an affordance control, not a sandbox. |
+| R11 | Bob gets a mapping application, not a shell. | `QGIS_DESKTOP_ALLOW_TERMINAL=0` deletes the terminal emulators and the command-runner dialogs at boot, and strips the panel launcher and menu entries. See the caveat under [Terminal access](../configuration/permissions.md#terminal-access) — it is an affordance control, not a sandbox. |
 
 ---
 
@@ -110,15 +110,15 @@ services:
     image: nix-xfce-kasm:latest        # locally built (see §6)
     cap_add: [NET_ADMIN]               # required for nftables setup
     environment:
-      - KASM_USERS=bob:password123     # single-user auth
+      - QGIS_DESKTOP_USERS=bob:password123     # single-user auth
       - KASM_ALLOW_CLIPBOARD_IN=0
       - KASM_ALLOW_CLIPBOARD_OUT=0
       - KASM_ALLOW_PRIMARY_SELECTION=0
       - KASM_WATERMARK_TEXT=RESTRICTED - $${USER} %H:%M
       - KASM_DLP_LOG=info
-      - KASM_ALLOW_TERMINAL=0          # no shell for bob
-      - KASM_EGRESS_LOCKDOWN=1
-      - KASM_EGRESS_ALLOW=db           # resolved once at startup
+      - QGIS_DESKTOP_ALLOW_TERMINAL=0          # no shell for bob
+      - QGIS_DESKTOP_EGRESS_LOCKDOWN=1
+      - QGIS_DESKTOP_EGRESS_ALLOW=db           # resolved once at startup
     ports: ["8443:8443"]
     networks: [analyst-net]
 
@@ -166,7 +166,7 @@ cd examples/analyst-locked-down
 docker compose up
 ```
 
-Wait for `Auth: ENABLED — 1 user(s) loaded from KASM_USERS env` and
+Wait for `Auth: ENABLED — 1 user(s) loaded from QGIS_DESKTOP_USERS env` and
 `Egress lockdown: ACTIVE (1 allowlist entries)` to appear in the logs, then
 open <http://localhost:8443>. The browser will prompt for credentials; enter
 **bob** / **password123**.
@@ -193,17 +193,17 @@ asymmetry the scenario is after: the operator has one, bob does not.
 | From the host: `docker exec qgis-desktop curl -m5 https://example.com`. | Hangs, then `Connection timed out`. |
 | From the host: `docker exec qgis-desktop getent hosts db`. | Resolves — DNS is allowed. |
 | From the host: `docker exec -u 1000 qgis-desktop nft list ruleset`. | `Operation not permitted` (capabilities dropped for the desktop user). |
-| From the host: `docker exec qgis-desktop nft list table inet kasm_egress`. | Output chain `policy drop` plus the `db` allow rule. |
+| From the host: `docker exec qgis-desktop nft list table inet qgis_desktop_egress`. | Output chain `policy drop` plus the `db` allow rule. |
 
 ---
 
 ## 8. Troubleshooting
 
-**`ERROR: KASM_EGRESS_LOCKDOWN=1 but the container cannot manage nftables rules`**
+**`ERROR: QGIS_DESKTOP_EGRESS_LOCKDOWN=1 but the container cannot manage nftables rules`**
 
 The container started without `NET_ADMIN`. Add `cap_add: [NET_ADMIN]` in
 compose or `--cap-add=NET_ADMIN` on `docker run`. If you deliberately want
-unrestricted networking, set `KASM_EGRESS_LOCKDOWN=0`.
+unrestricted networking, set `QGIS_DESKTOP_EGRESS_LOCKDOWN=0`.
 
 **QGIS PostGIS connection times out.**
 
@@ -233,7 +233,7 @@ filesystem. Upstream tracking:
 
 **The DB IP changes and everything breaks.**
 
-`KASM_EGRESS_ALLOW` is resolved once. If you restart the DB container it may
+`QGIS_DESKTOP_EGRESS_ALLOW` is resolved once. If you restart the DB container it may
 be given a new IP; the analyst container's nftables rules will still point
 at the old one. Restart `qgis-desktop` to re-resolve, or switch to a static
 IP for the DB in the compose file.
@@ -242,10 +242,10 @@ IP for the DB in the compose file.
 
 ## 9. Extending the scenario
 
-- **Multiple analysts.** Swap `KASM_USERS=bob:password123` for
-  `KASM_USERS=bob:pw1,alice:pw2,carol:pw3` or bind-mount a
-  `KASM_USERS_FILE`.
-- **Multiple databases.** `KASM_EGRESS_ALLOW=db,warehouse,10.0.5.0/24` —
+- **Multiple analysts.** Swap `QGIS_DESKTOP_USERS=bob:password123` for
+  `QGIS_DESKTOP_USERS=bob:pw1,alice:pw2,carol:pw3` or bind-mount a
+  `QGIS_DESKTOP_USERS_FILE`.
+- **Multiple databases.** `QGIS_DESKTOP_EGRESS_ALLOW=db,warehouse,10.0.5.0/24` —
   the allowlist accepts IPs, CIDRs, and hostnames.
 - **Auditing.** Set `KASM_DLP_LOG=verbose` for full keystroke and clipboard
   content logging (⚠ legal review required — the log will contain typed

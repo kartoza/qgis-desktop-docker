@@ -7,38 +7,83 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-## [1.5.0] — 2026-08-15
+## [2.0.0] — 2026-08-15
 
-Two additions: a fourth authentication pathway that puts Keycloak (or any
-OIDC provider) in front of the desktop, and everything the Giswater QGIS
-plugin needs to actually run — including the two EPA hydraulic solvers, built
-from source.
+A fourth authentication pathway that puts Keycloak (or any OIDC provider) in
+front of the desktop, everything the Giswater QGIS plugin needs to actually run
+— including the two EPA hydraulic solvers, built from source — a terminal
+lockdown, and the environment-variable rename that makes the major bump.
+
+### Changed — BREAKING
+
+**The default image is now QGIS LTR (3.44.9), not the current release
+(4.0.1).** The LTR line only takes bug fixes, which is what belongs in front of
+users; the current release is still published, as a second image, for testing
+against what becomes the next LTR. `ghcr.io/kartoza/qgis-desktop-docker:latest`
+therefore moves from QGIS 4.0.1 to 3.44.9 — pin `:qgis-latest` to stay on the
+current release. See [QGIS version](README.md#qgis-version).
+
+**Every variable that is this project's own behaviour moved from the `KASM_`
+prefix to `QGIS_DESKTOP_`.** The old prefix implied KasmVNC provided features it
+has nothing to do with: the nftables egress filter, the LightDM greeter, single
+sign-on, the terminal lockdown. `KASM_` now means one thing — a setting that
+maps straight onto a KasmVNC flag.
+
+| Old (≤ 1.4.0) | New (2.0.0) |
+|---------------|-------------|
+| `KASM_AUTH_MODE` | `QGIS_DESKTOP_AUTH_MODE` |
+| `KASM_AUTH=0` | `QGIS_DESKTOP_AUTH_MODE=none` |
+| `KASM_USERS` | `QGIS_DESKTOP_USERS` |
+| `KASM_USERS_FILE` | `QGIS_DESKTOP_USERS_FILE` |
+| `KASM_EGRESS_LOCKDOWN` | `QGIS_DESKTOP_EGRESS_LOCKDOWN` |
+| `KASM_EGRESS_ALLOW` | `QGIS_DESKTOP_EGRESS_ALLOW` |
+| `KASM_BIND_INTERFACE` | `QGIS_DESKTOP_BIND_INTERFACE` |
+| `QGIS_DESKTOP_OIDC_*` | `QGIS_DESKTOP_OIDC_*` |
+| *(mount)* `/etc/kasmvnc/users` | `/etc/qgis-desktop/users` |
+
+**Unchanged**, because they are genuinely KasmVNC settings:
+`KASM_ALLOW_CLIPBOARD_IN` / `_OUT`, `KASM_ALLOW_PRIMARY_SELECTION`,
+`KASM_CLIPBOARD_IN_MAX` / `_OUT_MAX`, `KASM_CLIPBOARD_DELAY_MS`,
+`KASM_CLIPBOARD_MIME_TYPES`, `KASM_WATERMARK_TEXT`, `KASM_DLP_LOG` — and all
+the `VNC_*` session variables.
+
+- **The container refuses to start if it sees an old name**, listing each one
+  with its replacement, rather than ignoring it. A deployment that was locked
+  down under the old names would otherwise come up with no egress allowlist and
+  the default password. The same applies to a credentials file left at
+  `/etc/kasmvnc/users`.
+- Migration, including a one-line `sed`, is in
+  [Configuration → Migrating from 1.x](docs/configuration/index.md#migrating-from-1x).
+- Internals moved with them: the nftables table is now `inet
+  qgis_desktop_egress`, runtime state lives under `/run/qgis-desktop/`, and the
+  in-container helpers are `qgis-desktop-oidc-config`,
+  `qgis-desktop-oidc-proxy` and `qgis-desktop-disable-terminal`.
 
 ### Added
 
-#### Authentication — `KASM_AUTH_MODE=oidc`
+#### Authentication — `QGIS_DESKTOP_AUTH_MODE=oidc`
 - `oidc` (alias `keycloak`) fronts the desktop with
   [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/). The proxy owns
   the published port; KasmVNC is rebound to `127.0.0.1:6901`, so an
   unauthenticated request never reaches the desktop at all.
 - Provider defaults to `keycloak-oidc` (realm/client role filtering) but speaks
-  plain OIDC discovery, so `KASM_OIDC_ISSUER_URL` can point at any compliant
-  identity provider. `KASM_OIDC_PROVIDER=oidc` selects the generic provider.
-- Configuration: `KASM_OIDC_ISSUER_URL`, `KASM_OIDC_CLIENT_ID`,
-  `KASM_OIDC_CLIENT_SECRET[_FILE]`, `KASM_OIDC_REDIRECT_URL`,
-  `KASM_OIDC_COOKIE_SECRET[_FILE]`, `KASM_OIDC_SCOPE`,
-  `KASM_OIDC_EMAIL_DOMAINS`, `KASM_OIDC_EMAIL_CLAIM`,
-  `KASM_OIDC_ALLOWED_GROUPS`, `KASM_OIDC_ALLOWED_ROLES`,
-  `KASM_OIDC_COOKIE_SECURE`, `KASM_OIDC_COOKIE_EXPIRE`,
-  `KASM_OIDC_TLS_CERT_FILE` / `_KEY_FILE`, `KASM_OIDC_REVERSE_PROXY`,
-  `KASM_OIDC_INSECURE_SKIP_VERIFY`, `KASM_OIDC_UPSTREAM_PORT`,
-  `KASM_OIDC_INNER_MODE`, `KASM_OIDC_EXTRA_ARGS`.
-- `KASM_OIDC_INNER_MODE` composes with the existing modes: `none` (default —
+  plain OIDC discovery, so `QGIS_DESKTOP_OIDC_ISSUER_URL` can point at any compliant
+  identity provider. `QGIS_DESKTOP_OIDC_PROVIDER=oidc` selects the generic provider.
+- Configuration: `QGIS_DESKTOP_OIDC_ISSUER_URL`, `QGIS_DESKTOP_OIDC_CLIENT_ID`,
+  `QGIS_DESKTOP_OIDC_CLIENT_SECRET[_FILE]`, `QGIS_DESKTOP_OIDC_REDIRECT_URL`,
+  `QGIS_DESKTOP_OIDC_COOKIE_SECRET[_FILE]`, `QGIS_DESKTOP_OIDC_SCOPE`,
+  `QGIS_DESKTOP_OIDC_EMAIL_DOMAINS`, `QGIS_DESKTOP_OIDC_EMAIL_CLAIM`,
+  `QGIS_DESKTOP_OIDC_ALLOWED_GROUPS`, `QGIS_DESKTOP_OIDC_ALLOWED_ROLES`,
+  `QGIS_DESKTOP_OIDC_COOKIE_SECURE`, `QGIS_DESKTOP_OIDC_COOKIE_EXPIRE`,
+  `QGIS_DESKTOP_OIDC_TLS_CERT_FILE` / `_KEY_FILE`, `QGIS_DESKTOP_OIDC_REVERSE_PROXY`,
+  `QGIS_DESKTOP_OIDC_INSECURE_SKIP_VERIFY`, `QGIS_DESKTOP_OIDC_UPSTREAM_PORT`,
+  `QGIS_DESKTOP_OIDC_INNER_MODE`, `QGIS_DESKTOP_OIDC_EXTRA_ARGS`.
+- `QGIS_DESKTOP_OIDC_INNER_MODE` composes with the existing modes: `none` (default —
   one shared desktop behind SSO) or `greeter` (SSO at the edge *and* a per-user
   Linux session inside).
-- Secrets never reach a command line. `kasm-oidc-config` runs as root at boot,
+- Secrets never reach a command line. `qgis-desktop-oidc-config` runs as root at boot,
   reads `*_FILE` secrets (so a `0400 root:root` mount works), and writes them
-  to `/run/kasm-oidc/secrets.cfg` mode `0400` owned by UID 1000. `ps` inside the
+  to `/run/qgis-desktop/oidc/secrets.cfg` mode `0400` owned by UID 1000. `ps` inside the
   container and `docker inspect` outside it both stay clean.
 - The proxy runs unprivileged under `setpriv` with all capabilities cleared,
   and a watchdog stops the container if it ever exits — the desktop cannot be
@@ -46,11 +91,27 @@ from source.
 - The identity provider's host is added to the nftables egress allowlist
   automatically, since discovery and the code exchange happen server-side.
 - Session cookies are marked `Secure` automatically when
-  `KASM_OIDC_REDIRECT_URL` is `https://`, and the container warns at boot when
+  `QGIS_DESKTOP_OIDC_REDIRECT_URL` is `https://`, and the container warns at boot when
   it is not.
 - New `nix run .#run-oidc` (against your own IdP) and
   `nix run .#run-keycloak-demo` (throwaway Keycloak with a pre-imported realm)
   targets, plus `examples/keycloak-oidc/`.
+
+#### QGIS channels
+- Two images from the same source, differing only in the QGIS package:
+  `nix-xfce-kasm:ltr` (also tagged `:latest`) on the long-term release, and
+  `nix-xfce-kasm:qgis-latest` on the current release. Published to GHCR as
+  `:latest` / `:<version>` and `:qgis-latest` / `:<version>-qgis-latest`.
+- `nix run .#build-docker` builds the LTR image;
+  `nix run .#build-docker-qgis-latest` builds the other. Flake outputs
+  `packages.docker-ltr`, `packages.docker-qgis-latest`, `packages.qgis-ltr` and
+  `packages.qgis-latest` expose the pieces individually.
+- Which QGIS is inside is visible three ways: the `com.kartoza.qgis.channel` /
+  `com.kartoza.qgis.version` image labels (no need to start the container), the
+  `QGIS:` line at the top of the boot log, and the `QGIS_DESKTOP_QGIS_CHANNEL` /
+  `QGIS_DESKTOP_QGIS_VERSION` variables inside the session.
+- CI builds and smoke-tests both channels in parallel, so a regression in the
+  upcoming LTR surfaces on a pull request rather than on release day.
 
 #### Giswater support
 - QGIS is built with the Python packages the Giswater plugin imports —
@@ -71,8 +132,8 @@ from source.
 - New flake outputs: `packages.epanet`, `packages.swmm`, `packages.qgis`,
   `packages.epa`.
 
-#### Terminal lockdown — `KASM_ALLOW_TERMINAL`
-- `KASM_ALLOW_TERMINAL=0` removes terminal access from the desktop. The
+#### Terminal lockdown — `QGIS_DESKTOP_ALLOW_TERMINAL`
+- `QGIS_DESKTOP_ALLOW_TERMINAL=0` removes terminal access from the desktop. The
   entrypoint deletes the terminal emulators (the `/bin` symlink *and* the
   binary behind it) and the command-runner dialogs (`xfce4-appfinder`,
   `xfrun4`, `exo-open`) from the container's own filesystem layer, then strips
@@ -82,7 +143,7 @@ from source.
   without the variable brings the terminal back.
 - Documented honestly as an affordance control rather than a sandbox — QGIS's
   Python console can still start subprocesses. See
-  [Terminal access](docs/configuration/kasm-permissions.md#terminal-access).
+  [Terminal access](docs/configuration/permissions.md#terminal-access).
 - The analyst locked-down scenario and `nix run .#run-locked-down` now set it.
 
 #### Testing
@@ -117,7 +178,7 @@ Keycloak, and both affect every release since the egress lockdown landed in
   "managed by iptables-nft, do not touch". On any user-defined or Compose
   network, every name lookup after startup failed with connection refused, so
   allowlisted hosts were reachable only by IP. The rules now live in a table of
-  our own, `inet kasm_egress`, and only that table is replaced.
+  our own, `inet qgis_desktop_egress`, and only that table is replaced.
 - **Hostnames in `KASM_EGRESS_ALLOW` never resolved.** `getent` is its own
   package in current nixpkgs and is no longer part of `glibc.bin`, so
   `resolve_host` silently failed for every name and logged
@@ -142,10 +203,10 @@ Keycloak, and both affect every release since the egress lockdown landed in
 
 ### Notes
 - The desktop session is shared across users in `oidc` mode unless
-  `KASM_OIDC_INNER_MODE=greeter` is set — the same caveat that already applies
+  `QGIS_DESKTOP_OIDC_INNER_MODE=greeter` is set — the same caveat that already applies
   to `basic`.
 - Over plain HTTP the session cookie cannot be marked `Secure`. Terminate TLS in
-  front of the container (or set `KASM_OIDC_TLS_CERT_FILE`) for anything beyond
+  front of the container (or set `QGIS_DESKTOP_OIDC_TLS_CERT_FILE`) for anything beyond
   localhost.
 - The egress allowlist resolves the IdP's hostname once at startup. Providers
   behind rotating IPs need an explicit `KASM_EGRESS_ALLOW` CIDR.
@@ -201,7 +262,7 @@ Kartoza-branded PDF build.
 - HTTP BasicAuth is now the primary auth path. The browser prompts once; the
   same credentials are transparently re-used for the VNC handshake.
 - `KASM_USERS_FILE` — bind-mount a `user:password` file (one entry per line,
-  `#` comments supported). Default path: `/etc/kasmvnc/users`.
+  `#` comments supported). Default path: `/etc/qgis-desktop/users`.
 - `KASM_USERS` — inline `alice:pw1,bob:pw2` list; passwords may contain
   colons.
 - Precedence: `KASM_USERS_FILE` → `KASM_USERS` → legacy `VNC_USER` / `VNC_PW`.
@@ -321,8 +382,8 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.5.0...HEAD
-[1.5.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v1.5.0
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v2.0.0
 [1.4.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.1.0...v1.2.0

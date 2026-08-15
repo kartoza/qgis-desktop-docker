@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit tests for config/lockdown/disable-terminal.sh (KASM_ALLOW_TERMINAL=0).
+# Unit tests for config/lockdown/disable-terminal.sh (QGIS_DESKTOP_ALLOW_TERMINAL=0).
 #
 # Builds a throwaway tree that mimics the container's /bin and /home, runs the
 # lockdown against it, and asserts that every route to a shell is gone. Needs no
@@ -11,11 +11,11 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${KASM_PROJECT_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
+PROJECT_ROOT="${QGIS_DESKTOP_PROJECT_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 LOCKDOWN="$PROJECT_ROOT/config/lockdown/disable-terminal.sh"
 PANEL_TEMPLATE="$PROJECT_ROOT/config/xfce4/panel/default.xml"
 
-WORK="$(mktemp -d -t kasm-terminal-tests.XXXXXX)"
+WORK="$(mktemp -d -t qgis-desktop-terminal-tests.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
 PASS=0
@@ -70,14 +70,14 @@ build_tree() {
 }
 
 run_lockdown() {
-  KASM_LOCKDOWN_BIN_DIR="$WORK/tree/bin" \
-    KASM_LOCKDOWN_HOME_ROOT="$WORK/tree/home" \
+  QGIS_DESKTOP_LOCKDOWN_BIN_DIR="$WORK/tree/bin" \
+    QGIS_DESKTOP_LOCKDOWN_HOME_ROOT="$WORK/tree/home" \
     bash "$LOCKDOWN" "$@" > "$WORK/out" 2>&1
   STATUS=$?
   OUTPUT="$(cat "$WORK/out")"
 }
 
-echo "kasm-disable-terminal"
+echo "qgis-desktop-disable-terminal"
 
 build_tree
 run_lockdown disable
@@ -102,17 +102,17 @@ assert_file_contains "$APPS/xfce4-appfinder.desktop" "NoDisplay=true" "appfinder
 
 PANEL="$WORK/tree/home/user/.config/xfce4/panel/default.xml"
 assert_file_lacks "$PANEL" "xfce4-terminal.desktop" "panel launcher removed"
-assert_file_lacks "$PANEL" "KASM_TERMINAL_LAUNCHER_ID" "panel launcher id removed"
+assert_file_lacks "$PANEL" "QGIS_DESKTOP_TERMINAL_LAUNCHER_ID" "panel launcher id removed"
 assert_file_contains "$PANEL" "thunar.desktop" "other panel launchers survive"
 assert_file_contains "$PANEL" "org.qgis.qgis.desktop" "the QGIS launcher survives"
 
 # The shipped panel config must still carry the markers, or the strip above
 # silently does nothing in production.
-assert_file_contains "$PANEL_TEMPLATE" "KASM_TERMINAL_LAUNCHER_BEGIN" \
+assert_file_contains "$PANEL_TEMPLATE" "QGIS_DESKTOP_TERMINAL_LAUNCHER_BEGIN" \
   "shipped panel config still carries the begin marker"
-assert_file_contains "$PANEL_TEMPLATE" "KASM_TERMINAL_LAUNCHER_END" \
+assert_file_contains "$PANEL_TEMPLATE" "QGIS_DESKTOP_TERMINAL_LAUNCHER_END" \
   "shipped panel config still carries the end marker"
-assert_file_contains "$PANEL_TEMPLATE" "KASM_TERMINAL_LAUNCHER_ID" \
+assert_file_contains "$PANEL_TEMPLATE" "QGIS_DESKTOP_TERMINAL_LAUNCHER_ID" \
   "shipped panel config still carries the id marker"
 
 # --- Honest about what it does not close ------------------------------------

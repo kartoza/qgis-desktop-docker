@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Terminal lockdown for KASM_ALLOW_TERMINAL=0.
+# Terminal lockdown for QGIS_DESKTOP_ALLOW_TERMINAL=0.
 #
 # Runs as ROOT from entrypoint.sh, before privileges are dropped, and closes
 # every route from the XFCE session to a shell prompt:
@@ -24,7 +24,7 @@
 # the unprivileged UID, the egress filter and the container itself.
 #
 # Everything here is idempotent, and re-runnable in either direction: with
-# KASM_ALLOW_TERMINAL=1 the entrypoint calls this script with `restore`, which
+# QGIS_DESKTOP_ALLOW_TERMINAL=1 the entrypoint calls this script with `restore`, which
 # removes the menu overrides it previously wrote. Deleted executables are NOT
 # restored — the container's filesystem layer is thrown away on restart, so a
 # plain `docker restart` brings them back anyway.
@@ -34,8 +34,8 @@ set -euo pipefail
 MODE="${1:-disable}"
 
 # Overridable so the test suite can drive this against a temporary tree.
-BIN_DIR="${KASM_LOCKDOWN_BIN_DIR:-/bin}"
-HOME_ROOT="${KASM_LOCKDOWN_HOME_ROOT:-/home}"
+BIN_DIR="${QGIS_DESKTOP_LOCKDOWN_BIN_DIR:-/bin}"
+HOME_ROOT="${QGIS_DESKTOP_LOCKDOWN_HOME_ROOT:-/home}"
 
 # Emulators to remove. Only xfce4-terminal ships in this image today; the rest
 # are here so that adding a package to the image cannot quietly reopen the door.
@@ -86,9 +86,9 @@ TERMINAL_DESKTOP_IDS=(
 # Markers in config/xfce4/panel/default.xml that bracket the terminal launcher.
 # Editing XML with sed is only safe because we author the file — the markers are
 # there to make that explicit, and to fail loudly if it is ever restructured.
-PANEL_BEGIN_MARKER="KASM_TERMINAL_LAUNCHER_BEGIN"
-PANEL_END_MARKER="KASM_TERMINAL_LAUNCHER_END"
-PANEL_ID_MARKER="KASM_TERMINAL_LAUNCHER_ID"
+PANEL_BEGIN_MARKER="QGIS_DESKTOP_TERMINAL_LAUNCHER_BEGIN"
+PANEL_END_MARKER="QGIS_DESKTOP_TERMINAL_LAUNCHER_END"
+PANEL_ID_MARKER="QGIS_DESKTOP_TERMINAL_LAUNCHER_ID"
 
 removed_count=0
 
@@ -179,7 +179,7 @@ for_each_home() {
 case "${MODE}" in
   disable)
     echo "=== Terminal lockdown ==="
-    echo "KASM_ALLOW_TERMINAL=0 — removing terminal access from the desktop"
+    echo "QGIS_DESKTOP_ALLOW_TERMINAL=0 — removing terminal access from the desktop"
 
     for name in "${TERMINAL_BINARIES[@]}" "${LAUNCHER_BINARIES[@]}"; do
       remove_executable "${name}"
@@ -196,7 +196,7 @@ case "${MODE}" in
       echo "  no terminal emulators were present"
     fi
     echo "  note: QGIS's Python console can still run subprocesses — see"
-    echo "        docs/configuration/kasm-permissions.md#terminal-access"
+    echo "        docs/configuration/permissions.md#terminal-access"
     echo "========================"
     ;;
 

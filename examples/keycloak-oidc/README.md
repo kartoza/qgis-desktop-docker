@@ -6,7 +6,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 # Keycloak single sign-on demo
 
 A throwaway Keycloak with a pre-imported realm, and the QGIS desktop behind an
-OIDC proxy that trusts it. Everything needed to see `KASM_AUTH_MODE=oidc` work
+OIDC proxy that trusts it. Everything needed to see `QGIS_DESKTOP_AUTH_MODE=oidc` work
 end to end, including a user who is *refused* entry.
 
 !!! danger "Demo only"
@@ -39,7 +39,7 @@ Then open **<http://keycloak:8443>**.
 
 That second row is the point of the demo: authentication and authorisation are
 separate decisions, and the proxy enforces the second one via
-`KASM_OIDC_ALLOWED_ROLES=qgis-user`.
+`QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user`.
 
 ## Why the hosts entry
 
@@ -79,14 +79,14 @@ sequenceDiagram
 group and a `groups` claim mapper. Swap the role filter in the compose file for:
 
 ```yaml
-- KASM_OIDC_ALLOWED_GROUPS=/gis-users
+- QGIS_DESKTOP_OIDC_ALLOWED_GROUPS=/gis-users
 ```
 
-**Per-user Linux sessions behind SSO.** Set `KASM_OIDC_INNER_MODE=greeter` and
+**Per-user Linux sessions behind SSO.** Set `QGIS_DESKTOP_OIDC_INNER_MODE=greeter` and
 the desktop puts a LightDM login inside the SSO-protected session, so each user
 gets their own home directory.
 
-**Watch the egress lockdown.** `KASM_EGRESS_ALLOW` is left empty, yet SSO still
+**Watch the egress lockdown.** `QGIS_DESKTOP_EGRESS_ALLOW` is left empty, yet SSO still
 works — the entrypoint adds the issuer's host to the nftables allowlist by
 itself. Open a terminal on the desktop and `curl https://example.com` will
 still hang, as it should.

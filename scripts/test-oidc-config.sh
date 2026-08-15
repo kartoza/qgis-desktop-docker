@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit tests for the KASM_AUTH_MODE=oidc plumbing.
+# Unit tests for the QGIS_DESKTOP_AUTH_MODE=oidc plumbing.
 #
 # Covers config/oidc/oidc-config.sh (validation + secret materialisation) and
 # config/oidc/oidc-proxy.sh (the flag list handed to oauth2-proxy). Neither
@@ -12,13 +12,13 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# KASM_PROJECT_ROOT lets `nix run .#test-oidc` point the tests at the flake
+# QGIS_DESKTOP_PROJECT_ROOT lets `nix run .#test-oidc` point the tests at the flake
 # source in the store, where this script has no checkout above it.
-PROJECT_ROOT="${KASM_PROJECT_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
+PROJECT_ROOT="${QGIS_DESKTOP_PROJECT_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 OIDC_CONFIG="$PROJECT_ROOT/config/oidc/oidc-config.sh"
 OIDC_PROXY="$PROJECT_ROOT/config/oidc/oidc-proxy.sh"
 
-WORK="$(mktemp -d -t kasm-oidc-tests.XXXXXX)"
+WORK="$(mktemp -d -t qgis-desktop-oidc-tests.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
 # Resolve the real oauth2-proxy BEFORE the stub goes on PATH. When it is
@@ -84,7 +84,7 @@ assert_equals() {
   fi
 }
 
-# Run oidc-config.sh in a clean environment with only the KASM_OIDC_* vars the
+# Run oidc-config.sh in a clean environment with only the QGIS_DESKTOP_OIDC_* vars the
 # caller passed as NAME=VALUE arguments. Its stdout+stderr go to $OUTPUT and
 # its exit status to $STATUS.
 run_config() {
@@ -93,9 +93,9 @@ run_config() {
     env -i \
       PATH="$PATH" \
       HOME="$WORK" \
-      KASM_OIDC_RUNTIME_DIR="$runtime_dir" \
-      KASM_OIDC_PROXY_UID="$(id -u)" \
-      KASM_OIDC_PROXY_GID="$(id -g)" \
+      QGIS_DESKTOP_OIDC_RUNTIME_DIR="$runtime_dir" \
+      QGIS_DESKTOP_OIDC_PROXY_UID="$(id -u)" \
+      QGIS_DESKTOP_OIDC_PROXY_GID="$(id -g)" \
       "$@" \
       bash "$OIDC_CONFIG" 2>&1
   )"
@@ -112,33 +112,33 @@ run_proxy() {
     env -i \
       PATH="$STUB_BIN:$PATH" \
       HOME="$WORK" \
-      KASM_OIDC_RUNTIME_DIR="$runtime_dir" \
+      QGIS_DESKTOP_OIDC_RUNTIME_DIR="$runtime_dir" \
       "$@" \
       bash "$OIDC_PROXY" 2>&1
   )"
   STATUS=$?
 }
 
-echo "kasm-oidc-config"
+echo "qgis-desktop-oidc-config"
 
 # --- Required configuration -------------------------------------------------
-run_config KASM_OIDC_CLIENT_ID=c KASM_OIDC_CLIENT_SECRET=s \
-  KASM_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_CLIENT_ID=c QGIS_DESKTOP_OIDC_CLIENT_SECRET=s \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
 assert_fails "missing issuer url is fatal"
-assert_contains "$OUTPUT" "KASM_OIDC_ISSUER_URL" "missing issuer url names the variable"
+assert_contains "$OUTPUT" "QGIS_DESKTOP_OIDC_ISSUER_URL" "missing issuer url names the variable"
 
-run_config KASM_OIDC_ISSUER_URL=https://idp/realms/r KASM_OIDC_CLIENT_ID=c \
-  KASM_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp/realms/r QGIS_DESKTOP_OIDC_CLIENT_ID=c \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
 assert_fails "missing client secret is fatal"
 
-run_config KASM_OIDC_ISSUER_URL=ftp://idp/realms/r KASM_OIDC_CLIENT_ID=c \
-  KASM_OIDC_CLIENT_SECRET=s KASM_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_ISSUER_URL=ftp://idp/realms/r QGIS_DESKTOP_OIDC_CLIENT_ID=c \
+  QGIS_DESKTOP_OIDC_CLIENT_SECRET=s QGIS_DESKTOP_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
 assert_fails "non-http issuer scheme is fatal"
 
 # --- Happy path -------------------------------------------------------------
-run_config KASM_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
-  KASM_OIDC_CLIENT_ID=qgis-desktop KASM_OIDC_CLIENT_SECRET=super-secret \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
+  QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop QGIS_DESKTOP_OIDC_CLIENT_SECRET=super-secret \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
 assert_ok "valid configuration succeeds"
 if [ -f "$SECRETS_FILE" ]; then ok "secrets file written"; else no "secrets file written"; fi
 MODE="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || echo "?")"
@@ -154,45 +154,45 @@ assert_equals "$COOKIE_LEN" "43" "generated cookie secret is 32 bytes of base64u
 
 # --- Secrets from files -----------------------------------------------------
 printf 'from-a-file\n' > "$WORK/client-secret"
-run_config KASM_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
-  KASM_OIDC_CLIENT_ID=c KASM_OIDC_CLIENT_SECRET_FILE="$WORK/client-secret" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
+  QGIS_DESKTOP_OIDC_CLIENT_ID=c QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE="$WORK/client-secret" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
 assert_ok "client secret can come from a file"
 assert_contains "$(cat "$SECRETS_FILE")" 'client_secret = "from-a-file"' \
   "trailing newline stripped from secret file"
 
-run_config KASM_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
-  KASM_OIDC_CLIENT_ID=c KASM_OIDC_CLIENT_SECRET_FILE="$WORK/nope" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
+  QGIS_DESKTOP_OIDC_CLIENT_ID=c QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE="$WORK/nope" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
 assert_fails "unreadable secret file is fatal"
 
 # --- TOML escaping ----------------------------------------------------------
-run_config KASM_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
-  KASM_OIDC_CLIENT_ID=c 'KASM_OIDC_CLIENT_SECRET=quo"te\back' \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
+  QGIS_DESKTOP_OIDC_CLIENT_ID=c 'QGIS_DESKTOP_OIDC_CLIENT_SECRET=quo"te\back' \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
 assert_contains "$(cat "$SECRETS_FILE")" 'client_secret = "quo\"te\\back"' \
   "quotes and backslashes are TOML-escaped"
 
 # --- Supplied cookie secret -------------------------------------------------
-run_config KASM_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
-  KASM_OIDC_CLIENT_ID=c KASM_OIDC_CLIENT_SECRET=s \
-  KASM_OIDC_COOKIE_SECRET=0123456789abcdef0123456789abcdef \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+run_config QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis \
+  QGIS_DESKTOP_OIDC_CLIENT_ID=c QGIS_DESKTOP_OIDC_CLIENT_SECRET=s \
+  QGIS_DESKTOP_OIDC_COOKIE_SECRET=0123456789abcdef0123456789abcdef \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
 assert_contains "$(cat "$SECRETS_FILE")" \
   'cookie_secret = "0123456789abcdef0123456789abcdef"' "supplied cookie secret is used"
 assert_contains "$OUTPUT" "cookie secret: supplied" "supplied cookie secret is reported"
 
 echo ""
-echo "kasm-oidc-proxy"
+echo "qgis-desktop-oidc-proxy"
 
 BASE_ENV=(
-  KASM_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis
-  KASM_OIDC_CLIENT_ID=qgis-desktop
+  QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp.example.com/realms/qgis
+  QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop
 )
 
 # --- Listener and upstream --------------------------------------------------
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback
 assert_ok "proxy builds its argument list"
 assert_contains "$OUTPUT" "--http-address=0.0.0.0:8443" "listens on the public port"
 assert_contains "$OUTPUT" "--upstream=http://127.0.0.1:6901/" "proxies to the loopback desktop"
@@ -207,27 +207,27 @@ assert_contains "$OUTPUT" "--cookie-secure=false" "plain-http deployment gets no
 assert_contains "$OUTPUT" "WARN" "plain-http deployment is warned about"
 
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
 assert_contains "$OUTPUT" "--cookie-secure=true" "https deployment gets Secure cookies"
 
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback \
-  KASM_OIDC_COOKIE_SECURE=1
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=http://localhost:8443/oauth2/callback \
+  QGIS_DESKTOP_OIDC_COOKIE_SECURE=1
 assert_contains "$OUTPUT" "--cookie-secure=true" "cookie security can be forced on"
 
 # --- Port overrides ---------------------------------------------------------
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  KASM_OIDC_LISTEN_PORT=9443 KASM_OIDC_UPSTREAM_PORT=7000
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_LISTEN_PORT=9443 QGIS_DESKTOP_OIDC_UPSTREAM_PORT=7000
 assert_contains "$OUTPUT" "--http-address=0.0.0.0:9443" "listen port override honoured"
 assert_contains "$OUTPUT" "--upstream=http://127.0.0.1:7000/" "upstream port override honoured"
 
 # --- Authorisation lists ----------------------------------------------------
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  'KASM_OIDC_ALLOWED_GROUPS=/gis-users, /GIS Analysts' \
-  KASM_OIDC_ALLOWED_ROLES=qgis-user \
-  KASM_OIDC_EMAIL_DOMAINS=example.com,kartoza.com
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  'QGIS_DESKTOP_OIDC_ALLOWED_GROUPS=/gis-users, /GIS Analysts' \
+  QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
+  QGIS_DESKTOP_OIDC_EMAIL_DOMAINS=example.com,kartoza.com
 assert_contains "$OUTPUT" "--allowed-group=/gis-users" "first group allowed"
 assert_contains "$OUTPUT" "--allowed-group=/GIS Analysts" "group names keep inner spaces"
 assert_contains "$OUTPUT" "--allowed-role=qgis-user" "keycloak role allowed"
@@ -238,37 +238,37 @@ assert_not_contains "$OUTPUT" "--email-domain=*" "wildcard dropped once domains 
 # Roles are Keycloak-specific: asking for them on a generic provider is a
 # configuration error, not something to silently ignore.
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  KASM_OIDC_PROVIDER=oidc KASM_OIDC_ALLOWED_ROLES=qgis-user
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_PROVIDER=oidc QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user
 assert_fails "roles on a non-keycloak provider are rejected"
 
 # --- TLS --------------------------------------------------------------------
 : > "$WORK/tls.crt"
 : > "$WORK/tls.key"
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  KASM_OIDC_TLS_CERT_FILE="$WORK/tls.crt" KASM_OIDC_TLS_KEY_FILE="$WORK/tls.key"
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_TLS_CERT_FILE="$WORK/tls.crt" QGIS_DESKTOP_OIDC_TLS_KEY_FILE="$WORK/tls.key"
 assert_contains "$OUTPUT" "--https-address=0.0.0.0:8443" "TLS listener on the public port"
 assert_contains "$OUTPUT" "--http-address=127.0.0.1:0" "plain HTTP parked on loopback"
 
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  KASM_OIDC_TLS_CERT_FILE="$WORK/tls.crt"
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_TLS_CERT_FILE="$WORK/tls.crt"
 assert_fails "half-configured TLS is rejected"
 
 # --- Escape hatch -----------------------------------------------------------
 run_proxy "${BASE_ENV[@]}" \
-  KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  'KASM_OIDC_EXTRA_ARGS=--cookie-domain=gis.example.com --whitelist-domain=example.com'
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  'QGIS_DESKTOP_OIDC_EXTRA_ARGS=--cookie-domain=gis.example.com --whitelist-domain=example.com'
 assert_contains "$OUTPUT" "--cookie-domain=gis.example.com" "extra args are appended"
 assert_contains "$OUTPUT" "--whitelist-domain=example.com" "extra args are word-split"
 
 # --- Missing secrets file ---------------------------------------------------
 OUTPUT="$(
   env -i PATH="$STUB_BIN:$PATH" HOME="$WORK" \
-    KASM_OIDC_RUNTIME_DIR="$WORK/does-not-exist" \
-    KASM_OIDC_ISSUER_URL=https://idp/realms/r KASM_OIDC_CLIENT_ID=c \
-    KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+    QGIS_DESKTOP_OIDC_RUNTIME_DIR="$WORK/does-not-exist" \
+    QGIS_DESKTOP_OIDC_ISSUER_URL=https://idp/realms/r QGIS_DESKTOP_OIDC_CLIENT_ID=c \
+    QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
     bash "$OIDC_PROXY" 2>&1
 )"
 STATUS=$?
@@ -288,12 +288,12 @@ else
 
   # Exercise every optional branch at once so the emitted list is exhaustive.
   run_proxy "${BASE_ENV[@]}" \
-    KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-    KASM_OIDC_ALLOWED_GROUPS=/gis-users \
-    KASM_OIDC_ALLOWED_ROLES=qgis-user \
-    KASM_OIDC_EMAIL_DOMAINS=example.com \
-    KASM_OIDC_TLS_CERT_FILE="$WORK/tls.crt" \
-    KASM_OIDC_TLS_KEY_FILE="$WORK/tls.key"
+    QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+    QGIS_DESKTOP_OIDC_ALLOWED_GROUPS=/gis-users \
+    QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
+    QGIS_DESKTOP_OIDC_EMAIL_DOMAINS=example.com \
+    QGIS_DESKTOP_OIDC_TLS_CERT_FILE="$WORK/tls.crt" \
+    QGIS_DESKTOP_OIDC_TLS_KEY_FILE="$WORK/tls.key"
 
   UNKNOWN=""
   while IFS= read -r arg; do

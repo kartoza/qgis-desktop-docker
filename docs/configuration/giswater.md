@@ -70,7 +70,7 @@ runswmm   <input.inp> <report.rpt> [<output.out>]
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -v qgis-home:/home/user \
-  -e KASM_EGRESS_ALLOW=plugins.qgis.org,gis.example.com \
+  -e QGIS_DESKTOP_EGRESS_ALLOW=plugins.qgis.org,gis.example.com \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 

@@ -35,14 +35,14 @@ flake pins nixpkgs and produces the image as a
 
 `config/oidc/oidc-config.sh` and `config/oidc/oidc-proxy.sh`
 : The single sign-on pathway, as two `writeShellApplication`s —
-  `kasm-oidc-config` (root; validates and materialises secrets) and
-  `kasm-oidc-proxy` (unprivileged; execs `oauth2-proxy`). Split so that only
+  `qgis-desktop-oidc-config` (root; validates and materialises secrets) and
+  `qgis-desktop-oidc-proxy` (unprivileged; execs `oauth2-proxy`). Split so that only
   the first needs root, and only the second is long-running.
 
 `config/lockdown/disable-terminal.sh`
 : The terminal lockdown, as a `writeShellApplication` called
-  `kasm-disable-terminal`. Its paths are overridable (`KASM_LOCKDOWN_BIN_DIR`,
-  `KASM_LOCKDOWN_HOME_ROOT`) purely so the test suite can drive it against a
+  `qgis-desktop-disable-terminal`. Its paths are overridable (`QGIS_DESKTOP_LOCKDOWN_BIN_DIR`,
+  `QGIS_DESKTOP_LOCKDOWN_HOME_ROOT`) purely so the test suite can drive it against a
   throwaway tree.
 
 `nix/epanet.nix` and `nix/swmm.nix`
@@ -61,7 +61,7 @@ flake pins nixpkgs and produces the image as a
   core (session, panel, terminal, desktop, wm, settings, xfconf, thunar),
   X11 essentials, dbus, shared-mime-info, icon themes, fonts, QGIS, and
   the egress-lockdown tooling (`nftables`, `setpriv`, `iproute2`,
-  `getent`), plus `startupScript` and `entrypointScript`. Since 1.5.0 it also
+  `getent`), plus `startupScript` and `entrypointScript`. Since 2.0.0 it also
   carries the EPA solvers, the `epa` tool, a CA bundle, and the OIDC scripts.
 
 `packages.qgis`

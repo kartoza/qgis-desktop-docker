@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# oauth2-proxy launcher for KASM_AUTH_MODE=oidc.
+# oauth2-proxy launcher for QGIS_DESKTOP_AUTH_MODE=oidc.
 #
 # Runs UNPRIVILEGED (uid 1000 by default, dropped by the entrypoint via
-# setpriv). It builds the flag list from the KASM_OIDC_* environment and execs
+# setpriv). It builds the flag list from the QGIS_DESKTOP_OIDC_* environment and execs
 # oauth2-proxy, which becomes the only listener on the published port:
 #
 #   browser ──▶ oauth2-proxy :8443 ──▶ Xkasmvnc 127.0.0.1:6901
 #                    │
 #                    └── OIDC authorization code flow against the IdP
 #
-# Secrets are NOT passed here — kasm-oidc-config wrote them to a 0400 config
+# Secrets are NOT passed here — qgis-desktop-oidc-config wrote them to a 0400 config
 # file that only this UID can read, and oauth2-proxy merges the two sources.
 #
 # The provider defaults to `keycloak-oidc`, which is Keycloak-aware (it can
 # filter on realm/client roles) but speaks plain OIDC discovery, so any
-# standards-compliant IdP works by pointing KASM_OIDC_ISSUER_URL at it. Set
-# KASM_OIDC_PROVIDER=oidc for a strictly generic provider.
+# standards-compliant IdP works by pointing QGIS_DESKTOP_OIDC_ISSUER_URL at it. Set
+# QGIS_DESKTOP_OIDC_PROVIDER=oidc for a strictly generic provider.
 
 set -euo pipefail
 
-RUNTIME_DIR="${KASM_OIDC_RUNTIME_DIR:-/run/kasm-oidc}"
+RUNTIME_DIR="${QGIS_DESKTOP_OIDC_RUNTIME_DIR:-/run/qgis-desktop/oidc}"
 SECRETS_FILE="${RUNTIME_DIR}/secrets.cfg"
 
 die() {
@@ -27,7 +27,7 @@ die() {
   exit 1
 }
 
-kasm_bool() {
+to_bool() {
   case "${1,,}" in
     1 | yes | true | on | enabled) echo true ;;
     *) echo false ;;
@@ -44,30 +44,30 @@ trim() {
 }
 
 [ -r "${SECRETS_FILE}" ] || die \
-  "${SECRETS_FILE} is missing or unreadable — kasm-oidc-config should have written it as root."
+  "${SECRETS_FILE} is missing or unreadable — qgis-desktop-oidc-config should have written it as root."
 
 # The listening port is the container's public one; the desktop has been moved
 # to a loopback-only port by the entrypoint.
-LISTEN_PORT="${KASM_OIDC_LISTEN_PORT:-${VNC_PORT:-8443}}"
-UPSTREAM_PORT="${KASM_OIDC_UPSTREAM_PORT:-6901}"
+LISTEN_PORT="${QGIS_DESKTOP_OIDC_LISTEN_PORT:-${VNC_PORT:-8443}}"
+UPSTREAM_PORT="${QGIS_DESKTOP_OIDC_UPSTREAM_PORT:-6901}"
 
-PROVIDER="${KASM_OIDC_PROVIDER:-keycloak-oidc}"
-SCOPE="${KASM_OIDC_SCOPE:-openid email profile}"
-EMAIL_DOMAINS="${KASM_OIDC_EMAIL_DOMAINS:-*}"
-EMAIL_CLAIM="${KASM_OIDC_EMAIL_CLAIM:-email}"
-COOKIE_EXPIRE="${KASM_OIDC_COOKIE_EXPIRE:-8h}"
-REVERSE_PROXY="$(kasm_bool "${KASM_OIDC_REVERSE_PROXY:-0}")"
-SKIP_TLS_VERIFY="$(kasm_bool "${KASM_OIDC_INSECURE_SKIP_VERIFY:-0}")"
+PROVIDER="${QGIS_DESKTOP_OIDC_PROVIDER:-keycloak-oidc}"
+SCOPE="${QGIS_DESKTOP_OIDC_SCOPE:-openid email profile}"
+EMAIL_DOMAINS="${QGIS_DESKTOP_OIDC_EMAIL_DOMAINS:-*}"
+EMAIL_CLAIM="${QGIS_DESKTOP_OIDC_EMAIL_CLAIM:-email}"
+COOKIE_EXPIRE="${QGIS_DESKTOP_OIDC_COOKIE_EXPIRE:-8h}"
+REVERSE_PROXY="$(to_bool "${QGIS_DESKTOP_OIDC_REVERSE_PROXY:-0}")"
+SKIP_TLS_VERIFY="$(to_bool "${QGIS_DESKTOP_OIDC_INSECURE_SKIP_VERIFY:-0}")"
 
 # Session cookies must be marked Secure whenever the browser reaches us over
 # HTTPS, and must NOT be when it reaches us over plain HTTP (the browser would
 # drop the cookie and the login would loop forever). Default from the scheme of
 # the redirect URL, which is by definition the browser-facing one.
-case "${KASM_OIDC_REDIRECT_URL:-}" in
+case "${QGIS_DESKTOP_OIDC_REDIRECT_URL:-}" in
   https://*) COOKIE_SECURE_DEFAULT=1 ;;
   *) COOKIE_SECURE_DEFAULT=0 ;;
 esac
-COOKIE_SECURE="$(kasm_bool "${KASM_OIDC_COOKIE_SECURE:-${COOKIE_SECURE_DEFAULT}}")"
+COOKIE_SECURE="$(to_bool "${QGIS_DESKTOP_OIDC_COOKIE_SECURE:-${COOKIE_SECURE_DEFAULT}}")"
 
 if [ "${COOKIE_SECURE}" = "false" ]; then
   echo "WARN: session cookies are not marked Secure because the browser reaches this" >&2
@@ -79,9 +79,9 @@ ARGS=(
   --config="${SECRETS_FILE}"
   --provider="${PROVIDER}"
   --provider-display-name="Single sign-on"
-  --oidc-issuer-url="${KASM_OIDC_ISSUER_URL}"
-  --client-id="${KASM_OIDC_CLIENT_ID}"
-  --redirect-url="${KASM_OIDC_REDIRECT_URL}"
+  --oidc-issuer-url="${QGIS_DESKTOP_OIDC_ISSUER_URL}"
+  --client-id="${QGIS_DESKTOP_OIDC_CLIENT_ID}"
+  --redirect-url="${QGIS_DESKTOP_OIDC_REDIRECT_URL}"
   --scope="${SCOPE}"
   --oidc-email-claim="${EMAIL_CLAIM}"
   --upstream="http://127.0.0.1:${UPSTREAM_PORT}/"
@@ -120,29 +120,29 @@ while IFS= read -r group; do
   group="$(trim "${group}")"
   [ -n "${group}" ] || continue
   ARGS+=(--allowed-group="${group}")
-done < <(printf '%s\n' "${KASM_OIDC_ALLOWED_GROUPS:-}" | tr ',' '\n')
+done < <(printf '%s\n' "${QGIS_DESKTOP_OIDC_ALLOWED_GROUPS:-}" | tr ',' '\n')
 
 # Realm/client roles are a Keycloak concept; the flag only exists on the
 # keycloak-oidc provider.
-if [ -n "${KASM_OIDC_ALLOWED_ROLES:-}" ]; then
+if [ -n "${QGIS_DESKTOP_OIDC_ALLOWED_ROLES:-}" ]; then
   if [ "${PROVIDER}" != "keycloak-oidc" ]; then
-    die "KASM_OIDC_ALLOWED_ROLES needs KASM_OIDC_PROVIDER=keycloak-oidc (got '${PROVIDER}')."
+    die "QGIS_DESKTOP_OIDC_ALLOWED_ROLES needs QGIS_DESKTOP_OIDC_PROVIDER=keycloak-oidc (got '${PROVIDER}')."
   fi
   while IFS= read -r role; do
     role="$(trim "${role}")"
     [ -n "${role}" ] || continue
     ARGS+=(--allowed-role="${role}")
-  done < <(printf '%s\n' "${KASM_OIDC_ALLOWED_ROLES}" | tr ',' '\n')
+  done < <(printf '%s\n' "${QGIS_DESKTOP_OIDC_ALLOWED_ROLES}" | tr ',' '\n')
 fi
 
 # --- Listener ---------------------------------------------------------------
-if [ -n "${KASM_OIDC_TLS_CERT_FILE:-}" ] || [ -n "${KASM_OIDC_TLS_KEY_FILE:-}" ]; then
-  [ -r "${KASM_OIDC_TLS_CERT_FILE:-}" ] || die "KASM_OIDC_TLS_CERT_FILE is unset or unreadable."
-  [ -r "${KASM_OIDC_TLS_KEY_FILE:-}" ] || die "KASM_OIDC_TLS_KEY_FILE is unset or unreadable."
+if [ -n "${QGIS_DESKTOP_OIDC_TLS_CERT_FILE:-}" ] || [ -n "${QGIS_DESKTOP_OIDC_TLS_KEY_FILE:-}" ]; then
+  [ -r "${QGIS_DESKTOP_OIDC_TLS_CERT_FILE:-}" ] || die "QGIS_DESKTOP_OIDC_TLS_CERT_FILE is unset or unreadable."
+  [ -r "${QGIS_DESKTOP_OIDC_TLS_KEY_FILE:-}" ] || die "QGIS_DESKTOP_OIDC_TLS_KEY_FILE is unset or unreadable."
   ARGS+=(
     --https-address="0.0.0.0:${LISTEN_PORT}"
-    --tls-cert-file="${KASM_OIDC_TLS_CERT_FILE}"
-    --tls-key-file="${KASM_OIDC_TLS_KEY_FILE}"
+    --tls-cert-file="${QGIS_DESKTOP_OIDC_TLS_CERT_FILE}"
+    --tls-key-file="${QGIS_DESKTOP_OIDC_TLS_KEY_FILE}"
     # oauth2-proxy always opens its HTTP listener; port 0 on loopback parks it
     # on an ephemeral port nothing outside the container can reach, which is
     # the portable way to say "TLS only".
@@ -155,10 +155,10 @@ else
 fi
 
 # Escape hatch for anything this wrapper does not model. Deliberately word-split.
-if [ -n "${KASM_OIDC_EXTRA_ARGS:-}" ]; then
-  read -r -a EXTRA_ARGS <<< "${KASM_OIDC_EXTRA_ARGS}"
+if [ -n "${QGIS_DESKTOP_OIDC_EXTRA_ARGS:-}" ]; then
+  read -r -a EXTRA_ARGS <<< "${QGIS_DESKTOP_OIDC_EXTRA_ARGS}"
   ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
-echo "OIDC proxy: provider=${PROVIDER} issuer=${KASM_OIDC_ISSUER_URL}"
+echo "OIDC proxy: provider=${PROVIDER} issuer=${QGIS_DESKTOP_OIDC_ISSUER_URL}"
 exec oauth2-proxy "${ARGS[@]}"

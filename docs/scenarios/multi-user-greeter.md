@@ -2,7 +2,7 @@
 
 A shared workstation that hosts several distinct users, each with their
 own home directory, each able to log out and hand the tab off to the
-next person without closing the browser. Uses `KASM_AUTH_MODE=greeter`.
+next person without closing the browser. Uses `QGIS_DESKTOP_AUTH_MODE=greeter`.
 
 ## Why this scenario
 
@@ -21,8 +21,8 @@ the greeter for the next user.
 
 ## Users
 
-Materialised at container start from `KASM_USERS`
-(or `KASM_USERS_FILE`). Each entry becomes a real Linux account with its
+Materialised at container start from `QGIS_DESKTOP_USERS`
+(or `QGIS_DESKTOP_USERS_FILE`). Each entry becomes a real Linux account with its
 own UID and `/home/<user>` directory. XFCE settings, QGIS projects, and
 downloads are stored per user under their home.
 
@@ -35,8 +35,8 @@ bob     → UID 1002, /home/bob
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=greeter \
-  -e KASM_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
+  -e QGIS_DESKTOP_AUTH_MODE=greeter \
+  -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -67,7 +67,7 @@ the LightDM greeter so bob can sign in on the same tab.
     ```
 
 - **Egress lockdown still enforced** — from a terminal inside the XFCE
-  session, `curl 8.8.8.8` should hang. Add `KASM_EGRESS_ALLOW` to open
+  session, `curl 8.8.8.8` should hang. Add `QGIS_DESKTOP_EGRESS_ALLOW` to open
   specific hosts.
 - **Clipboard controls apply as usual** — `KASM_ALLOW_CLIPBOARD_IN=1`
   etc. work with greeter mode, same as with basic.
@@ -88,7 +88,7 @@ the LightDM greeter so bob can sign in on the same tab.
 
 ## Single-user greeter
 
-Same mode, no `KASM_USERS`:
+Same mode, no `QGIS_DESKTOP_USERS`:
 
 ```bash
 nix run .#run-greeter

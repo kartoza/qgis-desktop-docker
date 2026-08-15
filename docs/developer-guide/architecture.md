@@ -3,12 +3,12 @@
 The container has one job: run QGIS in an XFCE desktop that a browser can
 reach over HTTP. Getting there involves a deliberate root-then-drop boot
 flow so the egress firewall can be enforced without letting the desktop
-tamper with it. Since 1.4.0 the boot path branches on `KASM_AUTH_MODE` —
+tamper with it. Since 1.4.0 the boot path branches on `QGIS_DESKTOP_AUTH_MODE` —
 `basic`/`none` follow the historical "start-desktop drops to uid 1000"
 route, and `greeter` keeps LightDM running as root inside the container
 so it can spawn each user session under its own UID.
 
-Since 1.5.0 there is a fourth mode, `oidc`, which is not a fifth boot path but
+Since 2.0.0 there is a fourth mode, `oidc`, which is not a fifth boot path but
 a *wrapper* around the others: an OIDC proxy takes over the published port, the
 desktop is rebound to loopback, and the boot then continues into whichever
 inner mode was asked for (`none` by default, or `greeter`).
@@ -19,13 +19,13 @@ inner mode was asked for (`none` by default, or `greeter`).
 graph TD
     PID1["PID 1: qgis-entrypoint (root)"]
     NFT["setup nftables egress filter<br/>policy drop + allowlist"]
-    MODE{"KASM_AUTH_MODE"}
+    MODE{"QGIS_DESKTOP_AUTH_MODE"}
     SETPRIV["setpriv --reuid=1000 --regid=1000<br/>--inh-caps=-all --ambient-caps=-all"]
     START["start-desktop (uid 1000)"]
     XKASM["Xkasmvnc<br/>X server + VNC + web"]
     DBUS["dbus-run-session"]
     XFCE["startxfce4"]
-    QGIS["QGIS 4.0"]
+    QGIS["QGIS<br/>LTR or latest"]
 
     PID1 --> NFT --> MODE
     MODE -->|"basic / none"| SETPRIV --> START
@@ -39,8 +39,8 @@ graph TD
 graph TD
     PID1["PID 1: qgis-entrypoint (root)"]
     NFT["setup nftables egress filter<br/>policy drop + allowlist"]
-    MODE{"KASM_AUTH_MODE"}
-    MATERIALISE["materialise /etc/passwd,<br/>/etc/group, /etc/shadow<br/>from KASM_USERS_*"]
+    MODE{"QGIS_DESKTOP_AUTH_MODE"}
+    MATERIALISE["materialise /etc/passwd,<br/>/etc/group, /etc/shadow<br/>from QGIS_DESKTOP_USERS_*"]
     DBUSSYS["dbus-daemon --system --fork"]
     LIGHTDM["lightdm --debug (still root)"]
     WRAPPER["/etc/lightdm/xkasmvnc-wrapper<br/>(pretends to be Xephyr)"]
@@ -49,7 +49,7 @@ graph TD
     PAM["pam_exec →<br/>/etc/lightdm/check-password"]
     XSESS["/etc/lightdm/Xsession<br/>(runs as authenticated user)"]
     XFCE["startxfce4"]
-    QGIS["QGIS 4.0"]
+    QGIS["QGIS<br/>LTR or latest"]
 
     PID1 --> NFT --> MODE
     MODE -->|"greeter"| MATERIALISE --> DBUSSYS --> LIGHTDM
@@ -64,13 +64,13 @@ graph TD
 ```mermaid
 graph TD
     PID1["PID 1: qgis-entrypoint (root)"]
-    RESOLVE["resolve KASM_AUTH_MODE<br/>+ add issuer host to allowlist"]
+    RESOLVE["resolve QGIS_DESKTOP_AUTH_MODE<br/>+ add issuer host to allowlist"]
     NFT["setup nftables egress filter<br/>policy drop + allowlist"]
-    CONFIG["kasm-oidc-config (root)<br/>writes /run/kasm-oidc/secrets.cfg 0400"]
-    LISTEN["write /run/kasm/listen.env<br/>VNC_PORT=6901, bind 127.0.0.1"]
-    PROXY["setpriv → kasm-oidc-proxy (uid 1000)<br/>oauth2-proxy on :8443"]
+    CONFIG["qgis-desktop-oidc-config (root)<br/>writes /run/qgis-desktop/oidc/secrets.cfg 0400"]
+    LISTEN["write /run/qgis-desktop/listen.env<br/>VNC_PORT=6901, bind 127.0.0.1"]
+    PROXY["setpriv → qgis-desktop-oidc-proxy (uid 1000)<br/>oauth2-proxy on :8443"]
     WATCH["watchdog: proxy exits → kill PID 1"]
-    INNER{"KASM_OIDC_INNER_MODE"}
+    INNER{"QGIS_DESKTOP_OIDC_INNER_MODE"}
     NONE["basic/none boot flow<br/>(Xkasmvnc on 127.0.0.1:6901)"]
     GREET["greeter boot flow<br/>(wrapper reads listen.env)"]
 
@@ -87,7 +87,7 @@ Two details are load-bearing:
   host has to be in the allowlist — the entrypoint appends it itself.
 - **The listener override is written to a file, not just exported.** LightDM
   spawns the X server with a scrubbed environment, so in `oidc` + `greeter` the
-  only channel that reaches `xkasmvnc-wrapper` is `/run/kasm/listen.env`. Both
+  only channel that reaches `xkasmvnc-wrapper` is `/run/qgis-desktop/listen.env`. Both
   launchers parse it key by key rather than sourcing it: it is written by root
   and read by an unprivileged process.
 
@@ -97,7 +97,7 @@ Two details are load-bearing:
 
 The `Cmd` set by the flake. It:
 
-- Reads `KASM_EGRESS_LOCKDOWN` and `KASM_EGRESS_ALLOW`.
+- Reads `QGIS_DESKTOP_EGRESS_LOCKDOWN` and `QGIS_DESKTOP_EGRESS_ALLOW`.
 - If lockdown is on: calls `nft list ruleset` to confirm `NET_ADMIN` is
   present; fails closed with a diagnostic if not.
 - Resolves every hostname in the allowlist via `getent ahostsv4` and
@@ -108,12 +108,12 @@ The `Cmd` set by the flake. It:
   (root:root, mode 1777 — XSMP socket dir XFCE's session manager needs),
   and `/tmp/runtime-user` (1000:1000, mode 700). Doing this as root before
   any privilege drop keeps Xkasmvnc and xfce4-session happy.
-- Reads `KASM_AUTH_MODE` (default `basic`) and dispatches:
+- Reads `QGIS_DESKTOP_AUTH_MODE` (default `basic`) and dispatches:
 
     * `basic` / `none` — [stage 2A](#stage-2a-basic-none) below.
     * `greeter` — [stage 2B](#stage-2b-greeter) below.
     * `oidc` — [stage 2C](#stage-2c-oidc) below, which then continues into
-      2A or 2B depending on `KASM_OIDC_INNER_MODE`.
+      2A or 2B depending on `QGIS_DESKTOP_OIDC_INNER_MODE`.
 
 ## Stage 2A — `basic` / `none`
 
@@ -126,7 +126,7 @@ The unprivileged desktop entrypoint (`start-desktop.sh`) then:
 
 - Normalises the `KASM_*` env vars, echoes the effective config, wipes any
   stale X lock or socket.
-- Populates `~/.kasmpasswd` from `KASM_USERS_FILE`, else `KASM_USERS`,
+- Populates `~/.kasmpasswd` from `QGIS_DESKTOP_USERS_FILE`, else `QGIS_DESKTOP_USERS`,
   else `VNC_USER`/`VNC_PW`. In `none` mode this step is skipped and
   Xkasmvnc gets `-DisableBasicAuth`.
 - Builds the DLP argv (`-AcceptCutText`, `-SendCutText`, `-SendPrimary`,
@@ -148,7 +148,7 @@ lifecycle to LightDM.
 - `/etc/passwd`, `/etc/group`, `/etc/shadow` are dereferenced into real
   writable files (they may have been read-only symlinks into the nix
   store).
-- For each entry in `KASM_USERS_FILE` / `KASM_USERS` / legacy
+- For each entry in `QGIS_DESKTOP_USERS_FILE` / `QGIS_DESKTOP_USERS` / legacy
   `VNC_USER`+`VNC_PW`, the entrypoint appends a `/etc/passwd` line with a
   fresh UID (starting at 1001) and creates `/home/<user>` with mode 0700.
 - The password is hashed with `openssl passwd -6` (sha512crypt) and
@@ -216,19 +216,19 @@ user. It:
 
 ## Stage 2C — `oidc`
 
-**`kasm-oidc-config` (root) → `setpriv` → `kasm-oidc-proxy` (uid 1000)**
+**`qgis-desktop-oidc-config` (root) → `setpriv` → `qgis-desktop-oidc-proxy` (uid 1000)**
 
 Before the desktop starts at all, the entrypoint:
 
-- Runs `kasm-oidc-config`, which validates the `KASM_OIDC_*` configuration,
+- Runs `qgis-desktop-oidc-config`, which validates the `QGIS_DESKTOP_OIDC_*` configuration,
   reads the client secret (from a file that may be root-only), generates a
   cookie secret if none was supplied, and writes both to
-  `/run/kasm-oidc/secrets.cfg` mode `0400` owned by UID 1000. A non-zero exit
+  `/run/qgis-desktop/oidc/secrets.cfg` mode `0400` owned by UID 1000. A non-zero exit
   is fatal — the container refuses to boot rather than serve unauthenticated.
-- Writes `/run/kasm/listen.env` with `VNC_PORT=6901` and
-  `KASM_BIND_INTERFACE=127.0.0.1`. Both KasmVNC launchers parse it (key by
+- Writes `/run/qgis-desktop/listen.env` with `VNC_PORT=6901` and
+  `QGIS_DESKTOP_BIND_INTERFACE=127.0.0.1`. Both KasmVNC launchers parse it (key by
   key, never sourced) so the desktop binds loopback only.
-- Starts `kasm-oidc-proxy` under `setpriv --reuid=1000 --inh-caps=-all
+- Starts `qgis-desktop-oidc-proxy` under `setpriv --reuid=1000 --inh-caps=-all
   --ambient-caps=-all`. It builds the oauth2-proxy flag list from the
   environment — everything except the secrets, which come from the config
   file — and execs it on the published port.
@@ -237,7 +237,7 @@ Before the desktop starts at all, the entrypoint:
   to PID 1 when it dies.
 
 Control then falls through to stage 2A or 2B for the desktop itself, with
-`KASM_AUTH_MODE` rewritten to the inner mode so `start-desktop.sh` sees a mode
+`QGIS_DESKTOP_AUTH_MODE` rewritten to the inner mode so `start-desktop.sh` sees a mode
 it knows.
 
 ## XFCE + QGIS

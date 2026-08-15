@@ -17,17 +17,17 @@ qgis-desktop-docker/
 │   │   ├── panel/default.xml
 │   │   └── xfconf/xfce-perchannel-xml/xfce4-desktop.xml
 │   │
-│   ├── lightdm/                # LightDM greeter mode (KASM_AUTH_MODE=greeter)
+│   ├── lightdm/                # LightDM greeter mode (QGIS_DESKTOP_AUTH_MODE=greeter)
 │   │   ├── lightdm-gtk-greeter.conf   # Kartoza-branded greeter theme
 │   │   ├── xkasmvnc-wrapper.sh        # X-server shim that starts Xkasmvnc
 │   │   ├── check-password.sh          # pam_exec verifier (sha512crypt)
 │   │   └── xfce.desktop               # Session .desktop entry lightdm reads
 │   │
-│   ├── oidc/                   # Single sign-on mode (KASM_AUTH_MODE=oidc)
+│   ├── oidc/                   # Single sign-on mode (QGIS_DESKTOP_AUTH_MODE=oidc)
 │   │   ├── oidc-config.sh      # Root: validates config, writes 0400 secrets file
 │   │   └── oidc-proxy.sh       # Unprivileged: builds flags, execs oauth2-proxy
 │   │
-│   └── lockdown/               # KASM_ALLOW_TERMINAL=0
+│   └── lockdown/               # QGIS_DESKTOP_ALLOW_TERMINAL=0
 │       └── disable-terminal.sh # Root: deletes terminals, strips launcher/menu
 │
 │   # lightdm.conf and Xsession are generated inline in flake.nix so
@@ -50,7 +50,7 @@ qgis-desktop-docker/
 ├── scripts/
 │   ├── epa.sh                  # Wires the Giswater plugin to the native solvers
 │   ├── test-oidc-config.sh     # Unit tests for the OIDC plumbing
-│   ├── test-terminal-lockdown.sh # Unit tests for KASM_ALLOW_TERMINAL=0
+│   ├── test-terminal-lockdown.sh # Unit tests for QGIS_DESKTOP_ALLOW_TERMINAL=0
 │   ├── sbom_table.py           # SBOM JSON to markdown table
 │   └── cve_table.py            # Grype CVE JSON to markdown table
 │

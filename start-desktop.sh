@@ -13,28 +13,28 @@ VNC_PW="${VNC_PW:-password}"
 DISPLAY_NUM="${DISPLAY#:}"
 
 # Interface the web endpoint binds to. 0.0.0.0 normally; the root entrypoint
-# pins it to 127.0.0.1 in KASM_AUTH_MODE=oidc so the only reachable listener is
+# pins it to 127.0.0.1 in QGIS_DESKTOP_AUTH_MODE=oidc so the only reachable listener is
 # the OIDC proxy in front of us.
-KASM_BIND_INTERFACE="${KASM_BIND_INTERFACE:-0.0.0.0}"
+QGIS_DESKTOP_BIND_INTERFACE="${QGIS_DESKTOP_BIND_INTERFACE:-0.0.0.0}"
 
 # The entrypoint writes the listener override here as well as into the
 # environment: LightDM scrubs the environment before spawning the X server, so
 # the greeter path can only be reached through a file. Parsed key by key rather
 # than sourced — this file is written by root and read by an unprivileged
 # process, and sourcing it would make it an arbitrary-code channel.
-KASM_LISTEN_ENV="${KASM_LISTEN_ENV:-/run/kasm/listen.env}"
-if [ -r "${KASM_LISTEN_ENV}" ]; then
+QGIS_DESKTOP_LISTEN_ENV="${QGIS_DESKTOP_LISTEN_ENV:-/run/qgis-desktop/listen.env}"
+if [ -r "${QGIS_DESKTOP_LISTEN_ENV}" ]; then
   while IFS='=' read -r _key _value; do
     case "${_key}" in
       VNC_PORT) VNC_PORT="${_value}" ;;
-      KASM_BIND_INTERFACE) KASM_BIND_INTERFACE="${_value}" ;;
+      QGIS_DESKTOP_BIND_INTERFACE) QGIS_DESKTOP_BIND_INTERFACE="${_value}" ;;
       *) : ;;
     esac
-  done < "${KASM_LISTEN_ENV}"
+  done < "${QGIS_DESKTOP_LISTEN_ENV}"
 fi
 
 # Kasm permission controls (secure-by-default).
-# See README.md ("Kasm permission controls") for the full matrix.
+# See README.md ("Permission controls") for the full matrix.
 # Clipboard is OFF in both directions unless explicitly enabled.
 KASM_ALLOW_CLIPBOARD_IN="${KASM_ALLOW_CLIPBOARD_IN:-0}"    # paste local → container
 KASM_ALLOW_CLIPBOARD_OUT="${KASM_ALLOW_CLIPBOARD_OUT:-0}"  # copy container → local
@@ -46,57 +46,55 @@ KASM_CLIPBOARD_MIME_TYPES="${KASM_CLIPBOARD_MIME_TYPES:-}" # comma-sep MIME allo
 KASM_WATERMARK_TEXT="${KASM_WATERMARK_TEXT:-}"             # empty = no watermark
 KASM_DLP_LOG="${KASM_DLP_LOG:-off}"                        # off | info | verbose
 
-# Authentication controls (four modes as of 1.5.0; legacy KASM_AUTH still honoured).
-#   KASM_AUTH_MODE=basic (default) — HTTP BasicAuth on the web endpoint + VncAuth on RFB.
-#   KASM_AUTH_MODE=none            — no auth (dev only; never expose to the network).
-#   KASM_AUTH_MODE=greeter         — handled by the root entrypoint; start-desktop
+# Authentication controls (four modes as of 2.0.0).
+#   QGIS_DESKTOP_AUTH_MODE=basic (default) — HTTP BasicAuth on the web endpoint + VncAuth on RFB.
+#   QGIS_DESKTOP_AUTH_MODE=none            — no auth (dev only; never expose to the network).
+#   QGIS_DESKTOP_AUTH_MODE=greeter         — handled by the root entrypoint; start-desktop
 #                                     is not invoked in that mode.
-#   KASM_AUTH_MODE=oidc            — also handled by the root entrypoint, which
+#   QGIS_DESKTOP_AUTH_MODE=oidc            — also handled by the root entrypoint, which
 #                                     starts the OIDC proxy and then invokes us
 #                                     with the inner mode (none or greeter).
-# Credentials come from (in order): KASM_USERS_FILE if readable, else KASM_USERS
+# Credentials come from (in order): QGIS_DESKTOP_USERS_FILE if readable, else QGIS_DESKTOP_USERS
 # env var, else legacy single-user VNC_USER / VNC_PW.
-#   KASM_USERS_FILE — path to a file with one 'user:password' per line, '#' comments.
-#   KASM_USERS      — inline 'user1:pw1,user2:pw2' (comma or newline separated).
-KASM_AUTH_MODE="${KASM_AUTH_MODE:-}"
-case "${KASM_AUTH_MODE,,}" in
-  none)    KASM_AUTH="0" ;;
-  basic)   KASM_AUTH="1" ;;
+#   QGIS_DESKTOP_USERS_FILE — path to a file with one 'user:password' per line, '#' comments.
+#   QGIS_DESKTOP_USERS      — inline 'user1:pw1,user2:pw2' (comma or newline separated).
+QGIS_DESKTOP_AUTH_MODE="${QGIS_DESKTOP_AUTH_MODE:-basic}"
+case "${QGIS_DESKTOP_AUTH_MODE,,}" in
+  none)    AUTH_ENABLED="0" ;;
+  basic)   AUTH_ENABLED="1" ;;
   greeter)
-    echo "ERROR: start-desktop invoked with KASM_AUTH_MODE=greeter — the root" >&2
+    echo "ERROR: start-desktop invoked with QGIS_DESKTOP_AUTH_MODE=greeter — the root" >&2
     echo "       entrypoint should have execed lightdm instead." >&2
     exit 1
     ;;
   oidc|keycloak)
-    echo "ERROR: start-desktop invoked with KASM_AUTH_MODE=oidc — the root" >&2
+    echo "ERROR: start-desktop invoked with QGIS_DESKTOP_AUTH_MODE=oidc — the root" >&2
     echo "       entrypoint resolves that to an inner mode (none or greeter)" >&2
     echo "       before handing over. Never invoke this script directly in" >&2
     echo "       oidc mode: the desktop would come up without the proxy." >&2
     exit 1
     ;;
-  "")      : ;;  # No mode override — fall back to legacy KASM_AUTH.
   *)
-    echo "ERROR: KASM_AUTH_MODE='${KASM_AUTH_MODE}' is not one of none|basic|greeter|oidc." >&2
+    echo "ERROR: QGIS_DESKTOP_AUTH_MODE='${QGIS_DESKTOP_AUTH_MODE}' is not one of none|basic|greeter|oidc." >&2
     exit 1
     ;;
 esac
-KASM_AUTH="${KASM_AUTH:-1}"
-KASM_USERS_FILE="${KASM_USERS_FILE:-/etc/kasmvnc/users}"
-KASM_USERS="${KASM_USERS:-}"
+QGIS_DESKTOP_USERS_FILE="${QGIS_DESKTOP_USERS_FILE:-/etc/qgis-desktop/users}"
+QGIS_DESKTOP_USERS="${QGIS_DESKTOP_USERS:-}"
 
 export DISPLAY
 
 # Normalise 1/yes/true/on to "1", anything else to "0".
-kasm_bool() {
+to_bool() {
   case "${1,,}" in
     1|yes|true|on|enabled) echo 1 ;;
     *) echo 0 ;;
   esac
 }
 
-CLIP_IN=$(kasm_bool "${KASM_ALLOW_CLIPBOARD_IN}")
-CLIP_OUT=$(kasm_bool "${KASM_ALLOW_CLIPBOARD_OUT}")
-CLIP_PRIMARY=$(kasm_bool "${KASM_ALLOW_PRIMARY_SELECTION}")
+CLIP_IN=$(to_bool "${KASM_ALLOW_CLIPBOARD_IN}")
+CLIP_OUT=$(to_bool "${KASM_ALLOW_CLIPBOARD_OUT}")
+CLIP_PRIMARY=$(to_bool "${KASM_ALLOW_PRIMARY_SELECTION}")
 
 case "${KASM_DLP_LOG,,}" in
   off|info|verbose) DLP_LOG="${KASM_DLP_LOG,,}" ;;
@@ -107,9 +105,12 @@ case "${KASM_DLP_LOG,,}" in
 esac
 
 echo "=== Starting XFCE Desktop with KasmVNC ==="
+# Baked in at build time by the flake, one value per image. Says which QGIS
+# is inside without having to start it.
+echo "QGIS:       ${QGIS_DESKTOP_QGIS_VERSION:-unknown} (${QGIS_DESKTOP_QGIS_CHANNEL:-unknown} channel)"
 echo "Display:    ${DISPLAY}"
 echo "Resolution: ${VNC_RESOLUTION}"
-echo "Web port:   ${KASM_BIND_INTERFACE}:${VNC_PORT}"
+echo "Web port:   ${QGIS_DESKTOP_BIND_INTERFACE}:${VNC_PORT}"
 echo "Clipboard:  in=${CLIP_IN} out=${CLIP_OUT} primary=${CLIP_PRIMARY} delay=${KASM_CLIPBOARD_DELAY_MS}ms"
 echo "DLP:        log=${DLP_LOG} watermark=$([ -n "${KASM_WATERMARK_TEXT}" ] && echo on || echo off)"
 
@@ -125,17 +126,17 @@ export XDG_RUNTIME_DIR=/tmp/runtime-user
 # and Xkasmvnc refuses to start with "Server is already active for display N".
 rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}"
 
-AUTH_ENABLED=$(kasm_bool "${KASM_AUTH}")
-KASM_AUTH_ARGS=()
+
+AUTH_ARGS=()
 
 if [ "${AUTH_ENABLED}" = "1" ]; then
   # Resolve credentials source: file wins, then env, then legacy single-user.
-  if [ -r "${KASM_USERS_FILE}" ]; then
-    USER_LINES="$(grep -vE '^\s*(#|$)' "${KASM_USERS_FILE}" || true)"
-    CRED_SOURCE="file ${KASM_USERS_FILE}"
-  elif [ -n "${KASM_USERS}" ]; then
-    USER_LINES="$(printf '%s\n' "${KASM_USERS}" | tr ',' '\n' | sed '/^\s*$/d')"
-    CRED_SOURCE="KASM_USERS env"
+  if [ -r "${QGIS_DESKTOP_USERS_FILE}" ]; then
+    USER_LINES="$(grep -vE '^\s*(#|$)' "${QGIS_DESKTOP_USERS_FILE}" || true)"
+    CRED_SOURCE="file ${QGIS_DESKTOP_USERS_FILE}"
+  elif [ -n "${QGIS_DESKTOP_USERS}" ]; then
+    USER_LINES="$(printf '%s\n' "${QGIS_DESKTOP_USERS}" | tr ',' '\n' | sed '/^\s*$/d')"
+    CRED_SOURCE="QGIS_DESKTOP_USERS env"
   else
     USER_LINES="${VNC_USER}:${VNC_PW}"
     CRED_SOURCE="legacy VNC_USER/VNC_PW"
@@ -162,15 +163,15 @@ if [ "${AUTH_ENABLED}" = "1" ]; then
   done <<< "${USER_LINES}"
 
   if [ "${user_count}" -eq 0 ]; then
-    echo "ERROR: KASM_AUTH=1 but no valid users could be loaded from ${CRED_SOURCE}."
-    echo "Set KASM_AUTH=0 (dev only) or supply KASM_USERS / KASM_USERS_FILE / VNC_USER+VNC_PW."
+    echo "ERROR: QGIS_DESKTOP_AUTH_MODE=basic but no valid users could be loaded from ${CRED_SOURCE}."
+    echo "Set QGIS_DESKTOP_AUTH_MODE=none (dev only) or supply QGIS_DESKTOP_USERS / QGIS_DESKTOP_USERS_FILE / VNC_USER+VNC_PW."
     exit 1
   fi
   echo "Auth:       ENABLED — ${user_count} user(s) loaded from ${CRED_SOURCE}"
 else
   # No BasicAuth on HTTP, no VncAuth on RFB. Do not expose this on the network.
-  KASM_AUTH_ARGS=(-DisableBasicAuth)
-  echo "Auth:       DISABLED (KASM_AUTH=${KASM_AUTH}) — do not expose this port to untrusted networks."
+  AUTH_ARGS=(-DisableBasicAuth)
+  echo "Auth:       DISABLED (QGIS_DESKTOP_AUTH_MODE=none) — do not expose this port to untrusted networks."
 fi
 
 # Generate Xauthority
@@ -247,9 +248,9 @@ if [ -n "${KASM_WATERMARK_TEXT}" ]; then
   # Xkasmvnc's watermark renderer only does strftime — it does NOT expand
   # shell-style ${USER} references (that's the perl kasmvncserver wrapper's
   # job, and we bypass it). Do the substitution ourselves. Preference order:
-  # first user in KASM_USERS → VNC_USER → OS $USER.
-  if [ -n "${KASM_USERS}" ]; then
-    WATERMARK_USER="$(printf '%s' "${KASM_USERS}" | cut -d, -f1 | cut -d: -f1)"
+  # first user in QGIS_DESKTOP_USERS → VNC_USER → OS $USER.
+  if [ -n "${QGIS_DESKTOP_USERS}" ]; then
+    WATERMARK_USER="$(printf '%s' "${QGIS_DESKTOP_USERS}" | cut -d, -f1 | cut -d: -f1)"
   elif [ -n "${VNC_USER:-}" ]; then
     WATERMARK_USER="${VNC_USER}"
   else
@@ -265,8 +266,8 @@ fi
 # require a legacy ~/.vnc/passwd file in DES-encoded TigerVNC format, which
 # kasmvncpasswd does not produce; the browser would then hit
 #   "no password configured for VNC auth"
-# after the BasicAuth prompt succeeded. When KASM_AUTH=0, BasicAuth is
-# disabled via -DisableBasicAuth in KASM_AUTH_ARGS so the container is fully
+# after the BasicAuth prompt succeeded. In QGIS_DESKTOP_AUTH_MODE=none, BasicAuth is
+# disabled via -DisableBasicAuth in AUTH_ARGS so the container is fully
 # open (dev only).
 SECURITY_TYPES="None"
 
@@ -276,7 +277,7 @@ Xkasmvnc "${DISPLAY}" \
   -geometry "${VNC_RESOLUTION}" \
   -depth "${VNC_COL_DEPTH}" \
   -websocketPort "${VNC_PORT}" \
-  -interface "${KASM_BIND_INTERFACE}" \
+  -interface "${QGIS_DESKTOP_BIND_INTERFACE}" \
   -SecurityTypes "${SECURITY_TYPES}" \
   -RawKeyboard \
   -AlwaysShared \
@@ -285,7 +286,7 @@ Xkasmvnc "${DISPLAY}" \
   -nopn \
   -publicIP 127.0.0.1 \
   -xkbdir "${XKB_BASE_DIR:-/dev/null}" \
-  "${KASM_AUTH_ARGS[@]}" \
+  "${AUTH_ARGS[@]}" \
   "${KASM_DLP_ARGS[@]}" \
   +extension GLX \
   +extension RANDR \
@@ -326,11 +327,11 @@ export DE_PID
 echo ""
 echo "============================================"
 echo "  Desktop is ready!"
-if [ "${KASM_BIND_INTERFACE}" = "0.0.0.0" ]; then
+if [ "${QGIS_DESKTOP_BIND_INTERFACE}" = "0.0.0.0" ]; then
   echo "  Open: http://localhost:${VNC_PORT}"
 else
-  echo "  Bound to ${KASM_BIND_INTERFACE}:${VNC_PORT} behind the OIDC proxy."
-  echo "  Open: http://localhost:${KASM_OIDC_LISTEN_PORT:-8443}"
+  echo "  Bound to ${QGIS_DESKTOP_BIND_INTERFACE}:${VNC_PORT} behind the OIDC proxy."
+  echo "  Open: http://localhost:${QGIS_DESKTOP_OIDC_LISTEN_PORT:-8443}"
 fi
 echo "============================================"
 echo ""

@@ -33,7 +33,7 @@ services:
 
       # Authentication — bob is the only user for this session.
       # Passwords may contain colons; only the first ':' is the separator.
-      - KASM_USERS=bob:password123
+      - QGIS_DESKTOP_USERS=bob:password123
 
       # Clipboard fully blocked in both directions, plus X primary selection.
       - KASM_ALLOW_CLIPBOARD_IN=0
@@ -41,7 +41,7 @@ services:
       - KASM_ALLOW_PRIMARY_SELECTION=0
 
       # Per-session watermark. start-desktop.sh expands ${USER} to the first
-      # KASM_USERS entry (falls back to VNC_USER, then $USER). strftime tokens
+      # QGIS_DESKTOP_USERS entry (falls back to VNC_USER, then $USER). strftime tokens
       # like %H:%M are handled by Xkasmvnc's watermark renderer. Stay in ASCII
       # for the separator — the default watermark font doesn't have U+2014 (—)
       # and would render tofu.
@@ -56,13 +56,13 @@ services:
       # panel launcher, the applications menu, Ctrl-Alt-T and Thunar's
       # "Open Terminal Here" all lead nowhere. Bob gets QGIS, not a prompt.
       # Not a sandbox: QGIS's Python console can still start subprocesses.
-      - KASM_ALLOW_TERMINAL=0
+      - QGIS_DESKTOP_ALLOW_TERMINAL=0
 
       # Egress lockdown: only the co-located `db` service is reachable.
       # Hostname is resolved once at container start against the Docker
       # embedded resolver, so it picks up whatever IP `db` has on `analyst-net`.
-      - KASM_EGRESS_LOCKDOWN=1
-      - KASM_EGRESS_ALLOW=db
+      - QGIS_DESKTOP_EGRESS_LOCKDOWN=1
+      - QGIS_DESKTOP_EGRESS_ALLOW=db
     networks:
       - analyst-net
     volumes:

@@ -16,13 +16,13 @@ BasicAuth dialog; those credentials are reused transparently for the VNC
 handshake so you only see one prompt.
 
 !!! tip "Prefer an in-desktop login form?"
-    Set `-e KASM_AUTH_MODE=greeter` on `docker run` to boot with a
+    Set `-e QGIS_DESKTOP_AUTH_MODE=greeter` on `docker run` to boot with a
     LightDM greeter inside the desktop instead of the browser's Basic
     Auth dialog. Wrong password re-prompts in place — no browser tab to
     close, no cache to clear.
 
 !!! tip "Single sign-on?"
-    Set `-e KASM_AUTH_MODE=oidc` plus the `KASM_OIDC_*` variables to put
+    Set `-e QGIS_DESKTOP_AUTH_MODE=oidc` plus the `QGIS_DESKTOP_OIDC_*` variables to put
     Keycloak (or any OIDC provider) in front of the desktop. See
     [Authentication](../configuration/authentication.md) for every mode and
     variable.
@@ -30,9 +30,9 @@ handshake so you only see one prompt.
 !!! warning "NET_ADMIN is required"
     The container starts an nftables egress firewall as its first act. It
     needs `--cap-add=NET_ADMIN` to install the rules. Without it, and with
-    the default `KASM_EGRESS_LOCKDOWN=1`, the container **fails closed**
+    the default `QGIS_DESKTOP_EGRESS_LOCKDOWN=1`, the container **fails closed**
     and exits with a diagnostic. If you deliberately want unrestricted
-    networking, set `-e KASM_EGRESS_LOCKDOWN=0` — but only for local dev.
+    networking, set `-e QGIS_DESKTOP_EGRESS_LOCKDOWN=0` — but only for local dev.
 
 ## Using Docker Compose
 
@@ -71,7 +71,7 @@ Common overrides via `-e`:
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e VNC_RESOLUTION=1920x1080 \
-  -e KASM_USERS='alice:pw1,bob:pw2' \
+  -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 

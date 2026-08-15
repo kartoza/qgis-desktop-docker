@@ -1,4 +1,4 @@
-# Kasm permissions
+# Permissions
 
 KasmVNC's data-loss-prevention knobs are wired to environment variables.
 Defaults are **restrictive** — clipboard sharing is disabled in both
@@ -20,7 +20,7 @@ else counts as off.
 | `KASM_CLIPBOARD_MIME_TYPES` | *(kasm default)* | `-DLP_ClipTypes` | Comma-separated MIME allowlist, e.g. `text/plain,text/html`. |
 | `KASM_WATERMARK_TEXT` | *(none)* | `-DLP_WatermarkText` | Overlay text on the desktop as a screenshot deterrent. |
 | `KASM_DLP_LOG` | `off` | `-DLP_Log` | `off`, `info`, or `verbose`. |
-| `KASM_ALLOW_TERMINAL` | `1` | *(not a Kasm flag)* | `0` removes the terminal emulators from the container. See [Terminal access](#terminal-access). |
+| `QGIS_DESKTOP_ALLOW_TERMINAL` | `1` | *(not a Kasm flag)* | `0` removes the terminal emulators from the container. See [Terminal access](#terminal-access). |
 
 !!! danger "verbose DLP log captures keystrokes"
     `KASM_DLP_LOG=verbose` writes **KEYSTROKES AND CLIPBOARD CONTENT** to
@@ -32,9 +32,9 @@ else counts as off.
 `KASM_WATERMARK_TEXT` supports two kinds of substitution:
 
 - `${USER}` and `$USER` are expanded by `start-desktop.sh` before Xkasmvnc
-  sees them, using the first `KASM_USERS` entry, else `VNC_USER`, else the
+  sees them, using the first `QGIS_DESKTOP_USERS` entry, else `VNC_USER`, else the
   OS `$USER`. So `RESTRICTED - ${USER}` becomes `RESTRICTED - bob` when
-  `KASM_USERS=bob:...` is set.
+  `QGIS_DESKTOP_USERS=bob:...` is set.
 - strftime tokens (`%H:%M`, `%Y-%m-%d`, etc.) are expanded by KasmVNC at
   render time.
 
@@ -82,7 +82,7 @@ use a mapping application and nothing else:
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_ALLOW_TERMINAL=0 \
+  -e QGIS_DESKTOP_ALLOW_TERMINAL=0 \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -112,7 +112,7 @@ container and reversible by restarting without it.
     scripting console in it.
 
 !!! tip "Combine it"
-    `KASM_ALLOW_TERMINAL=0` composes with everything else — it is what the
+    `QGIS_DESKTOP_ALLOW_TERMINAL=0` composes with everything else — it is what the
     [analyst locked-down scenario](../scenarios/analyst-locked-down.md) uses on
     top of clipboard blocking, the watermark and the egress allowlist.
 

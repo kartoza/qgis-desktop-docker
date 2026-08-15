@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Kartoza
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Single sign-on demo for KASM_AUTH_MODE=oidc: a throwaway Keycloak with a
+# Single sign-on demo for QGIS_DESKTOP_AUTH_MODE=oidc: a throwaway Keycloak with a
 # pre-imported realm, and the QGIS desktop behind an OIDC proxy that trusts it.
 #
 #   nix run .#run-keycloak-demo        (or: docker compose up from this folder)
@@ -66,32 +66,32 @@ services:
     ports:
       - "8443:8443"
     # Needed for the nftables egress filter. The entrypoint adds the issuer's
-    # host to the allowlist by itself, which is why KASM_EGRESS_ALLOW can stay
+    # host to the allowlist by itself, which is why QGIS_DESKTOP_EGRESS_ALLOW can stay
     # empty here and the desktop still reaches nothing but Keycloak.
     cap_add:
       - NET_ADMIN
     secrets:
       - oidc-client-secret
     environment:
-      - KASM_AUTH_MODE=oidc
+      - QGIS_DESKTOP_AUTH_MODE=oidc
       # Any OIDC provider works here — this is the only line that points the
       # container at a particular identity provider.
-      - KASM_OIDC_ISSUER_URL=http://keycloak:8080/realms/qgis
-      - KASM_OIDC_CLIENT_ID=qgis-desktop
+      - QGIS_DESKTOP_OIDC_ISSUER_URL=http://keycloak:8080/realms/qgis
+      - QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop
       # Read from a file rather than an env var, so the secret never shows up
       # in `docker inspect`.
-      - KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
+      - QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
       # Where Keycloak sends the browser back to. Must be registered on the
       # client in the realm (it is, in realm-export.json).
-      - KASM_OIDC_REDIRECT_URL=http://keycloak:8443/oauth2/callback
+      - QGIS_DESKTOP_OIDC_REDIRECT_URL=http://keycloak:8443/oauth2/callback
       # Only realm members holding this role may in. Drop the line to let any
       # account in the realm through.
-      - KASM_OIDC_ALLOWED_ROLES=qgis-user
+      - QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user
       # Demo realm users have no verified email domain worth filtering on.
-      - KASM_OIDC_EMAIL_DOMAINS=*
+      - QGIS_DESKTOP_OIDC_EMAIL_DOMAINS=*
       # Shared desktop behind SSO. Set to `greeter` to additionally give each
       # user their own Linux session inside the container.
-      - KASM_OIDC_INNER_MODE=none
+      - QGIS_DESKTOP_OIDC_INNER_MODE=none
       - VNC_RESOLUTION=1600x900
     volumes:
       - qgis-home:/home/user

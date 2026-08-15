@@ -2,7 +2,7 @@
 
 A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) inside a minimal XFCE desktop, accessible from any web browser via [KasmVNC](https://kasmweb.com). No VNC client needed -- just open a URL.
 
-![QGIS 4.0](https://img.shields.io/badge/QGIS-4.0-green?logo=qgis)
+![QGIS LTR](https://img.shields.io/badge/QGIS-3.44%20LTR%20%7C%204.0-green?logo=qgis)
 ![KasmVNC 1.4](https://img.shields.io/badge/KasmVNC-1.4-blue)
 ![Built with Nix](https://img.shields.io/badge/Built%20with-Nix-5277C3?logo=nixos)
 ![License](https://img.shields.io/badge/License-GPL--2.0-orange)
@@ -14,6 +14,7 @@ A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) 
 - **Fully reproducible** -- the entire image is defined declaratively in a Nix flake
 - **Persistent workspaces** -- mount a volume to keep your QGIS projects, plugins, and settings across restarts
 - **Minimal footprint** -- only the packages needed to run QGIS and the desktop environment
+- **LTR or latest QGIS** -- the long-term release by default, the current release as a second image so you can test against the next LTR before it lands
 - **Four ways to log in** -- no auth, HTTP Basic Auth, an in-desktop LightDM greeter, or Keycloak/OIDC single sign-on
 - **Giswater-ready** -- the EPANET and SWMM solvers, the Python packages the plugin imports, and the wiring that makes Giswater find them on Linux
 - **SBOM & CVE scanning** -- every build produces a Software Bill of Materials and vulnerability scan
@@ -109,17 +110,70 @@ volumes:
   qgis-home:
 ```
 
+## QGIS version
+
+Two images are built from the same source. The only difference is which QGIS
+is inside.
+
+| Tag | QGIS | Use it for |
+|-----|------|------------|
+| `:latest`, `:ltr` | **3.44.9 LTR** *(default)* | Production. The LTR line only takes bug fixes, so a project that opens today opens the same way next month. |
+| `:qgis-latest` | **4.0.1** (current release) | Testing your projects, plugins and data against what becomes the next LTR — before it becomes the next LTR. |
+
+```bash
+# The default
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:latest
+
+# Same container, current QGIS
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:qgis-latest
+```
+
+Building either from source:
+
+```bash
+nix run .#build-docker               # QGIS LTR   -> nix-xfce-kasm:ltr (+ :latest)
+nix run .#build-docker-qgis-latest   # QGIS latest -> nix-xfce-kasm:qgis-latest
+```
+
+Every other feature — auth modes, egress lockdown, terminal lockdown, Giswater
+wiring — is identical across both, so a project that works on one and not the
+other is a QGIS change worth reporting upstream while it can still be fixed.
+
+The running container tells you which it is: the boot log opens with a `QGIS:`
+line, and `QGIS_DESKTOP_QGIS_CHANNEL` / `QGIS_DESKTOP_QGIS_VERSION` are set
+inside. Without starting it:
+
+```bash
+docker image inspect ghcr.io/kartoza/qgis-desktop-docker:latest \
+  --format '{{index .Config.Labels "com.kartoza.qgis.version"}}'
+```
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VNC_PORT` | `8443` | Port for the KasmVNC web interface |
+| `QGIS_DESKTOP_QGIS_CHANNEL` | *(baked in)* | `ltr` or `latest` — which image you are running. Read-only; pick the image tag instead. |
+| `QGIS_DESKTOP_QGIS_VERSION` | *(baked in)* | The QGIS version inside the image. Read-only. |
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution (resizable in browser) |
 | `VNC_COL_DEPTH` | `24` | Color depth (16, 24, or 32) |
 | `VNC_PW` | `password` | VNC password (basic auth is disabled by default) |
 | `DISPLAY` | `:1` | X display number |
 
-## Kasm permission controls
+### What the prefixes mean
+
+| Prefix | Meaning |
+|--------|---------|
+| `QGIS_DESKTOP_` | This project's own behaviour — which authentication pathway runs, who may sign in, what the container may talk to, whether there is a terminal. |
+| `KASM_` | A setting that maps straight onto a KasmVNC flag: the clipboard, watermark and DLP controls. |
+| `VNC_` | The session itself — port, resolution, colour depth, legacy single-user credentials. |
+
+Before 2.0.0 everything wore the `KASM_` prefix, which implied KasmVNC provided
+features it has nothing to do with. **The old names are no longer read**: the
+container refuses to start and names the replacement for each one. See
+[Migrating from 1.x](docs/configuration/index.md#migrating-from-1x).
+
+## Permission controls
 
 The container ships with KasmVNC's data-loss-prevention knobs wired to environment
 variables. Defaults are **restrictive** — clipboard sharing is disabled in both
@@ -135,9 +189,9 @@ directions until you explicitly enable it. Boolean values accept
 | `KASM_CLIPBOARD_OUT_MAX` | `0` | `-DLP_ClipSendMax` | Max bytes sent per copy; `0` = unlimited |
 | `KASM_CLIPBOARD_DELAY_MS` | `0` | `-DLP_ClipDelay` | Minimum ms between clipboard operations (anti-spam) |
 | `KASM_CLIPBOARD_MIME_TYPES` | *(kasm default)* | `-DLP_ClipTypes` | Comma-separated MIME allowlist, e.g. `text/plain,text/html` |
-| `KASM_WATERMARK_TEXT` | *(none)* | `-DLP_WatermarkText` | Overlay text on the desktop as a screenshot deterrent. `${USER}` / `$USER` is expanded by `start-desktop.sh` to the first `KASM_USERS` entry (or `VNC_USER`). strftime tokens (`%H:%M` etc.) are expanded by KasmVNC at render time. Stick to ASCII — the default watermark font lacks glyphs like em dash (U+2014). |
+| `KASM_WATERMARK_TEXT` | *(none)* | `-DLP_WatermarkText` | Overlay text on the desktop as a screenshot deterrent. `${USER}` / `$USER` is expanded by `start-desktop.sh` to the first `QGIS_DESKTOP_USERS` entry (or `VNC_USER`). strftime tokens (`%H:%M` etc.) are expanded by KasmVNC at render time. Stick to ASCII — the default watermark font lacks glyphs like em dash (U+2014). |
 | `KASM_DLP_LOG` | `off` | `-DLP_Log` | `off`, `info`, or `verbose`. **`verbose` logs KEYSTROKES AND CLIPBOARD CONTENT to the server log** |
-| `KASM_ALLOW_TERMINAL` | `1` | *(not a Kasm flag)* | `0` deletes the terminal emulators and the command-runner dialogs from the container at boot, and strips the launcher and menu entries. Closes the panel launcher, the applications menu, Ctrl-Alt-T and Thunar's "Open Terminal Here". **Not a sandbox** — QGIS's Python console can still start subprocesses; see [docs](docs/configuration/kasm-permissions.md#terminal-access). |
+| `QGIS_DESKTOP_ALLOW_TERMINAL` | `1` | *(not a Kasm flag)* | `0` deletes the terminal emulators and the command-runner dialogs from the container at boot, and strips the launcher and menu entries. Closes the panel launcher, the applications menu, Ctrl-Alt-T and Thunar's "Open Terminal Here". **Not a sandbox** — QGIS's Python console can still start subprocesses; see [docs](docs/configuration/permissions.md#terminal-access). |
 
 ### Examples
 
@@ -185,7 +239,7 @@ a root entrypoint installs nftables rules that allow only:
 - loopback traffic,
 - return traffic for connections the container initiated (`ct state established,related`),
 - DNS to Docker's embedded resolver (`127.0.0.11`) and any nameserver in `/etc/resolv.conf`,
-- the hosts you name in `KASM_EGRESS_ALLOW`.
+- the hosts you name in `QGIS_DESKTOP_EGRESS_ALLOW`.
 
 Everything else outbound is dropped. Once the rules are installed, the
 entrypoint drops all inheritable/ambient capabilities and switches to UID
@@ -193,8 +247,8 @@ entrypoint drops all inheritable/ambient capabilities and switches to UID
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_EGRESS_LOCKDOWN` | `1` | `0` disables the filter entirely (**dev only**) |
-| `KASM_EGRESS_ALLOW` | *(empty)* | Comma-separated allowlist: IPv4 addresses, CIDRs, and/or hostnames (resolved once at startup) |
+| `QGIS_DESKTOP_EGRESS_LOCKDOWN` | `1` | `0` disables the filter entirely (**dev only**) |
+| `QGIS_DESKTOP_EGRESS_ALLOW` | *(empty)* | Comma-separated allowlist: IPv4 addresses, CIDRs, and/or hostnames (resolved once at startup) |
 
 ### Required capability
 
@@ -212,15 +266,15 @@ services:
       - NET_ADMIN
 ```
 
-If `NET_ADMIN` is missing and `KASM_EGRESS_LOCKDOWN=1` (the default) the
+If `NET_ADMIN` is missing and `QGIS_DESKTOP_EGRESS_LOCKDOWN=1` (the default) the
 container **fails closed** — it prints a diagnostic and exits. Set
-`KASM_EGRESS_LOCKDOWN=0` to opt out.
+`QGIS_DESKTOP_EGRESS_LOCKDOWN=0` to opt out.
 
 ### Example: only the postgres database reachable
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_EGRESS_ALLOW='db.internal,10.0.0.0/24' \
+  -e QGIS_DESKTOP_EGRESS_ALLOW='db.internal,10.0.0.0/24' \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -291,7 +345,7 @@ Worked-example deployments combining several of the knobs above:
 graph LR
     Browser["Web Browser"] -->|HTTP :8443| KasmVNC["KasmVNC<br/>(Xkasmvnc)"]
     KasmVNC -->|X11 :1| XFCE["XFCE Desktop"]
-    XFCE --> QGIS["QGIS 4.0"]
+    XFCE --> QGIS["QGIS<br/>LTR or latest"]
     XFCE --> Thunar["Thunar<br/>File Manager"]
     XFCE --> Terminal["XFCE Terminal"]
 
@@ -358,7 +412,7 @@ make compose-down    # Stop docker-compose
 nix run .#build-docker      # Build the Docker image
 nix run .#run               # Run the container
 nix run .#run-greeter       # LightDM greeter login
-nix run .#run-oidc          # Keycloak/OIDC SSO (reads KASM_OIDC_* from your env)
+nix run .#run-oidc          # Keycloak/OIDC SSO (reads QGIS_DESKTOP_OIDC_* from your env)
 nix run .#run-keycloak-demo # Throwaway Keycloak + SSO desktop
 nix run .#test              # Run the test suite (no Docker needed)
 nix run .#summary           # Generate build summary
@@ -435,7 +489,7 @@ Both are attached to every release and available as artifacts on every PR build.
 
 ### Authentication
 
-The container offers four auth pathways selected by `KASM_AUTH_MODE`
+The container offers four auth pathways selected by `QGIS_DESKTOP_AUTH_MODE`
 (default: `basic`):
 
 | Mode | What the user sees | When to use |
@@ -445,29 +499,30 @@ The container offers four auth pathways selected by `KASM_AUTH_MODE`
 | `oidc` | Your identity provider's login page | Single sign-on against Keycloak (or any OIDC provider): central accounts, MFA, role-based access. |
 | `none` | No prompt — desktop appears immediately | Local dev only. Never expose to any untrusted network. |
 
-Legacy `KASM_AUTH=0` still forces `none` for backwards compatibility.
+The `KASM_*` names these settings used before 2.0.0 are no longer read — the
+container refuses to start and names the replacement. See
+[Migrating from 1.x](docs/configuration/index.md#migrating-from-1x).
 
 `basic`, `greeter` and `none` read credentials from the same sources (first
 wins); `oidc` gets its accounts from the identity provider instead:
 
-1. `KASM_USERS_FILE` — path to a file containing `user:password` per line;
-   default `/etc/kasmvnc/users`. `#` comments and blank lines ignored.
+1. `QGIS_DESKTOP_USERS_FILE` — path to a file containing `user:password` per line;
+   default `/etc/qgis-desktop/users`. `#` comments and blank lines ignored.
    Mount with mode `0600`.
-2. `KASM_USERS` — inline `alice:pw1,bob:pw2` list.
+2. `QGIS_DESKTOP_USERS` — inline `alice:pw1,bob:pw2` list.
 3. Legacy `VNC_USER` / `VNC_PW` — single user, defaults to `user` / `password`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` \| `oidc` |
-| `KASM_AUTH` | *(unset)* | Legacy: `0` forces `none`. |
-| `KASM_USERS_FILE` | `/etc/kasmvnc/users` | Bind-mount target for a `user:password` file |
-| `KASM_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list |
-| `KASM_OIDC_ISSUER_URL` | *(none)* | Required in `oidc` mode: the realm/issuer URL |
-| `KASM_OIDC_CLIENT_ID` | *(none)* | Required in `oidc` mode |
-| `KASM_OIDC_CLIENT_SECRET_FILE` | *(none)* | Required in `oidc` mode (or `KASM_OIDC_CLIENT_SECRET`) |
-| `KASM_OIDC_REDIRECT_URL` | *(none)* | Required in `oidc` mode: public URL + `/oauth2/callback` |
+| `QGIS_DESKTOP_AUTH_MODE` | `basic` | `none` \| `basic` \| `greeter` \| `oidc` |
+| `QGIS_DESKTOP_USERS_FILE` | `/etc/qgis-desktop/users` | Bind-mount target for a `user:password` file |
+| `QGIS_DESKTOP_USERS` | *(none)* | Inline `user1:pw1,user2:pw2` list |
+| `QGIS_DESKTOP_OIDC_ISSUER_URL` | *(none)* | Required in `oidc` mode: the realm/issuer URL |
+| `QGIS_DESKTOP_OIDC_CLIENT_ID` | *(none)* | Required in `oidc` mode |
+| `QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE` | *(none)* | Required in `oidc` mode (or `QGIS_DESKTOP_OIDC_CLIENT_SECRET`) |
+| `QGIS_DESKTOP_OIDC_REDIRECT_URL` | *(none)* | Required in `oidc` mode: public URL + `/oauth2/callback` |
 
-The full `KASM_OIDC_*` table is in
+The full `QGIS_DESKTOP_OIDC_*` table is in
 [docs/configuration/authentication.md](docs/configuration/authentication.md).
 
 **Basic (default), multi-user via file:**
@@ -479,7 +534,7 @@ bob:correct-horse-battery-staple
 EOF
 chmod 600 users
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -v "$PWD/users:/etc/kasmvnc/users:ro" \
+  -v "$PWD/users:/etc/qgis-desktop/users:ro" \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -487,7 +542,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=greeter \
+  -e QGIS_DESKTOP_AUTH_MODE=greeter \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 # Log in as user / password. Wrong password re-prompts in place —
 # no browser tab to close, no cache to clear.
@@ -497,12 +552,12 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_AUTH_MODE=oidc \
-  -e KASM_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
-  -e KASM_OIDC_CLIENT_ID=qgis-desktop \
-  -e KASM_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
-  -e KASM_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
-  -e KASM_OIDC_ALLOWED_ROLES=qgis-user \
+  -e QGIS_DESKTOP_AUTH_MODE=oidc \
+  -e QGIS_DESKTOP_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+  -e QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop \
+  -e QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
+  -e QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
   -v /path/to/secret:/run/secrets/oidc:ro \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
@@ -515,7 +570,7 @@ with `nix run .#run-keycloak-demo`.
 **Disable auth for local dev only:**
 
 ```bash
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN -e KASM_AUTH_MODE=none \
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN -e QGIS_DESKTOP_AUTH_MODE=none \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -525,7 +580,7 @@ Notes:
   dialog — unstyled and hard to re-prompt after a failed login (browsers
   cache the credentials for the tab). `greeter` runs LightDM inside the
   X session, so failures and logouts return to a proper login form.
-- **`oidc` composes.** `KASM_OIDC_INNER_MODE=greeter` requires single sign-on
+- **`oidc` composes.** `QGIS_DESKTOP_OIDC_INNER_MODE=greeter` requires single sign-on
   at the edge *and* gives each user their own Linux session inside.
 - **Privileges.** `basic`, `none` and `oidc` run the desktop as UID 1000 after
   the root entrypoint drops privileges — the OIDC proxy runs unprivileged too.
@@ -536,7 +591,7 @@ Notes:
   the proxy's UID — never visible in `ps` or `docker inspect`.
 - **Custom brand or another SSO stack.** Front the container with your own
   reverse proxy (nginx, Traefik, Caddy + `basic_auth`, …) and set
-  `KASM_AUTH_MODE=none` — but only when that proxy is the sole route in.
+  `QGIS_DESKTOP_AUTH_MODE=none` — but only when that proxy is the sole route in.
 
 ## License
 
