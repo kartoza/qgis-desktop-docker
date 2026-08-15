@@ -122,6 +122,21 @@
             ])}"
         '';
 
+        # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
+        # Restore/save the home directory against object storage. Runs as root
+        # so the credentials stay unreadable by the desktop user, and so the
+        # restore can write into a home owned by uid 1000.
+        persistScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-persist";
+          runtimeInputs = with pkgs; [
+            rclone
+            coreutils # timeout, numfmt, date, chown
+            gnused
+            hostname
+          ];
+          text = builtins.readFile ./config/persist/persist.sh;
+        };
+
         # --- Terminal lockdown (QGIS_DESKTOP_ALLOW_TERMINAL=0) ------------------
         disableTerminalScript = pkgs.writeShellApplication {
           name = "qgis-desktop-disable-terminal";
@@ -312,6 +327,7 @@
             oidcConfigScript      # qgis-desktop-oidc-config (root: validates + writes secrets)
             oidcProxyScript       # qgis-desktop-oidc-proxy  (uid 1000: runs oauth2-proxy)
             disableTerminalScript # qgis-desktop-disable-terminal (root: QGIS_DESKTOP_ALLOW_TERMINAL=0)
+            persistScript         # qgis-desktop-persist (root: home restore/save)
           ];
           text = builtins.readFile ./entrypoint.sh;
         };
@@ -393,6 +409,10 @@
 
             # Terminal lockdown (QGIS_DESKTOP_ALLOW_TERMINAL=0).
             disableTerminalScript
+
+            # Home persistence (QGIS_DESKTOP_PERSIST=1). rclone arrives through
+            # the wrapper; it is not on the desktop user's PATH.
+            persistScript
 
             # Greeter mode (QGIS_DESKTOP_AUTH_MODE=greeter): LightDM + GTK greeter.
             # Kept out of the runtime path when mode != greeter, so basic /
@@ -702,6 +722,10 @@ DBUSEOF
               # Terminal access. Set to 0 to remove the terminal emulators and
               # command-runner dialogs from the desktop entirely.
               "QGIS_DESKTOP_ALLOW_TERMINAL=1"
+              # Home-directory persistence against object storage. Off unless
+              # configured; see docs/configuration/persistence.md.
+              "QGIS_DESKTOP_PERSIST=0"
+              "QGIS_DESKTOP_PERSIST_INTERVAL=300"
               # Where the desktop listens when the OIDC proxy is in front of
               # it. Only consulted in QGIS_DESKTOP_AUTH_MODE=oidc.
               "QGIS_DESKTOP_OIDC_UPSTREAM_PORT=6901"
@@ -1183,6 +1207,7 @@ DBUSEOF
                 nix run .#test-oidc         Unit-test the OIDC plumbing
                 nix run .#test-terminal-lockdown   Unit-test the terminal lockdown
                 nix run .#test-renamed-variables   Unit-test the 2.0.0 rename guard
+                nix run .#test-persist      Unit-test home persistence
 
               Manage
                 nix run .#stop              Stop and remove the qgis-desktop container
@@ -1232,6 +1257,20 @@ DBUSEOF
             }}/bin/test-terminal-lockdown";
           };
 
+          # Unit tests for home persistence, driven against a local rclone
+          # remote — the whole restore/save/guard cycle without S3.
+          test-persist = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-persist";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep findutils rclone ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-persist.sh
+              '';
+            }}/bin/test-persist";
+          };
+
           # Unit tests for the 2.0.0 rename guard: every legacy KASM_* name is
           # refused, and KasmVNC's own settings are left alone.
           test-renamed-variables = {
@@ -1251,7 +1290,9 @@ DBUSEOF
             type = "app";
             program = "${pkgs.writeShellApplication {
               name = "test";
-              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk oauth2-proxy ];
+              runtimeInputs = with pkgs; [
+                bash coreutils gnused gnugrep gawk findutils oauth2-proxy rclone
+              ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 rc=0
@@ -1260,6 +1301,8 @@ DBUSEOF
                 bash ${self}/scripts/test-terminal-lockdown.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-renamed-variables.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-persist.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
@@ -1360,6 +1403,7 @@ DBUSEOF
               "$DOCS_DIR/configuration/authentication.md"
               "$DOCS_DIR/configuration/egress-lockdown.md"
               "$DOCS_DIR/configuration/giswater.md"
+              "$DOCS_DIR/configuration/persistence.md"
               "$DOCS_DIR/scenarios/index.md"
               "$DOCS_DIR/scenarios/analyst-locked-down.md"
               "$DOCS_DIR/scenarios/multi-user-greeter.md"

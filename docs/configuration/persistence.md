@@ -1,0 +1,230 @@
+# Home persistence
+
+One user, one container. The home directory is an ordinary local filesystem,
+and object storage holds the durable copy: restored before the desktop starts,
+saved on an interval and again on the way down. Delete the container, start a
+new one against the same bucket prefix, and the user's projects, plugins and
+QGIS profile are there.
+
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e QGIS_DESKTOP_PERSIST=1 \
+  -e QGIS_DESKTOP_PERSIST_ENDPOINT=https://fsn1.your-objectstorage.com \
+  -e QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes \
+  -e QGIS_DESKTOP_PERSIST_PREFIX=alice-9c1f4e2a \
+  -e QGIS_DESKTOP_PERSIST_ACCESS_KEY_FILE=/run/secrets/s3-key \
+  -e QGIS_DESKTOP_PERSIST_SECRET_KEY_FILE=/run/secrets/s3-secret \
+  -e QGIS_DESKTOP_PERSIST_QUOTA=5G \
+  -v /etc/qgis-desktop/s3-key:/run/secrets/s3-key:ro \
+  -v /etc/qgis-desktop/s3-secret:/run/secrets/s3-secret:ro \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+## Why a sync and not a mount
+
+S3 is not a filesystem. A QGIS profile is SQLite — `qgis.db`,
+`symbology-style.db` — and so is every GeoPackage. SQLite needs POSIX locking
+and atomic partial writes; object-storage FUSE drivers generally provide
+neither, and the failure mode is a corrupted profile rather than an error
+message. Mounting object storage as `$HOME` trades a bounded, visible risk
+(losing the last few minutes of work) for an unbounded, invisible one.
+
+So the desktop always writes to a real filesystem, and the bucket only ever
+sees whole files that are already at rest.
+
+!!! warning "The trade-off, stated plainly"
+    Work done since the last save is lost if the container dies without
+    warning. That window is `QGIS_DESKTOP_PERSIST_INTERVAL` wide — five minutes
+    by default. A clean shutdown (`docker stop`, a Kubernetes eviction, a user
+    logging out) always saves first.
+
+## Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QGIS_DESKTOP_PERSIST` | `0` | `1` turns persistence on. |
+| `QGIS_DESKTOP_PERSIST_TYPE` | `s3` | `s3` for any S3-compatible store, or `local` to sync to a mounted directory (a PVC, an NFS export). |
+| `QGIS_DESKTOP_PERSIST_BUCKET` | *(required)* | Bucket name, or an absolute path when type is `local`. |
+| `QGIS_DESKTOP_PERSIST_PREFIX` | *(required)* | Per-user prefix inside the bucket, e.g. `alice-9c1f4e2a`. Must be relative and must not contain `..`. |
+| `QGIS_DESKTOP_PERSIST_ENDPOINT` | *(none)* | Endpoint URL. Required for MinIO, DigitalOcean and Hetzner; its host is added to the egress allowlist automatically. |
+| `QGIS_DESKTOP_PERSIST_PROVIDER` | `Other` | rclone's S3 provider name — `Minio`, `DigitalOcean`, `Other`. Affects only provider quirks. |
+| `QGIS_DESKTOP_PERSIST_REGION` | `us-east-1` | Region. |
+| `QGIS_DESKTOP_PERSIST_ACCESS_KEY` | *(required)* | Access key. Prefer the `_FILE` form. |
+| `QGIS_DESKTOP_PERSIST_ACCESS_KEY_FILE` | *(none)* | Path to a file holding the access key. |
+| `QGIS_DESKTOP_PERSIST_SECRET_KEY` / `_FILE` | *(required)* | Secret key, same pattern. |
+| `QGIS_DESKTOP_PERSIST_SESSION_TOKEN` / `_FILE` | *(none)* | For short-lived STS credentials. |
+| `QGIS_DESKTOP_PERSIST_INTERVAL` | `300` | Seconds between saves. |
+| `QGIS_DESKTOP_PERSIST_QUOTA` | *(none)* | e.g. `5G`. Over it, saving stops and the user is told. |
+| `QGIS_DESKTOP_PERSIST_EXCLUDE` | *(none)* | Comma-separated extra exclude patterns. |
+| `QGIS_DESKTOP_PERSIST_TRASH` | `1` | Keep replaced and deleted objects under `.persist-trash/<timestamp>/`. |
+| `QGIS_DESKTOP_PERSIST_LEASE` | `1` | Refuse to start if another container is writing this prefix. |
+| `QGIS_DESKTOP_PERSIST_LEASE_TTL` | `900` | Seconds before a lease from a dead container is considered stale. |
+| `QGIS_DESKTOP_PERSIST_OWNER` | *(hostname)* | Lease identity. See [Kubernetes](#kubernetes) below. |
+| `QGIS_DESKTOP_PERSIST_SHRINK_GUARD` | `50` | Refuse to save if the file count dropped below this percentage of the last save. `0` disables. |
+| `QGIS_DESKTOP_PERSIST_REQUIRED` | `1` | `1` means a failed restore stops the container instead of serving an empty home. |
+| `QGIS_DESKTOP_PERSIST_FLUSH_TIMEOUT` | `25` | Seconds allowed for the final save. Keep it below the shutdown grace period. |
+| `QGIS_DESKTOP_PERSIST_HOME` | `/home/user` | What to persist. |
+
+## What is not saved
+
+Caches, session scaffolding and secrets are excluded — they are recreated at
+boot and would only slow the restore down:
+
+`.cache/**` · `.local/share/Trash/**` · `.local/share/xorg/**` · `.dbus/**` ·
+`.vnc/**` · `.Xauthority` · `.ICEauthority` · **`.kasmpasswd`**
+
+`.kasmpasswd` holds password hashes and is rebuilt from the credential source
+on every boot. It has no business in a bucket.
+
+## Safeguards
+
+The failure this feature has to avoid is not "the save didn't happen" — it is
+"the save happened, and replaced good data with bad". Five guards exist for
+that:
+
+| Guard | What it stops |
+|-------|---------------|
+| **Restore sentinel** | A container that failed to restore never saves. Without this, one bad boot replaces a full home directory with an empty one. |
+| **Fail closed on restore** | `QGIS_DESKTOP_PERSIST_REQUIRED=1` stops the container rather than presenting an empty home the user would mistake for their own. |
+| **Shrink guard** | A home that lost most of its files is not mirrored. A broken volume mount looks exactly like "the user deleted everything". |
+| **Trash** | Replaced and deleted objects move to `.persist-trash/<timestamp>/` instead of vanishing, so a bad save is recoverable without provider-side versioning. |
+| **Single-writer lease** | Two containers on one prefix means whichever saves last wins and the other's work is gone. The second one refuses to start. |
+
+Recovering something from the trash:
+
+```bash
+rclone --config … copy remote:qgis-homes/alice-9c1f4e2a/.persist-trash/20260815T080512Z/projects/city.qgs ./
+```
+
+Turn on bucket versioning as well if your provider supports it. The trash is a
+client-side safety net that works everywhere; versioning is the real one.
+
+## Kubernetes
+
+This is the environment the guards were written for — pods are deleted and
+recreated without ceremony.
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet          # not a Deployment: see the lease note below
+spec:
+  replicas: 1
+  template:
+    spec:
+      terminationGracePeriodSeconds: 60   # must exceed FLUSH_TIMEOUT
+      containers:
+        - name: qgis-desktop
+          image: ghcr.io/kartoza/qgis-desktop-docker:latest
+          env:
+            - name: QGIS_DESKTOP_PERSIST
+              value: "1"
+            - name: QGIS_DESKTOP_PERSIST_SECRET_KEY_FILE
+              value: /run/secrets/s3/secret
+          volumeMounts:
+            - name: home              # a real volume, so a restart that keeps
+              mountPath: /home/user   # the node does not re-download anything
+            - name: s3-credentials
+              mountPath: /run/secrets/s3
+              readOnly: true
+      volumes:
+        - name: home
+          emptyDir:
+            sizeLimit: 5Gi
+        - name: s3-credentials
+          secret:
+            secretName: qgis-desktop-s3
+            defaultMode: 0400
+```
+
+Three things matter here:
+
+- **`terminationGracePeriodSeconds` must exceed `QGIS_DESKTOP_PERSIST_FLUSH_TIMEOUT`.**
+  Kubernetes sends `SIGTERM`, waits, then `SIGKILL`s. The container stays PID 1
+  precisely to catch that `SIGTERM` and run a last save; too short a grace
+  period and the save is cut off. A `SIGKILL` with no warning falls back to the
+  last periodic save.
+- **StatefulSet, not Deployment.** The lease is keyed on the hostname, and a
+  StatefulSet pod keeps its name across restarts — so a recreated pod reclaims
+  its own lease immediately, while a genuinely concurrent second pod is still
+  refused. On a Deployment every pod gets a new name, so set
+  `QGIS_DESKTOP_PERSIST_OWNER` to something stable instead.
+- **Give `/home/user` a real volume.** The sync is for surviving the *node*, not
+  the process. A volume that outlives the container makes restarts instant, and
+  `sizeLimit` gives the quota something to mean.
+
+## Quota
+
+`QGIS_DESKTOP_PERSIST_QUOTA` is enforced client-side: usage is measured before
+each save, and over the limit the save is skipped and a
+`PERSISTENCE-WARNING.txt` appears in the user's home directory saying — in
+those words — that nothing is being saved. It clears itself once usage drops.
+
+!!! note "`df` inside the desktop does not show this"
+    The desktop's `df` reports the container filesystem, because that is what
+    the home directory actually is. Object stores have no per-prefix quota to
+    report:
+    [MinIO's quotas are per bucket](https://github.com/minio/minio/discussions/14467),
+    and DigitalOcean and Hetzner have none at all. If you want the number in
+    `df` to mean something, size the volume behind `/home/user` to match the
+    quota — then the filesystem enforces it and reports it, and this setting is
+    just the backstop that keeps the bucket from growing past it.
+
+## One bucket, many prefixes
+
+Use a single bucket with one prefix per user, not a bucket per user:
+[DigitalOcean](https://docs.digitalocean.com/products/spaces/details/limits/)
+and [Hetzner](https://docs.hetzner.com/storage/object-storage/faq/buckets-objects/)
+both cap an account at 100 buckets. A `<username>-<uuid>` prefix also means a
+recreated account never inherits the previous holder's data.
+
+Scope each container's credentials to its own prefix, server-side — an IAM
+policy on `arn:aws:s3:::qgis-homes/alice-9c1f4e2a/*`, ideally short-lived STS
+credentials via `QGIS_DESKTOP_PERSIST_SESSION_TOKEN`. The container never
+validates its own prefix boundary and should not be trusted to.
+
+## How the credentials are kept from the user
+
+The desktop user has a Python console in QGIS: assume they can run anything as
+uid 1000 and read anything that uid can read.
+
+- The sync runs as **root**, and writes the rclone configuration to
+  `/run/qgis-desktop/persist/rclone.conf` mode `0400`, root-owned. uid 1000
+  cannot read it.
+- The credentials are **removed from the environment** before the desktop
+  starts, so `/proc/self/environ` in the session does not carry them.
+- `rclone` is not on the desktop user's `PATH`, and the persistence command
+  cannot be usefully run by uid 1000 — its state directory is root-only.
+- The restore is the only moment root writes into the home directory, and it
+  happens before any user process exists. Every later transfer reads locally
+  and writes remotely, with symlinks skipped rather than followed.
+
+!!! danger "Use the `_FILE` variables"
+    `-e QGIS_DESKTOP_PERSIST_SECRET_KEY=…` puts the secret in the container's
+    configuration, where `docker inspect` and `kubectl describe` will show it
+    to anyone who can reach the daemon or the API. The `_FILE` form reads it
+    from a mount instead — root-owned `0400`. The value never enters the
+    environment at all.
+
+## Checking on it
+
+```bash
+docker exec <container> qgis-desktop-persist status
+```
+
+```text
+Persistence: enabled
+  type:      s3
+  remote:    persist:qgis-homes/alice-9c1f4e2a/home
+  endpoint:  http://minio:9000
+  local:     /home/user
+  interval:  300s
+  quota:     5G
+  trash:     on
+  lease:     on (900s)
+  restored:  2026-08-15T08:05:12Z
+  usage:     130K in 38 file(s)
+```
+
+`qgis-desktop-persist push` forces a save; `qgis-desktop-persist release
+--force` clears a lease left behind by a container that is definitely gone.
+Both must be run as root — `docker exec` without `-u` already is.

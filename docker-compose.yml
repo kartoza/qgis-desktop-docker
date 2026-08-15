@@ -48,6 +48,25 @@ services:
       # - QGIS_DESKTOP_OIDC_ALLOWED_GROUPS=/gis-users
       # Give each SSO user their own Linux session inside the container.
       # - QGIS_DESKTOP_OIDC_INNER_MODE=greeter
+      # --- Home persistence (one user, one container) -----------------------
+      # Restores /home/user from object storage before the desktop starts, saves
+      # it on an interval and again on shutdown. It is a sync, not a mount: QGIS
+      # profiles and GeoPackages are SQLite, which object-storage FUSE drivers
+      # corrupt. See docs/configuration/persistence.md.
+      # - QGIS_DESKTOP_PERSIST=1
+      # - QGIS_DESKTOP_PERSIST_ENDPOINT=https://fsn1.your-objectstorage.com
+      # - QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes
+      # One prefix per user; a UUID suffix stops a recreated account inheriting
+      # the previous holder's data.
+      # - QGIS_DESKTOP_PERSIST_PREFIX=alice-9c1f4e2a
+      # Prefer the _FILE forms: an env var is visible to `docker inspect`.
+      # - QGIS_DESKTOP_PERSIST_ACCESS_KEY_FILE=/run/secrets/s3-key
+      # - QGIS_DESKTOP_PERSIST_SECRET_KEY_FILE=/run/secrets/s3-secret
+      # Seconds between saves — this is also how much work a hard kill costs.
+      # - QGIS_DESKTOP_PERSIST_INTERVAL=300
+      # Enforced client-side; size the volume below to match if you want `df`
+      # inside the desktop to agree.
+      # - QGIS_DESKTOP_PERSIST_QUOTA=5G
       # --- Kasm permission controls (secure-by-default) ---
       # Clipboard is OFF in both directions unless explicitly enabled.
       # Set to 1 (or yes/true/on) to allow.

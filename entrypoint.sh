@@ -122,6 +122,32 @@ if [ -z "${QGIS_DESKTOP_USERS_FILE:-}" ] &&
   exit 1
 fi
 
+# Take every secret out of the environment.
+#
+# The desktop is started from this process, so it inherits this environment —
+# and a user with QGIS's Python console can read their own /proc/self/environ.
+# Anything left here is readable by the person we are trying to keep it from.
+# Each of these has already been consumed by the time this runs: written into a
+# root-owned config file, or hashed into ~/.kasmpasswd.
+#
+# The _FILE variants are deliberately kept: a path is not a secret, and the
+# services re-read them as root. Mount those files so uid 1000 cannot read
+# them — root-owned 0400 is the intent.
+# NOT scrubbed: QGIS_DESKTOP_USERS and VNC_PW. start-desktop.sh reads them
+# after the privilege drop, to build ~/.kasmpasswd — removing them here would
+# break `basic` auth. With one user per container that leaks a user their own
+# password, which is no leak at all. Put several accounts in
+# QGIS_DESKTOP_USERS and each can read the others', so use `greeter` (LightDM
+# scrubs the environment before spawning a session) or `oidc` for that.
+scrub_secrets() {
+  unset \
+    QGIS_DESKTOP_PERSIST_ACCESS_KEY \
+    QGIS_DESKTOP_PERSIST_SECRET_KEY \
+    QGIS_DESKTOP_PERSIST_SESSION_TOKEN \
+    QGIS_DESKTOP_OIDC_CLIENT_SECRET \
+    QGIS_DESKTOP_OIDC_COOKIE_SECRET
+}
+
 # Return 0 if the given token looks like an IPv4 address or CIDR (very loose).
 is_ipv4_or_cidr() {
   [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]]
@@ -330,6 +356,19 @@ if [ "${QGIS_DESKTOP_AUTH_MODE}" = "oidc" ]; then
   fi
 fi
 
+# Home persistence needs the object store reachable through the egress filter,
+# for the same reason: the transfer is server-side, not in the user's browser.
+QGIS_DESKTOP_PERSIST="${QGIS_DESKTOP_PERSIST:-0}"
+PERSIST_ACTIVE=0
+if [ "$(to_bool "${QGIS_DESKTOP_PERSIST}")" = "1" ] &&
+  [ -n "${QGIS_DESKTOP_PERSIST_ENDPOINT:-}" ]; then
+  PERSIST_HOST="$(url_host "${QGIS_DESKTOP_PERSIST_ENDPOINT}")"
+  if [ -n "${PERSIST_HOST}" ]; then
+    QGIS_DESKTOP_EGRESS_ALLOW="${QGIS_DESKTOP_EGRESS_ALLOW:+${QGIS_DESKTOP_EGRESS_ALLOW},}${PERSIST_HOST}"
+    echo "Egress: adding object store '${PERSIST_HOST}' to the allowlist"
+  fi
+fi
+
 if [ "${LOCKDOWN}" = "1" ]; then
   setup_egress_lockdown
 else
@@ -360,6 +399,74 @@ mkdir -p /tmp/runtime-user
 chown 1000:1000 /tmp/runtime-user
 chmod 700 /tmp/runtime-user
 
+# --- Home persistence -------------------------------------------------------
+# The home directory is a local filesystem; object storage holds the durable
+# copy. Restore it BEFORE the desktop starts — this is the only moment root
+# writes into the home directory, and no user process exists yet to plant a
+# symlink in the way.
+if [ "$(to_bool "${QGIS_DESKTOP_PERSIST}")" = "1" ]; then
+  if qgis-desktop-persist restore; then
+    PERSIST_ACTIVE=1
+  elif [ "$(to_bool "${QGIS_DESKTOP_PERSIST_REQUIRED:-1}")" = "1" ]; then
+    echo "FATAL: home persistence is enabled but the restore failed." >&2
+    echo "       Refusing to start a desktop with an empty home directory that the" >&2
+    echo "       user would take for their own. Nothing has been written to the" >&2
+    echo "       bucket. Set QGIS_DESKTOP_PERSIST_REQUIRED=0 to start anyway." >&2
+    exit 1
+  else
+    echo "WARN: restore failed and QGIS_DESKTOP_PERSIST_REQUIRED=0 — continuing" >&2
+    echo "      with a local-only home. Nothing will be saved." >&2
+  fi
+fi
+
+# Hands the container over to the desktop.
+#
+# Without persistence we exec, so the desktop becomes PID 1 and nothing sits in
+# the way. With persistence we have to stay PID 1: SIGTERM is delivered to PID 1
+# only, and that signal is the last chance to save before Kubernetes (or
+# `docker stop`) follows up with SIGKILL. Exec'ing would throw that chance away.
+run_desktop() {
+  # Last line of defence: whatever path we took to get here, no unprivileged
+  # process inherits a secret.
+  scrub_secrets
+
+  if [ "${PERSIST_ACTIVE}" != "1" ]; then
+    exec "$@"
+  fi
+
+  qgis-desktop-persist loop &
+  PERSIST_LOOP_PID=$!
+
+  "$@" &
+  DESKTOP_PID=$!
+
+  # Bounded, because the grace period is finite: Kubernetes sends SIGKILL after
+  # terminationGracePeriodSeconds (30s by default) whatever we are doing, and a
+  # save still running at that point is a save that did not happen.
+  # shellcheck disable=SC2329  # invoked from the trap below
+  final_save() {
+    echo "Shutting down — stopping the desktop and saving the home directory."
+    kill -TERM "${PERSIST_LOOP_PID}" 2>/dev/null || true
+    kill -TERM "${DESKTOP_PID}" 2>/dev/null || true
+    wait "${DESKTOP_PID}" 2>/dev/null || true
+    if ! timeout "${QGIS_DESKTOP_PERSIST_FLUSH_TIMEOUT:-25}" qgis-desktop-persist flush; then
+      echo "WARN: the final save did not finish. Work since the last periodic save" >&2
+      echo "      may be lost; the bucket still holds that last save." >&2
+    fi
+  }
+
+  trap 'final_save; exit 0' TERM INT
+
+  wait "${DESKTOP_PID}"
+  DESKTOP_STATUS=$?
+
+  # The desktop exited by itself — the user logged out, or X died. Same drill.
+  kill -TERM "${PERSIST_LOOP_PID}" 2>/dev/null || true
+  timeout "${QGIS_DESKTOP_PERSIST_FLUSH_TIMEOUT:-25}" qgis-desktop-persist flush ||
+    echo "WARN: the final save did not finish." >&2
+  exit "${DESKTOP_STATUS}"
+}
+
 # Terminal access. Secure deployments hand users a mapping application, not a
 # shell: QGIS_DESKTOP_ALLOW_TERMINAL=0 removes the terminal emulators (and the dialogs
 # that would run an arbitrary command) from the container before the desktop
@@ -382,6 +489,9 @@ if [ "${QGIS_DESKTOP_AUTH_MODE}" = "oidc" ]; then
   # only the proxy's UID can read. A non-zero exit is fatal on purpose: failing
   # to boot beats serving a desktop with nothing in front of it.
   qgis-desktop-oidc-config
+  # From here the secret lives in that file, so take it out of the environment
+  # before anything unprivileged inherits it.
+  scrub_secrets
 
   # Move the desktop's own web endpoint to loopback so the proxy becomes the
   # only way in. Both launchers also read this file, because LightDM scrubs the
@@ -572,7 +682,7 @@ if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
   fi
 
   echo "Starting LightDM..."
-  exec lightdm --debug
+  run_desktop lightdm --debug
 fi
 
 # basic / none: existing behaviour. Drop root and any inheritable capabilities
@@ -582,7 +692,7 @@ fi
 # start-desktop.sh only knows the desktop-level modes, so hand it the effective
 # one — under oidc that is the inner mode, with the proxy already listening.
 export QGIS_DESKTOP_AUTH_MODE="${EFFECTIVE_AUTH_MODE}"
-exec setpriv \
+run_desktop setpriv \
   --reuid=1000 --regid=1000 --init-groups \
   --inh-caps=-all --ambient-caps=-all \
   -- start-desktop

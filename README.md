@@ -15,6 +15,7 @@ A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) 
 - **Persistent workspaces** -- mount a volume to keep your QGIS projects, plugins, and settings across restarts
 - **Minimal footprint** -- only the packages needed to run QGIS and the desktop environment
 - **LTR or latest QGIS** -- the long-term release by default, the current release as a second image so you can test against the next LTR before it lands
+- **Persistent home directories** -- the user's projects, plugins and QGIS profile restored from object storage at start and saved back on an interval, so a deleted container costs nothing
 - **Four ways to log in** -- no auth, HTTP Basic Auth, an in-desktop LightDM greeter, or Keycloak/OIDC single sign-on
 - **Giswater-ready** -- the EPANET and SWMM solvers, the Python packages the plugin imports, and the wiring that makes Giswater find them on Linux
 - **SBOM & CVE scanning** -- every build produces a Software Bill of Materials and vulnerability scan
@@ -148,11 +149,49 @@ docker image inspect ghcr.io/kartoza/qgis-desktop-docker:latest \
   --format '{{index .Config.Labels "com.kartoza.qgis.version"}}'
 ```
 
+## Home persistence
+
+One user, one container. The home directory is a real local filesystem, and
+object storage holds the durable copy — restored before the desktop starts,
+saved on an interval and again on shutdown. Delete the container, start another
+against the same prefix, and the user's work is there.
+
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e QGIS_DESKTOP_PERSIST=1 \
+  -e QGIS_DESKTOP_PERSIST_ENDPOINT=https://fsn1.your-objectstorage.com \
+  -e QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes \
+  -e QGIS_DESKTOP_PERSIST_PREFIX=alice-9c1f4e2a \
+  -e QGIS_DESKTOP_PERSIST_ACCESS_KEY_FILE=/run/secrets/s3-key \
+  -e QGIS_DESKTOP_PERSIST_SECRET_KEY_FILE=/run/secrets/s3-secret \
+  -e QGIS_DESKTOP_PERSIST_QUOTA=5G \
+  -v /etc/qgis-desktop/s3-key:/run/secrets/s3-key:ro \
+  -v /etc/qgis-desktop/s3-secret:/run/secrets/s3-secret:ro \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+It is a sync, not a mount, because a QGIS profile is SQLite and so is every
+GeoPackage — and object-storage FUSE drivers give you neither POSIX locking nor
+atomic partial writes. The cost is a bounded one: work since the last save is
+lost if the container dies without warning. A clean shutdown always saves first.
+
+Five guards exist for the failure that actually matters — a save that replaces
+good data with bad: a container that failed to restore never saves, a home that
+lost most of its files is not mirrored, replaced objects move to a trash prefix,
+a second container on the same prefix refuses to start, and a failed restore
+stops the container rather than showing an empty home the user would trust.
+
+The credentials never reach the user: the sync runs as root with a `0400`
+config file, and they are removed from the environment before the desktop
+starts. Full details, including the Kubernetes shape, in
+[docs/configuration/persistence.md](docs/configuration/persistence.md).
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VNC_PORT` | `8443` | Port for the KasmVNC web interface |
+| `QGIS_DESKTOP_PERSIST` | `0` | `1` restores and saves `/home/user` against object storage. See [Home persistence](docs/configuration/persistence.md). |
 | `QGIS_DESKTOP_QGIS_CHANNEL` | *(baked in)* | `ltr` or `latest` — which image you are running. Read-only; pick the image tag instead. |
 | `QGIS_DESKTOP_QGIS_VERSION` | *(baked in)* | The QGIS version inside the image. Read-only. |
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution (resizable in browser) |

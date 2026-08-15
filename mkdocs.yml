@@ -165,6 +165,7 @@ nav:
     - Authentication: configuration/authentication.md
     - Egress Lockdown: configuration/egress-lockdown.md
     - Giswater: configuration/giswater.md
+    - Home Persistence: configuration/persistence.md
   - Scenarios:
     - scenarios/index.md
     - Analyst Locked-Down: scenarios/analyst-locked-down.md

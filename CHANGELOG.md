@@ -38,7 +38,7 @@ maps straight onto a KasmVNC flag.
 | `KASM_EGRESS_LOCKDOWN` | `QGIS_DESKTOP_EGRESS_LOCKDOWN` |
 | `KASM_EGRESS_ALLOW` | `QGIS_DESKTOP_EGRESS_ALLOW` |
 | `KASM_BIND_INTERFACE` | `QGIS_DESKTOP_BIND_INTERFACE` |
-| `QGIS_DESKTOP_OIDC_*` | `QGIS_DESKTOP_OIDC_*` |
+| `KASM_OIDC_*` | `QGIS_DESKTOP_OIDC_*` |
 | *(mount)* `/etc/kasmvnc/users` | `/etc/qgis-desktop/users` |
 
 **Unchanged**, because they are genuinely KasmVNC settings:
@@ -96,6 +96,30 @@ the `VNC_*` session variables.
 - New `nix run .#run-oidc` (against your own IdP) and
   `nix run .#run-keycloak-demo` (throwaway Keycloak with a pre-imported realm)
   targets, plus `examples/keycloak-oidc/`.
+
+#### Home persistence — `QGIS_DESKTOP_PERSIST`
+- The home directory is restored from object storage before the desktop starts,
+  saved every `QGIS_DESKTOP_PERSIST_INTERVAL` seconds, and saved again on
+  shutdown. One user, one container, one bucket prefix. Works against MinIO,
+  DigitalOcean Spaces, Hetzner, any S3-compatible store, or a mounted directory
+  (`QGIS_DESKTOP_PERSIST_TYPE=local`).
+- A sync rather than a mount, deliberately: QGIS profiles and GeoPackages are
+  SQLite, and object-storage FUSE drivers offer neither POSIX locking nor atomic
+  partial writes. The cost is bounded and visible — work since the last save is
+  lost to a hard kill — rather than unbounded and silent.
+- With persistence on, the entrypoint stays PID 1 so it can catch `SIGTERM` and
+  run a final save before Kubernetes follows up with `SIGKILL`.
+- Five guards against the failure that matters, a save replacing good data with
+  bad: a container that failed to restore never saves; a failed restore stops
+  the container instead of showing an empty home; a home that lost most of its
+  files is not mirrored; replaced and deleted objects move to
+  `.persist-trash/<timestamp>/`; and a second container on the same prefix
+  refuses to start (lease keyed on the hostname, so a recreated pod reclaims its
+  own immediately).
+- Client-side quota. Over it, saving stops and a `PERSISTENCE-WARNING.txt`
+  appears in the home directory saying so — the user has no terminal to read
+  logs in.
+- Caches, session scaffolding and `.kasmpasswd` are never uploaded.
 
 #### QGIS channels
 - Two images from the same source, differing only in the QGIS package:
@@ -156,7 +180,11 @@ the `VNC_*` session variables.
 - `scripts/test-terminal-lockdown.sh` (`nix run .#test-terminal-lockdown`) — 27
   assertions driving the lockdown against a throwaway tree shaped like the
   container's `/bin` and `/home`.
-- `nix run .#test` runs both; `make test` does the same without Nix.
+- `scripts/test-persist.sh` (`nix run .#test-persist`) — 52 assertions driving
+  the real persistence script against a local rclone remote: round trip,
+  exclusions, every guard, the lease, and that the secret key never appears in
+  output.
+- `nix run .#test` runs all four; `make test` does the same without Nix.
 - CI runs them as a gate before the image build.
 
 #### Packages
@@ -167,7 +195,15 @@ the `VNC_*` session variables.
 
 ### Fixed
 
-Both of these were found while testing the OIDC path end to end against a real
+- **Secrets reached the desktop session's environment.** The OIDC client secret
+  (and, once persistence landed, the object-store credentials) were inherited by
+  the desktop, so anything running as the desktop user — QGIS's Python console,
+  for one — could read them out of `/proc/self/environ`. They are now removed
+  from the environment once written to their root-owned config files, before any
+  unprivileged process starts. Verified by searching every process readable by
+  uid 1000 for the secret's value.
+
+The two below were found while testing the OIDC path end to end against a real
 Keycloak, and both affect every release since the egress lockdown landed in
 1.3.0.
 
