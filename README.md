@@ -183,7 +183,12 @@ stops the container rather than showing an empty home the user would trust.
 
 The credentials never reach the user: the sync runs as root with a `0400`
 config file, and they are removed from the environment before the desktop
-starts. Full details, including the Kubernetes shape, in
+starts.
+
+Two directories alongside `home/` in the bucket hand data *to* a user —
+`provision/` is copied in at every start (templates, base layers, a house
+style), and `inbox/` is delivered into the running desktop and then cleared.
+Full details, including the Kubernetes shape, in
 [docs/configuration/persistence.md](docs/configuration/persistence.md).
 
 ## Environment Variables
@@ -192,6 +197,8 @@ starts. Full details, including the Kubernetes shape, in
 |----------|---------|-------------|
 | `VNC_PORT` | `8443` | Port for the KasmVNC web interface |
 | `QGIS_DESKTOP_PERSIST` | `0` | `1` restores and saves `/home/user` against object storage. See [Home persistence](docs/configuration/persistence.md). |
+| `QGIS_DESKTOP_AUTOSTART_QGIS` | `0` | `1` starts QGIS with the desktop session |
+| `QGIS_DESKTOP_AUTOSTART_QGIS_ARGS` | *(none)* | Arguments for that launch, e.g. `--project /home/user/projects/site.qgs` |
 | `QGIS_DESKTOP_QGIS_CHANNEL` | *(baked in)* | `ltr` or `latest` — which image you are running. Read-only; pick the image tag instead. |
 | `QGIS_DESKTOP_QGIS_VERSION` | *(baked in)* | The QGIS version inside the image. Read-only. |
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution (resizable in browser) |

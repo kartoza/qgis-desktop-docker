@@ -318,6 +318,12 @@ if command -v epa >/dev/null 2>&1; then
   epa install || echo "WARN: could not wire up the EPA solvers — run 'epa status' for detail"
 fi
 
+# Write (or remove) the XDG autostart entry for QGIS. Runs as the desktop user,
+# before XFCE starts, so the entry is in place when the session reads it.
+if command -v qgis-desktop-autostart >/dev/null 2>&1; then
+  qgis-desktop-autostart || true
+fi
+
 # Start the desktop session
 echo "Starting XFCE desktop..."
 "$HOME/.vnc/xstartup" &

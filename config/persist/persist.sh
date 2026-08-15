@@ -7,8 +7,9 @@
 #
 #   restore   remote -> local, once, BEFORE the desktop starts
 #   push      local  -> remote, guarded, repeatedly
-#   loop      push on an interval until killed
+#   loop      deliver + push on an interval until killed
 #   flush     a final push, on the way down
+#   deliver   apply provision/ and drain inbox/ now
 #   status    what is configured and how full it is
 #   release   drop the single-writer lease
 #
@@ -57,8 +58,17 @@ LEASE_TTL="${QGIS_DESKTOP_PERSIST_LEASE_TTL:-900}"
 SHRINK_GUARD="${QGIS_DESKTOP_PERSIST_SHRINK_GUARD:-50}"
 EXTRA_RCLONE_ARGS="${QGIS_DESKTOP_PERSIST_RCLONE_ARGS:-}"
 
+# Handing data to the user. Both are no-ops until the corresponding directory
+# exists in the bucket.
+USE_PROVISION="${QGIS_DESKTOP_PERSIST_PROVISION:-1}"
+USE_INBOX="${QGIS_DESKTOP_PERSIST_INBOX:-1}"
+INBOX_DEST="${QGIS_DESKTOP_PERSIST_INBOX_DEST:-Desktop}"
+
 # Runtime state, root-only.
 STATE_DIR="${QGIS_DESKTOP_PERSIST_STATE_DIR:-/run/qgis-desktop/persist}"
+# Where provisioned and inbox files land before being copied into the home as
+# the desktop user. Root-owned but readable — it never holds a credential.
+STAGE_DIR="${QGIS_DESKTOP_PERSIST_STAGE_DIR:-/run/qgis-desktop/staging}"
 RCLONE_CONF="${STATE_DIR}/rclone.conf"
 SENTINEL="${STATE_DIR}/restored"
 COUNT_FILE="${STATE_DIR}/last-file-count"
@@ -103,15 +113,12 @@ write_rclone_config() {
   mkdir -p "${STATE_DIR}"
   chmod 0700 "${STATE_DIR}"
 
-  local access secret token
-  umask 077
+  local access secret token config
 
   case "${REMOTE_TYPE}" in
     local)
-      cat > "${RCLONE_CONF}" <<'CFG'
-[persist]
-type = local
-CFG
+      config="[persist]
+type = local"
       ;;
     s3)
       access="$(read_secret QGIS_DESKTOP_PERSIST_ACCESS_KEY)"
@@ -120,23 +127,35 @@ CFG
       [ -n "${access}" ] || die "QGIS_DESKTOP_PERSIST_ACCESS_KEY (or _FILE) is required."
       [ -n "${secret}" ] || die "QGIS_DESKTOP_PERSIST_SECRET_KEY (or _FILE) is required."
 
-      {
-        echo "[persist]"
-        echo "type = s3"
-        echo "provider = ${PROVIDER}"
-        echo "access_key_id = ${access}"
-        echo "secret_access_key = ${secret}"
-        [ -n "${token}" ] && echo "session_token = ${token}"
-        [ -n "${ENDPOINT}" ] && echo "endpoint = ${ENDPOINT}"
-        echo "region = ${REGION}"
-        # Object storage has no atomic rename; without this rclone tries one.
-        echo "no_check_bucket = true"
-      } > "${RCLONE_CONF}"
+      config="[persist]
+type = s3
+provider = ${PROVIDER}
+access_key_id = ${access}
+secret_access_key = ${secret}"
+      [ -n "${token}" ] && config="${config}
+session_token = ${token}"
+      [ -n "${ENDPOINT}" ] && config="${config}
+endpoint = ${ENDPOINT}"
+      # Object storage has no atomic rename; without no_check_bucket rclone
+      # tries one.
+      config="${config}
+region = ${REGION}
+no_check_bucket = true"
       ;;
     *)
       die "QGIS_DESKTOP_PERSIST_TYPE='${REMOTE_TYPE}' is not one of s3|local."
       ;;
   esac
+
+  # The umask is scoped to the write, in a subshell, so it cannot leak. It used
+  # to be set for the rest of the process, which made the staging directory
+  # 0700 root-owned — and the unprivileged copy that delivers provisioned files
+  # could not read it. The file must never be group- or world-readable even for
+  # the instant between creating and chmod'ing it.
+  (
+    umask 077
+    printf '%s\n' "${config}" > "${RCLONE_CONF}"
+  )
 
   chmod 0400 "${RCLONE_CONF}"
   chown 0:0 "${RCLONE_CONF}" 2>/dev/null || true
@@ -154,6 +173,22 @@ remote_root() {
 remote_data() { printf '%s/home' "$(remote_root)"; }
 remote_trash() { printf '%s/%s' "$(remote_root)" "${TRASH_PREFIX}"; }
 remote_lease() { printf '%s/%s' "$(remote_root)" "${LEASE_OBJECT}"; }
+
+# Two ways to hand data TO a user, both outside home/ so the mirror never
+# touches them:
+#
+#   provision/  copied in every time a container starts, never uploaded, never
+#               removed from the bucket. Baseline material — templates, base
+#               layers, a corporate style file. Existing files are left alone,
+#               so it cannot overwrite the user's own work.
+#   inbox/      delivered into the running desktop and then removed from the
+#               bucket. A one-time handover: drop a file in, it appears, it
+#               does not come back next restart.
+#
+# Anything dropped into home/ instead is treated as a file the user deleted —
+# home/ is a mirror of the container, and the next save makes it match again.
+remote_provision() { printf '%s/provision' "$(remote_root)"; }
+remote_inbox() { printf '%s/inbox' "$(remote_root)"; }
 
 rc() {
   rclone --config "${RCLONE_CONF}" "$@"
@@ -279,6 +314,130 @@ to_bool() {
   esac
 }
 
+# --- Delivering data into the home ------------------------------------------
+
+# The delivery below runs as the desktop user, so the staging area has to be
+# traversable and readable by them. Set explicitly rather than inherited from
+# whatever umask happens to be in force — that assumption is what broke this
+# the first time.
+stage_readable() {
+  chmod -R a+rX "$1" 2>/dev/null || true
+}
+
+# Copy a staged directory into the home AS THE DESKTOP USER, not as root.
+#
+# The user's session is running by the time the inbox is drained, and they can
+# create symlinks in their own home. A root-owned copy would follow one and
+# write wherever it pointed; the same copy running as uid 1000 can only reach
+# what that uid could already reach. The staging directory is root-owned and
+# world-readable — it holds the user's own data, never a credential.
+deliver_as_user() {
+  local staged="$1" dest="$2" clobber="$3"
+  local -a cp_args=(-r)
+
+  [ -d "${staged}" ] || return 0
+  # Nothing staged is not a failure.
+  [ -n "$(ls -A "${staged}" 2>/dev/null)" ] || return 0
+
+  [ "${clobber}" = "no-clobber" ] && cp_args+=(-n)
+
+  # Already running as the target user — in the test suite, or in a container
+  # that never had root. Nothing to drop.
+  if [ "$(id -u)" != "0" ] || [ "${HOME_UID}" = "0" ]; then
+    mkdir -p "${dest}" && cp "${cp_args[@]}" "${staged}/." "${dest}/"
+    return
+  fi
+
+  # Both of these are packaging faults rather than runtime conditions, and both
+  # would otherwise show up only as "could not deliver".
+  command -v setpriv >/dev/null 2>&1 || {
+    err "setpriv is not on PATH — cannot deliver files as uid ${HOME_UID}."
+    return 1
+  }
+  command -v sh >/dev/null 2>&1 || {
+    err "no shell on PATH — cannot deliver files as uid ${HOME_UID}."
+    return 1
+  }
+
+  # $1 is the destination for mkdir, then shifted away so the rest is the cp
+  # command line. Single quotes are deliberate: these expand in the inner shell,
+  # which is the one running unprivileged.
+  # shellcheck disable=SC2016
+  setpriv --reuid="${HOME_UID}" --regid="${HOME_GID}" --init-groups \
+    --inh-caps=-all --ambient-caps=-all \
+    -- sh -c 'mkdir -p "$1" && shift && exec cp "$@"' _ \
+    "${dest}" "${cp_args[@]}" "${staged}/." "${dest}/"
+}
+
+# Baseline material, applied on every start. --ignore-existing on the download
+# and -n on the copy: a provisioned file never overwrites what the user has.
+# Changing a provisioned file therefore does not reach users who already have
+# it — use the inbox for that.
+apply_provision() {
+  [ "$(to_bool "${USE_PROVISION}")" = "1" ] || return 0
+
+  local staged="${STAGE_DIR}/provision"
+  rm -rf "${staged}"
+  mkdir -p "${staged}"
+
+  local count
+  count="$(rc size "$(remote_provision)" --json 2>/dev/null |
+    sed -n 's/.*"count":\([0-9]*\).*/\1/p' | head -1)"
+  count="${count:-0}"
+  [ "${count}" -gt 0 ] || return 0
+
+  log "Provisioning ${count} file(s) from provision/"
+  if ! rc copy "$(remote_provision)" "${staged}" --transfers 8 --stats-one-line --stats 30s; then
+    err "Could not fetch provision/ — continuing without it."
+    rm -rf "${staged}"
+    return 0
+  fi
+
+  stage_readable "${staged}"
+
+  deliver_as_user "${staged}" "${HOME_DIR}" no-clobber ||
+    err "Could not deliver provision/ into the home directory."
+  rm -rf "${staged}"
+}
+
+# One-time delivery into a running session. Copy, deliver, and only then remove
+# from the bucket: if the delivery fails, the files stay in the inbox and are
+# retried next cycle rather than disappearing.
+drain_inbox() {
+  [ "$(to_bool "${USE_INBOX}")" = "1" ] || return 0
+
+  local staged="${STAGE_DIR}/inbox"
+  local count
+  count="$(rc size "$(remote_inbox)" --json 2>/dev/null |
+    sed -n 's/.*"count":\([0-9]*\).*/\1/p' | head -1)"
+  count="${count:-0}"
+  [ "${count}" -gt 0 ] || return 0
+
+  rm -rf "${staged}"
+  mkdir -p "${staged}"
+
+  log "Inbox: delivering ${count} file(s) to ${INBOX_DEST}"
+  if ! rc copy "$(remote_inbox)" "${staged}" --transfers 8 --stats-one-line --stats 30s; then
+    err "Could not fetch inbox/ — leaving it in place for the next cycle."
+    rm -rf "${staged}"
+    return 0
+  fi
+
+  stage_readable "${staged}"
+
+  if ! deliver_as_user "${staged}" "${HOME_DIR}/${INBOX_DEST}" clobber; then
+    err "Could not deliver the inbox — leaving it in the bucket to retry."
+    rm -rf "${staged}"
+    return 0
+  fi
+
+  # Delivered. Now it can leave the bucket.
+  rc delete "$(remote_inbox)" --rmdirs 2>/dev/null ||
+    err "Delivered the inbox but could not clear it; the next cycle will deliver again."
+  rm -rf "${staged}"
+  log "Inbox: delivered and cleared"
+}
+
 # --- Quota ------------------------------------------------------------------
 
 local_bytes() {
@@ -374,6 +533,13 @@ cmd_restore() {
   fi
 
   chown -R "${HOME_UID}:${HOME_GID}" "${HOME_DIR}" 2>/dev/null || true
+
+  # Anything the operator has staged for this user. After the restore, so the
+  # user's own copy of a file always wins.
+  mkdir -p "${STAGE_DIR}"
+  chmod 0755 "${STAGE_DIR}"
+  apply_provision
+  drain_inbox
 
   mkdir -p "${STATE_DIR}"
   date -u '+%Y-%m-%dT%H:%M:%SZ' > "${SENTINEL}"
@@ -479,6 +645,9 @@ cmd_loop() {
   log "Sync loop started — saving every ${INTERVAL}s."
   while :; do
     sleep "${INTERVAL}"
+    # Deliver before saving: a file dropped into the inbox reaches the desktop
+    # this cycle, and is part of the home directory the save then mirrors.
+    drain_inbox || true
     cmd_push || true
   done
 }
@@ -522,15 +691,25 @@ cmd_status() {
   echo "  usage:     $(numfmt --to=iec "$(local_bytes)" 2>/dev/null || echo '?') in $(local_files 2>/dev/null || echo '?') file(s)"
 }
 
+cmd_deliver() {
+  require_config
+  [ -f "${RCLONE_CONF}" ] || write_rclone_config
+  mkdir -p "${STAGE_DIR}"
+  chmod 0755 "${STAGE_DIR}"
+  apply_provision
+  drain_inbox
+}
+
 case "${COMMAND}" in
   restore) cmd_restore ;;
   push) cmd_push ;;
   loop) cmd_loop ;;
   flush) cmd_flush ;;
+  deliver) cmd_deliver ;;
   release) shift; cmd_release "$@" ;;
   status) cmd_status ;;
   *)
-    err "usage: $(basename "$0") [restore|push|loop|flush|release|status]"
+    err "usage: $(basename "$0") [restore|push|loop|flush|deliver|release|status]"
     exit 2
     ;;
 esac

@@ -120,6 +120,22 @@ the `VNC_*` session variables.
   appears in the home directory saying so — the user has no terminal to read
   logs in.
 - Caches, session scaffolding and `.kasmpasswd` are never uploaded.
+- Two directories alongside `home/` hand data *to* a user, both outside the
+  mirror: `provision/` is copied in at every container start and never
+  overwrites the user's own file, and `inbox/` is delivered into the running
+  desktop and then cleared from the bucket. Both are downloaded as root and
+  copied into the home as the desktop user, so a symlink in a live session
+  cannot redirect a privileged write. Dropping a file into `home/` instead is
+  reverted by the next save, because `home/` mirrors the container — it lands in
+  `.persist-trash/` rather than being destroyed.
+
+#### Autostart — `QGIS_DESKTOP_AUTOSTART_QGIS`
+- `1` starts QGIS with the desktop session, with
+  `QGIS_DESKTOP_AUTOSTART_QGIS_ARGS` for a project to open. Implemented as an
+  XDG autostart entry, so it behaves the same in every auth mode; turning the
+  flag off removes the entry again, including from a home directory restored
+  from object storage. An autostart entry the user wrote themselves is left
+  alone.
 
 #### QGIS channels
 - Two images from the same source, differing only in the QGIS package:
@@ -201,6 +217,16 @@ the `VNC_*` session variables.
 
 ### Fixed
 
+- **The documentation landing page never used the Kartoza brand pack.** The
+  stylesheet shipped the hero, call-to-action buttons and card grid all along —
+  `docs/index.md` simply did not use them, and the two motif images were named
+  `slant_title.png` / `slant_divider.png` while the stylesheet asks for
+  `slant-title-background.png` / `slant-divider-background.png`, so the hero
+  background 404'd. Renamed, and the landing page rebuilt as a hero, download
+  cards, a feature grid and status badges.
+- `nix run .#docs-serve` now answers at the root of the address it prints.
+  `site_url` points at GitHub Pages, and mkdocs honours its path component when
+  serving, so a local `mkdocs serve` 404'd on every page.
 - **Secrets reached the desktop session's environment.** The OIDC client secret
   (and, once persistence landed, the object-store credentials) were inherited by
   the desktop, so anything running as the desktop user — QGIS's Python console,

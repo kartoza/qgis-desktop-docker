@@ -49,8 +49,9 @@ fixture() {
   HOME_DIR="$WORK/$name/home"
   BUCKET="$WORK/$name/bucket"
   STATE="$WORK/$name/state"
+  STAGE="$WORK/$name/stage"
   rm -rf "${WORK:?}/$name"
-  mkdir -p "$HOME_DIR" "$BUCKET" "$STATE"
+  mkdir -p "$HOME_DIR" "$BUCKET" "$STATE" "$STAGE"
 }
 
 # Run the persist script with the fixture's paths. Extra env as NAME=VALUE args
@@ -69,6 +70,7 @@ run_persist() {
       QGIS_DESKTOP_PERSIST_PREFIX="alice-0f8b" \
       QGIS_DESKTOP_PERSIST_HOME="$HOME_DIR" \
       QGIS_DESKTOP_PERSIST_STATE_DIR="$STATE" \
+      QGIS_DESKTOP_PERSIST_STAGE_DIR="$STAGE" \
       QGIS_DESKTOP_PERSIST_UID="$(id -u)" \
       QGIS_DESKTOP_PERSIST_GID="$(id -g)" \
       QGIS_DESKTOP_PERSIST_INTERVAL=1 \
@@ -224,6 +226,107 @@ if [ "$TRASHED" -ge 1 ]; then
   ok "the replaced version was kept in the trash prefix"
 else
   no "the replaced version was kept in the trash prefix" "found none"
+fi
+
+echo ""
+echo "persistence — provisioning data to the user"
+
+# provision/ is baseline material: applied on every start, never uploaded,
+# never removed from the bucket, and it never overwrites the user's own file.
+fixture provision
+mkdir -p "$BUCKET/alice-0f8b/provision/Desktop" "$BUCKET/alice-0f8b/provision/templates"
+echo "corporate style" > "$BUCKET/alice-0f8b/provision/templates/house-style.qml"
+echo "welcome" > "$BUCKET/alice-0f8b/provision/Desktop/README.txt"
+run_persist restore
+assert_ok "restore with provision/ succeeds"
+assert_file "$HOME_DIR/templates/house-style.qml" "provisioned file lands in the home"
+assert_file "$HOME_DIR/Desktop/README.txt" "provisioned file keeps its subdirectory"
+assert_contains "$OUTPUT" "Provisioning 2 file(s)" "the provisioning is reported"
+
+# The staged copy is read by the desktop user, not root. This caught a real
+# bug: the umask set while writing the credentials file leaked into the rest of
+# the process, so the staging directory came out 0700 root-owned and the
+# unprivileged copy could not read it. It only showed up in a container,
+# because the tests run as one user throughout.
+mkdir -p "$BUCKET/alice-0f8b/inbox"
+echo "check the mode" > "$BUCKET/alice-0f8b/inbox/mode-probe.txt"
+run_persist deliver
+STAGE_MODE="$(stat -c '%a' "$STAGE" 2>/dev/null || echo '?')"
+# Anything ending in 5 (or 7) for "other" is traversable; 0700 is the bug.
+case "$STAGE_MODE" in
+  ??[157]) ok "the staging directory stays traversable by the desktop user" ;;
+  *) no "the staging directory stays traversable by the desktop user" "mode=$STAGE_MODE" ;;
+esac
+assert_equals "$(stat -c '%a' "$STATE/rclone.conf" 2>/dev/null)" "400" \
+  "…while the credentials file stays 0400"
+
+run_persist push
+assert_ok "save after provisioning succeeds"
+assert_exists "$BUCKET/alice-0f8b/provision/templates/house-style.qml" \
+  "provision/ is left in the bucket, not consumed"
+assert_file "$(remote_home)/templates/house-style.qml" \
+  "the provisioned file is now part of the user's saved home"
+
+# A user's own edit must survive the next container start: it is saved, then
+# restored, and provisioning must not put the pristine copy back over it.
+echo "my own version" > "$HOME_DIR/templates/house-style.qml"
+run_persist push
+assert_ok "saving the user's edit succeeds"
+rm -rf "${HOME_DIR:?}/templates"   # a fresh container has nothing local
+run_persist restore
+assert_contains "$(cat "$HOME_DIR/templates/house-style.qml" 2>&1)" "my own version" \
+  "provisioning never overwrites the user's own copy"
+
+# inbox/ is a one-time handover: delivered, then cleared from the bucket.
+fixture inbox
+run_persist restore
+mkdir -p "$BUCKET/alice-0f8b/inbox"
+echo "a picture" > "$BUCKET/alice-0f8b/inbox/photo.jpg"
+run_persist deliver
+assert_ok "delivering the inbox succeeds"
+assert_file "$HOME_DIR/Desktop/photo.jpg" "the inbox file lands on the desktop"
+assert_absent "$BUCKET/alice-0f8b/inbox/photo.jpg" "the inbox is cleared once delivered"
+assert_contains "$OUTPUT" "delivered and cleared" "and says so"
+
+# Delivered once means delivered once: deleting it does not bring it back.
+rm -f "$HOME_DIR/Desktop/photo.jpg"
+run_persist deliver
+assert_absent "$HOME_DIR/Desktop/photo.jpg" "a delivered file does not come back"
+
+# A different destination.
+mkdir -p "$BUCKET/alice-0f8b/inbox"
+echo "data" > "$BUCKET/alice-0f8b/inbox/layer.gpkg"
+run_persist QGIS_DESKTOP_PERSIST_INBOX_DEST=incoming deliver
+assert_file "$HOME_DIR/incoming/layer.gpkg" "the inbox destination is configurable"
+
+# Both can be turned off.
+fixture nodeliver
+mkdir -p "$BUCKET/alice-0f8b/provision" "$BUCKET/alice-0f8b/inbox"
+echo x > "$BUCKET/alice-0f8b/provision/p.txt"
+echo y > "$BUCKET/alice-0f8b/inbox/i.txt"
+run_persist QGIS_DESKTOP_PERSIST_PROVISION=0 QGIS_DESKTOP_PERSIST_INBOX=0 restore
+assert_absent "$HOME_DIR/p.txt" "provisioning can be turned off"
+assert_absent "$HOME_DIR/Desktop/i.txt" "the inbox can be turned off"
+assert_exists "$BUCKET/alice-0f8b/inbox/i.txt" "and the inbox is left untouched"
+
+# The behaviour that sends people to the inbox in the first place: home/ is a
+# mirror, so a file dropped there is treated as one the user deleted. Pinned
+# here so nobody "fixes" it into a two-way sync by accident.
+fixture mirror
+run_persist restore
+echo "keep" > "$HOME_DIR/mine.txt"
+run_persist push
+mkdir -p "$(remote_home)"
+echo "dropped straight into home/" > "$(remote_home)/uploaded-by-hand.jpg"
+run_persist push
+assert_ok "the save after a hand-uploaded file succeeds"
+assert_absent "$(remote_home)/uploaded-by-hand.jpg" \
+  "a file dropped into home/ is reverted — home/ mirrors the container"
+RECOVERED=$(find "$BUCKET/alice-0f8b/.persist-trash" -name 'uploaded-by-hand.jpg' 2>/dev/null | wc -l)
+if [ "$RECOVERED" -ge 1 ]; then
+  ok "…but it is recoverable from the trash, not destroyed"
+else
+  no "…but it is recoverable from the trash, not destroyed" "not found in the trash"
 fi
 
 echo ""

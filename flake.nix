@@ -122,6 +122,15 @@
             ])}"
         '';
 
+        # --- Autostart (QGIS_DESKTOP_AUTOSTART_QGIS=1) --------------------
+        # Runs as the desktop user from both session paths; writes an XDG
+        # autostart entry that XFCE picks up.
+        autostartScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-autostart";
+          runtimeInputs = with pkgs; [ coreutils gnugrep ];
+          text = builtins.readFile ./config/autostart/autostart.sh;
+        };
+
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -130,9 +139,11 @@
           name = "qgis-desktop-persist";
           runtimeInputs = with pkgs; [
             rclone
-            coreutils # timeout, numfmt, date, chown
+            coreutils # timeout, numfmt, date, chown, id, cp
             gnused
             hostname
+            util-linux # setpriv, to deliver files as the desktop user
+            bash # the shell setpriv execs for that delivery
           ];
           text = builtins.readFile ./config/persist/persist.sh;
         };
@@ -179,6 +190,7 @@
             xrdb
           ] ++ [
             epaTool # `epa install` wires Giswater up to the native solvers
+            autostartScript # honours QGIS_DESKTOP_AUTOSTART_QGIS
           ];
           text = builtins.readFile ./start-desktop.sh;
         };
@@ -280,6 +292,9 @@
           # No-op when the plugin is not installed.
           ${epaTool}/bin/epa install \
             || echo "WARN: could not wire up the EPA solvers — run 'epa status' for detail"
+
+          # Same reasoning for the autostart entry: it lives in this user's home.
+          ${autostartScript}/bin/qgis-desktop-autostart || true
 
           # Background XFCE so we can force the wallpaper via xfconf-query
           # once xfconfd has come up (mirrors start-desktop.sh's post-start
@@ -409,6 +424,9 @@
 
             # Terminal lockdown (QGIS_DESKTOP_ALLOW_TERMINAL=0).
             disableTerminalScript
+
+            # Autostart QGIS with the session (QGIS_DESKTOP_AUTOSTART_QGIS=1).
+            autostartScript
 
             # Home persistence (QGIS_DESKTOP_PERSIST=1). rclone arrives through
             # the wrapper; it is not on the desktop user's PATH.
@@ -722,6 +740,10 @@ DBUSEOF
               # Terminal access. Set to 0 to remove the terminal emulators and
               # command-runner dialogs from the desktop entirely.
               "QGIS_DESKTOP_ALLOW_TERMINAL=1"
+              # Start QGIS automatically with the desktop session. Off by
+              # default: the desktop is useful without it, and QGIS takes a
+              # while to load.
+              "QGIS_DESKTOP_AUTOSTART_QGIS=0"
               # Home-directory persistence against object storage. Off unless
               # configured; see docs/configuration/persistence.md.
               "QGIS_DESKTOP_PERSIST=0"
@@ -1258,6 +1280,19 @@ DBUSEOF
             }}/bin/test-terminal-lockdown";
           };
 
+          # Unit tests for the QGIS autostart flag.
+          test-autostart = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-autostart";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-autostart.sh
+              '';
+            }}/bin/test-autostart";
+          };
+
           # Guards the PDF build: any character pdflatex cannot set fails here,
           # in a second, instead of ten minutes into `docs-pdf`.
           test-docs-glyphs = {
@@ -1278,7 +1313,10 @@ DBUSEOF
             type = "app";
             program = "${pkgs.writeShellApplication {
               name = "test-persist";
-              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep findutils rclone ];
+              runtimeInputs = with pkgs; [
+                bash coreutils gnused gnugrep findutils rclone
+                util-linux # setpriv, for the privileged delivery path
+              ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 exec bash ${self}/scripts/test-persist.sh
@@ -1320,6 +1358,8 @@ DBUSEOF
                 bash ${self}/scripts/test-persist.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-docs-glyphs.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-autostart.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
@@ -1331,9 +1371,28 @@ DBUSEOF
 
           # --- Documentation apps -----------------------------------------
           # Local preview at http://127.0.0.1:8000.
-          docs-serve = mkDocsApp "docs-serve" [] ''
-            echo "Serving docs at http://127.0.0.1:8000 (Ctrl-C to stop)"
-            mkdocs serve
+          # `site_url` points at GitHub Pages, and mkdocs serve honours its path
+          # component — so a plain `mkdocs serve` answers on
+          # /qgis-desktop-docker/ and 404s at the root, which is a poor way to
+          # review your own docs. Serve through a temporary config that
+          # inherits everything and overrides the URL. Relative paths in an
+          # inherited config resolve against the child file, so docs_dir and
+          # site_dir have to be spelled out absolutely.
+          docs-serve = mkDocsApp "docs-serve" (with pkgs; [ coreutils ]) ''
+            ADDR="''${1:-127.0.0.1:8000}"
+            WORK=$(mktemp -d -t qgis-docs-serve.XXXXXX)
+            trap 'rm -rf "$WORK"' EXIT
+
+            cat > "$WORK/mkdocs.yml" <<CFG
+            INHERIT: $PWD/mkdocs.yml
+            site_url: http://$ADDR/
+            docs_dir: $PWD/docs
+            site_dir: $WORK/site
+            CFG
+            sed -i 's/^            //' "$WORK/mkdocs.yml"
+
+            echo "Serving docs at http://$ADDR (Ctrl-C to stop)"
+            mkdocs serve -f "$WORK/mkdocs.yml" -a "$ADDR"
           '';
 
           # Build the static site into ./site/.
@@ -1407,9 +1466,14 @@ DBUSEOF
             echo "Assembling PDF at $OUT_ABS"
 
             # Nav order to match mkdocs.yml.
+            #
+            # docs/index.md is deliberately absent: it is a landing page built
+            # from a hero, call-to-action buttons and icon shortcodes, none of
+            # which mean anything in print — and the PDF has its own cover
+            # (docs/pdf/cover.tex). The content it summarises is in the pages
+            # below anyway.
             DOCS_DIR=${./docs}
             PAGES=(
-              "$DOCS_DIR/index.md"
               "$DOCS_DIR/getting-started/index.md"
               "$DOCS_DIR/getting-started/quickstart.md"
               "$DOCS_DIR/getting-started/nix-workflow.md"

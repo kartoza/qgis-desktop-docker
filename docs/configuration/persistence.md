@@ -64,6 +64,9 @@ sees whole files that are already at rest.
 | `QGIS_DESKTOP_PERSIST_REQUIRED` | `1` | `1` means a failed restore stops the container instead of serving an empty home. |
 | `QGIS_DESKTOP_PERSIST_FLUSH_TIMEOUT` | `25` | Seconds allowed for the final save. Keep it below the shutdown grace period. |
 | `QGIS_DESKTOP_PERSIST_HOME` | `/home/user` | What to persist. |
+| `QGIS_DESKTOP_PERSIST_PROVISION` | `1` | Apply `provision/` at every start. See [Giving users data](#giving-users-data). |
+| `QGIS_DESKTOP_PERSIST_INBOX` | `1` | Deliver `inbox/` into the running desktop. |
+| `QGIS_DESKTOP_PERSIST_INBOX_DEST` | `Desktop` | Where inbox files land, relative to the home directory. |
 
 ## What is not saved
 
@@ -75,6 +78,75 @@ boot and would only slow the restore down:
 
 `.kasmpasswd` holds password hashes and is rebuilt from the credential source
 on every boot. It has no business in a bucket.
+
+## Giving users data
+
+The bucket prefix holds three directories, and only one of them is a mirror:
+
+```text
+s3://qgis-homes/alice-9c1f4e2a/
+├── home/          the user's home directory — a MIRROR of the container
+├── provision/     baseline material, applied at every start
+├── inbox/         one-time delivery into the running desktop
+└── .persist-trash/  what the mirror moved aside
+```
+
+!!! warning "Do not drop files into `home/`"
+    `home/` is a mirror. A file that is in the bucket but not in the container
+    is a file the user deleted, so the next save removes it — into
+    `.persist-trash/<timestamp>/`, recoverable, but gone from the desktop.
+    Use `provision/` or `inbox/` instead.
+
+### `provision/` — baseline material
+
+Copied into the home directory **every time a container starts**. Never
+uploaded, never removed from the bucket, and it never overwrites a file the
+user already has.
+
+```bash
+rclone copy ./house-style.qml remote:qgis-homes/alice-9c1f4e2a/provision/templates/
+rclone copy ./basemap.gpkg    remote:qgis-homes/alice-9c1f4e2a/provision/data/
+```
+
+The layout is preserved: `provision/Desktop/logo.png` lands on the desktop,
+`provision/templates/x.qml` in `~/templates`. Good for templates, corporate
+styles, a starter project, reference layers.
+
+Because it never overwrites, **updating a provisioned file does not reach users
+who already have it**. That is the right default — it cannot eat someone's
+work — but it means `provision/` is for the *initial* copy. Use the inbox to
+push out a new version.
+
+### `inbox/` — one-time delivery
+
+Delivered into the running desktop within one save interval, then **cleared
+from the bucket**. Drop a file in, it appears; delete it on the desktop and it
+does not come back.
+
+```bash
+rclone copy ./aerial-2026.tif remote:qgis-homes/alice-9c1f4e2a/inbox/
+# within QGIS_DESKTOP_PERSIST_INTERVAL seconds it is on the user's desktop
+```
+
+Files land in `~/Desktop` so they are visible immediately;
+`QGIS_DESKTOP_PERSIST_INBOX_DEST=incoming` puts them in `~/incoming` instead.
+
+To force a delivery without waiting for the next cycle:
+
+```bash
+docker exec <container> qgis-desktop-persist deliver
+```
+
+### How they are delivered
+
+Both are downloaded as root into a staging directory, then copied into the home
+**as the desktop user** — never as root. The inbox drains into a session that is
+already running, where the user can create symlinks in their own home; a
+root-owned copy would follow one and write wherever it pointed. Running the copy
+as uid 1000 means it can only reach what that user could already reach.
+
+The inbox is cleared only *after* a successful delivery, so a failure leaves the
+files in the bucket to be retried rather than losing them.
 
 ## Safeguards
 
