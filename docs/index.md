@@ -25,38 +25,37 @@ that fails closed, and a home directory that outlives the container.
 
 ## Pull it
 
-Two images from one source. They differ only in which QGIS is inside.
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+Then open <http://localhost:8443> and sign in as `user` / `password`. Everything
+else is an environment variable &mdash; see
+[Configuration](configuration/index.md).
+
+One image, two tags. Same container, same settings; the QGIS inside is the only
+difference.
 
 <div class="grid cards" markdown>
 
--   :material-shield-check:{ .lg .middle } __QGIS LTR__
+-   :material-shield-check:{ .lg .middle } __`:latest`__ &mdash; QGIS 3.44.9 LTR
 
     ---
 
-    The long-term release. Bug fixes only, so a project that opens today opens
-    the same way next month. This is the one to put in front of users.
+    The long-term release: bug fixes only, so a project that opens today opens
+    the same way next month. This is the one to put in front of users, and what
+    you get if you do not choose.
 
-    ```bash
-    docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-      ghcr.io/kartoza/qgis-desktop-docker:latest
-    ```
-
--   :material-flask-outline:{ .lg .middle } __QGIS latest__
+-   :material-flask-outline:{ .lg .middle } __`:qgis-latest`__ &mdash; QGIS 4.0.1
 
     ---
 
     The current release, which becomes the next LTR. Open your real projects
-    against it now, while a regression can still be reported upstream.
-
-    ```bash
-    docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-      ghcr.io/kartoza/qgis-desktop-docker:qgis-latest
-    ```
+    against it now, while a regression can still be reported upstream rather
+    than discovered on the day the LTR ships.
 
 </div>
-
-Then open <http://localhost:8443> and sign in. Everything else is an environment
-variable &mdash; see [Configuration](configuration/index.md).
 
 ## What's in the box
 
