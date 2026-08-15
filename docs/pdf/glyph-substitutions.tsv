@@ -1,0 +1,42 @@
+# Characters the PDF build replaces before handing the docs to pdflatex.
+#
+# pdflatex only accepts the subset of UTF-8 its inputenc knows; anything else
+# stops the build with "Unicode character X not set up for use with LaTeX".
+# That is a ten-minute CI failure for one character in one table, so this file
+# is the single source of truth for the mapping, read by two things:
+#
+#   flake.nix               nix run .#docs-pdf   — applies these substitutions
+#   scripts/test-docs-glyphs.sh                  — fails in a second if a page
+#                                                  uses a character not listed
+#                                                  here
+#
+# Format: one substitution per line, GLYPH<TAB>REPLACEMENT. A replacement may
+# be empty (delete the character) but the tab must still be there. Lines
+# starting with # are comments.
+#
+# Keep the replacements ASCII: the whole point is to leave nothing pdflatex
+# cannot set. Prefer something that reads correctly in print — a box-drawing
+# character standing in for a tree branch is decoration, an arrow in prose is
+# meaning.
+⚠	WARNING:
+▶	>
+✗	X
+↳	 ->
+→	 ->
+─	-
+│
+└	`
+├
+…	...
+§	Section
+—	--
+–	-
+≤	<=
+≥	>=
+·	-
+×	x
+✓	OK
+“	"
+”	"
+‘	'
+’	'

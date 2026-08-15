@@ -36,6 +36,7 @@ test: ## Run the test suite (no Docker required)
 	bash scripts/test-terminal-lockdown.sh
 	bash scripts/test-renamed-variables.sh
 	bash scripts/test-persist.sh
+	bash scripts/test-docs-glyphs.sh
 
 summary: ## Generate build summary
 	bash build-summary.sh $(IMAGE_NAME):$(IMAGE_TAG) build-summary.md

@@ -184,7 +184,13 @@ the `VNC_*` session variables.
   the real persistence script against a local rclone remote: round trip,
   exclusions, every guard, the lease, and that the secret key never appears in
   output.
-- `nix run .#test` runs all four; `make test` does the same without Nix.
+- `scripts/test-docs-glyphs.sh` (`nix run .#test-docs-glyphs`) — applies the
+  PDF build's own substitutions to every page the PDF includes and fails if a
+  byte pdflatex cannot set survives, naming the file and line. The substitutions
+  now live in `docs/pdf/glyph-substitutions.tsv`, read by both the PDF build and
+  the test, instead of a list inside `flake.nix` that grew one CI failure at a
+  time.
+- `nix run .#test` runs all five; `make test` does the same without Nix.
 - CI runs them as a gate before the image build.
 
 #### Packages

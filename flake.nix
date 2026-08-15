@@ -1208,6 +1208,7 @@ DBUSEOF
                 nix run .#test-terminal-lockdown   Unit-test the terminal lockdown
                 nix run .#test-renamed-variables   Unit-test the 2.0.0 rename guard
                 nix run .#test-persist      Unit-test home persistence
+                nix run .#test-docs-glyphs  Check the docs against the PDF build
 
               Manage
                 nix run .#stop              Stop and remove the qgis-desktop container
@@ -1257,6 +1258,20 @@ DBUSEOF
             }}/bin/test-terminal-lockdown";
           };
 
+          # Guards the PDF build: any character pdflatex cannot set fails here,
+          # in a second, instead of ten minutes into `docs-pdf`.
+          test-docs-glyphs = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-docs-glyphs";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-docs-glyphs.sh
+              '';
+            }}/bin/test-docs-glyphs";
+          };
+
           # Unit tests for home persistence, driven against a local rclone
           # remote — the whole restore/save/guard cycle without S3.
           test-persist = {
@@ -1303,6 +1318,8 @@ DBUSEOF
                 bash ${self}/scripts/test-renamed-variables.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-persist.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-docs-glyphs.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
@@ -1429,6 +1446,18 @@ DBUSEOF
 
             # Concatenate pages with page breaks between chapters. Chapters map
             # to top-level sections in the nav.
+            # Glyph substitutions come from a single source of truth that
+            # scripts/test-docs-glyphs.sh checks the docs against, so a
+            # character pdflatex cannot set fails in a second rather than ten
+            # minutes into this build. Neither column ever contains '|', which
+            # is what lets it be the sed delimiter.
+            GLYPH_ARGS=()
+            while IFS=$'\t' read -r glyph replacement; do
+              case "$glyph" in "" | "#"*) continue ;; esac
+              GLYPH_ARGS+=(-e "s|$glyph|$replacement|g")
+            done < ${./docs/pdf/glyph-substitutions.tsv}
+            echo "Applying ''${#GLYPH_ARGS[@]} glyph substitutions (2 args each)"
+
             {
               cat <<'META'
 ---
@@ -1444,8 +1473,8 @@ META
                 [ "$chapter" -gt 1 ] && printf '\n\n\\newpage\n\n'
                 # Rewrite SVG references in the analyst scenario to point at
                 # the pre-rendered PDFs, transform admonitions to bold labels,
-                # and knock out the odd Unicode glyph (pdflatex doesn't take
-                # arbitrary UTF-8 without inputenc utf8x which we don't ship).
+                # and replace the glyphs pdflatex cannot set (it does not take
+                # arbitrary UTF-8 without inputenc utf8x, which we don't ship).
                 sed \
                   -e 's|diagrams/\([a-z-]*\)\.svg|'"$WORK/diagrams/"'\1.pdf|g' \
                   -e 's|!!! note|**Note:**|g' \
@@ -1453,18 +1482,7 @@ META
                   -e 's|!!! warning|**Warning:**|g' \
                   -e 's|!!! danger|**Danger:**|g' \
                   -e 's|!!! quote ""||g' \
-                  -e 's|⚠|WARNING:|g' \
-                  -e 's|▶|>|g' \
-                  -e 's|✗|X|g' \
-                  -e 's|↳| ->|g' \
-                  -e 's|→| -> |g' \
-                  -e 's|─|-|g' \
-                  -e 's|│| |g' \
-                  -e 's|└|`|g' \
-                  -e 's|├||g' \
-                  -e 's|…|...|g' \
-                  -e 's|§|Section |g' \
-                  -e 's|—|--|g' \
+                  "''${GLYPH_ARGS[@]}" \
                   "$page"
               done
             } > "$WORK/combined.md"
