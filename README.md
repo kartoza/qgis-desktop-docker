@@ -118,12 +118,12 @@ is inside.
 
 | Tag | QGIS | Use it for |
 |-----|------|------------|
-| `:latest`, `:ltr` | **3.44.9 LTR** *(default)* | Production. The LTR line only takes bug fixes, so a project that opens today opens the same way next month. |
+| `:qgis-ltr`, `:latest` | **3.44.9 LTR** *(default)* | Production. The LTR line only takes bug fixes, so a project that opens today opens the same way next month. |
 | `:qgis-latest` | **4.0.1** (current release) | Testing your projects, plugins and data against what becomes the next LTR — before it becomes the next LTR. |
 
 ```bash
-# The default
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:latest
+# The default (:latest points here too)
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:qgis-ltr
 
 # Same container, current QGIS
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:qgis-latest
@@ -132,7 +132,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-do
 Building either from source:
 
 ```bash
-nix run .#build-docker               # QGIS LTR   -> nix-xfce-kasm:ltr (+ :latest)
+nix run .#build-docker               # QGIS LTR    -> nix-xfce-kasm:qgis-ltr (+ :latest)
 nix run .#build-docker-qgis-latest   # QGIS latest -> nix-xfce-kasm:qgis-latest
 ```
 

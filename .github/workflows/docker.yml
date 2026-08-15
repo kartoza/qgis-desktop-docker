@@ -115,10 +115,10 @@ jobs:
         run: |
           OUT=$(nix build .#docker --print-out-paths)
           nix store cat "$OUT" | docker load
-          # The default image is built on QGIS LTR and carries the :ltr tag.
+          # The default image is built on QGIS LTR and carries the :qgis-ltr tag.
           # Everything downstream — SBOM, report, publish — works off :latest,
           # which is also what users pull, so alias it here.
-          docker tag ${{ env.NIX_IMAGE }}:ltr ${{ env.NIX_IMAGE }}:latest
+          docker tag ${{ env.NIX_IMAGE }}:qgis-ltr ${{ env.NIX_IMAGE }}:latest
 
       - name: Determine version tag
         id: version
@@ -339,8 +339,12 @@ jobs:
 
           docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:${VERSION}"
           docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:latest"
+          # The channel tag, so the LTR line can be pinned by name the same way
+          # :qgis-latest pins the current release.
+          docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:qgis-ltr"
           docker push "${GHCR_IMAGE}:${VERSION}"
           docker push "${GHCR_IMAGE}:latest"
+          docker push "${GHCR_IMAGE}:qgis-ltr"
 
       - name: Set package visibility to public
         if: github.event_name == 'release'

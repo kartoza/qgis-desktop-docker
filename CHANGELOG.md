@@ -139,9 +139,10 @@ the `VNC_*` session variables.
 
 #### QGIS channels
 - Two images from the same source, differing only in the QGIS package:
-  `nix-xfce-kasm:ltr` (also tagged `:latest`) on the long-term release, and
+  `nix-xfce-kasm:qgis-ltr` (also tagged `:latest`) on the long-term release, and
   `nix-xfce-kasm:qgis-latest` on the current release. Published to GHCR as
-  `:latest` / `:<version>` and `:qgis-latest` / `:<version>-qgis-latest`.
+  `:qgis-ltr` + `:latest` + `:<version>`, and `:qgis-latest` /
+  `:<version>-qgis-latest`.
 - `nix run .#build-docker` builds the LTR image;
   `nix run .#build-docker-qgis-latest` builds the other. Flake outputs
   `packages.docker-ltr`, `packages.docker-qgis-latest`, `packages.qgis-ltr` and

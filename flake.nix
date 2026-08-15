@@ -83,7 +83,7 @@
           ltr = {
             package = withGiswater pkgs.qgis-ltr;
             version = pkgs.qgis-ltr.version;
-            tag = "ltr";
+            tag = "qgis-ltr";
             description = "long-term release";
           };
           latest = {
@@ -920,9 +920,9 @@ DBUSEOF
             nix build .#docker -o result
             OUT=$(nix build .#docker --print-out-paths)
             nix store cat "$OUT" | docker load
-            docker tag nix-xfce-kasm:ltr nix-xfce-kasm:latest
+            docker tag nix-xfce-kasm:qgis-ltr nix-xfce-kasm:latest
             echo ""
-            echo "Image loaded: nix-xfce-kasm:ltr (also tagged :latest)"
+            echo "Image loaded: nix-xfce-kasm:qgis-ltr (also tagged :latest)"
             docker image inspect nix-xfce-kasm:latest --format \
               "Size: {{.Size}} bytes ($(docker image inspect nix-xfce-kasm:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
           '';
@@ -1193,7 +1193,7 @@ DBUSEOF
             QGIS Desktop Docker — available commands
 
               Build
-                nix run .#build-docker      Build the image on QGIS LTR (default, tagged :ltr + :latest)
+                nix run .#build-docker      Build the image on QGIS LTR (default, tagged :qgis-ltr + :latest)
                 nix run .#build-docker-qgis-latest
                                             Build the image on the current QGIS release (:qgis-latest)
 

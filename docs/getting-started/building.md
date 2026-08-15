@@ -24,7 +24,7 @@ nix build .#docker -o result
 nix store cat "$(nix build .#docker --print-out-paths)" | docker load
 ```
 
-The image is loaded as `nix-xfce-kasm:ltr`, and tagged `:latest` as well —
+The image is loaded as `nix-xfce-kasm:qgis-ltr`, and tagged `:latest` as well —
 that is the tag every `nix run .#run-*` target and both compose files expect.
 Run it:
 
@@ -39,7 +39,7 @@ difference between them.
 
 | Target | QGIS | Image tag |
 |--------|------|-----------|
-| `nix run .#build-docker` *(default)* | Long-term release | `nix-xfce-kasm:ltr`, also tagged `:latest` |
+| `nix run .#build-docker` *(default)* | Long-term release | `nix-xfce-kasm:qgis-ltr`, also tagged `:latest` |
 | `nix run .#build-docker-qgis-latest` | Current release | `nix-xfce-kasm:qgis-latest` |
 
 **Why LTR is the default.** The LTR line only takes bug fixes, so a project
