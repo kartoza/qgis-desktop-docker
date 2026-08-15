@@ -34,8 +34,8 @@ most one interval; `docker compose stop` sends `SIGTERM` first and the final
 save costs you nothing.
 
 **Hand the user a file.** In the MinIO console, upload something into
-`qgis-homes/tim-4f2f96a9/inbox/`. Within a minute it is on the desktop and the
-inbox is empty again. Put it in `provision/` instead and it arrives at *every*
+`qgis-homes/tim-4f2f96a9/deploy/`. Within a minute it is on the desktop and the
+deploy is empty again. Put it in `baseline/` instead and it arrives at *every*
 container start and stays in the bucket — that is where templates and base
 layers go.
 

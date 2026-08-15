@@ -1185,7 +1185,7 @@ DBUSEOF
 
                 The home directory is restored from the bucket at boot and
                 saved every 60s. Kill the container and start it again — the
-                work comes back. Drop a file into the bucket's inbox/ prefix
+                work comes back. Drop a file into the bucket's deploy/ prefix
                 and it lands on the desktop. Press Ctrl-C to stop.'';
           };
 
@@ -1227,7 +1227,7 @@ DBUSEOF
                 Press Ctrl-C to stop.'';
           };
 
-          # Object storage as a delivery channel: provision/ and inbox/.
+          # Object storage as a delivery channel: baseline/ and deploy/.
           run-data-drop-scenario = mkScenario {
             name = "run-data-drop-scenario";
             composeFile = dataDropComposeFile;
@@ -1239,8 +1239,8 @@ DBUSEOF
                 MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
                 Docs:     docs/scenarios/team-data-drop.md
 
-                QGIS opens on a project that was provisioned from the bucket.
-                About a minute in, a dispatcher drops assets.csv into inbox/ —
+                QGIS opens on a project from the bucket's baseline.
+                About a minute in, a dispatcher drops assets.csv into deploy/ —
                 watch it land on the desktop. Press Ctrl-C to stop.'';
           };
 

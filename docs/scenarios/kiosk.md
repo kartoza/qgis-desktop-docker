@@ -71,7 +71,7 @@ directory is mounted read-only at `/home/user/kiosk`.
   refreshing layer; the container needs the layer's host in
   `QGIS_DESKTOP_EGRESS_ALLOW`.
 - **A kiosk that remembers.** Add [home persistence](../configuration/persistence.md)
-  and drop new projects into the bucket's `inbox/` prefix — the display picks
+  and drop new projects into the bucket's `deploy/` prefix — the display picks
   them up without a redeploy.
 - **A staffed terminal.** Set `QGIS_DESKTOP_AUTH_MODE=basic` or `oidc` so only
   your people can open it, and keep everything else.

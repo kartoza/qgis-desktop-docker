@@ -13,8 +13,8 @@ storage layer from every angle.
 
 | Scenario | What it demonstrates | Run it |
 |----------|----------------------|--------|
-| **[Persistent workstation](persistent-workstation.md)** | The basics: a home directory in a bucket, restored at boot, saved continuously, with a provisioned project | `nix run .#run-persistence-demo` |
-| **[Delivering data](team-data-drop.md)** | Getting files to a user without touching their container — `provision/` for a baseline, `inbox/` for a hand-off | `nix run .#run-data-drop-scenario` |
+| **[Persistent workstation](persistent-workstation.md)** | The basics: a home directory in a bucket, restored at boot, saved continuously, with a baseline project | `nix run .#run-persistence-demo` |
+| **[Delivering data](team-data-drop.md)** | Getting files to a user without touching their container — `baseline/` for a baseline, `deploy/` for a hand-off | `nix run .#run-data-drop-scenario` |
 | **[The disposable desktop](disposable-pod.md)** | Deliberately breaking it: hard kills, recreated pods, two containers on one prefix, a wiped home, a blown quota | `nix run .#run-disposable-scenario` |
 | **[SSO + persistent homes](sso-persistent-homes.md)** | Storage and identity composed — the production shape | `nix run .#run-sso-homes-scenario` |
 

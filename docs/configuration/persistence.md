@@ -30,7 +30,7 @@ Three things to take from that picture:
   local filesystem, with working file locks and no surprises for SQLite. Only
   the sync process, running as root, ever sees object storage.
 - **The bucket holds four things, and only one is a mirror.** `home/` is
-  overwritten to match the container. `provision/` and `inbox/` are inputs.
+  overwritten to match the container. `baseline/` and `deploy/` are inputs.
   `.persist-trash/` is what the mirror moved aside.
 - **Restore happens before the desktop starts.** That is the only moment root
   writes into the home directory, and there is no user process running yet to
@@ -96,10 +96,10 @@ about — it *is* your worst-case data loss.
 | `QGIS_DESKTOP_PERSIST_REQUIRED` | `1` | `1` means a failed restore stops the container instead of serving an empty home. |
 | `QGIS_DESKTOP_PERSIST_FLUSH_TIMEOUT` | `25` | Seconds allowed for the final save. Keep it below the shutdown grace period. |
 | `QGIS_DESKTOP_PERSIST_HOME` | `/home/user` | What to persist. |
-| `QGIS_DESKTOP_PERSIST_PROVISION` | `1` | Apply `provision/` at every start. See [Giving users data](#giving-users-data). |
-| `QGIS_DESKTOP_PERSIST_INBOX` | `1` | Deliver `inbox/` into the running desktop. |
-| `QGIS_DESKTOP_PERSIST_INBOX_DEST` | `Desktop` | Where inbox files land, relative to the home directory. |
-| `QGIS_DESKTOP_PERSIST_CREATE_PREFIXES` | `1` | Create `provision/` and `inbox/` at start so they are visible in a bucket browser. |
+| `QGIS_DESKTOP_PERSIST_BASELINE` | `1` | Apply `baseline/` at every start. See [Giving users data](#giving-users-data). |
+| `QGIS_DESKTOP_PERSIST_DEPLOY` | `1` | Deliver `deploy/` into the running desktop. |
+| `QGIS_DESKTOP_PERSIST_DEPLOY_DEST` | `Desktop` | Where deploy files land, relative to the home directory. |
+| `QGIS_DESKTOP_PERSIST_CREATE_DEPLOY` | `1` | Create `deploy/` at start so it is visible in a bucket browser. `baseline/` is not created — see [Giving users data](#giving-users-data). |
 
 ## What is not saved
 
@@ -118,61 +118,100 @@ The bucket prefix holds three directories, and only one of them is a mirror:
 
 ```text
 s3://qgis-homes/alice-9c1f4e2a/
-├── home/          the user's home directory — a MIRROR of the container
-├── provision/     baseline material, applied at every start
-├── inbox/         one-time delivery into the running desktop
+├── home/            the user's home directory — a MIRROR of the container
+├── baseline/       baseline material, applied at every start
+├── deploy/          one-time delivery into the running desktop
 └── .persist-trash/  what the mirror moved aside
 ```
 
-!!! warning "Do not drop files into `home/`"
-    `home/` is a mirror. A file that is in the bucket but not in the container
-    is a file the user deleted, so the next save removes it — into
-    `.persist-trash/<timestamp>/`, recoverable, but gone from the desktop.
-    Use `provision/` or `inbox/` instead.
+!!! danger "`home/` is one-way. Never put files there."
+    **`home/` only ever travels container → bucket.** It is a *mirror* of what
+    the desktop has, not a drop box, and uploading into it does not give the
+    user the file.
 
-`provision/` and `inbox/` are created for you at every start, so they are
-already visible when you open the bucket — S3 has no directories, and without
-this the two delivery paths would be invisible until somebody guessed the names
-and hand-created the path. They are zero-byte directory markers: rclone ignores
-them when listing, so an empty `inbox/` is still nothing to deliver, and the
+    Worse, it takes something away. A file that is in the bucket but not in the
+    container is indistinguishable from a file the user deleted — so the next
+    save deletes it again, into `.persist-trash/<timestamp>/`. Recoverable, but
+    gone from the desktop, and gone from `home/`.
+
+    The only moment anything travels bucket → home is the restore, before the
+    desktop starts. To hand a user a file while they are working, use
+    **`deploy/`**.
+
+### How a file reaches a user
+
+Upload to `deploy/`, and the running container does the rest:
+
+```text
+1. you upload            s3://…/alice-9c1f4e2a/deploy/parcels.gpkg
+2. next sync tick        copied into ~/Desktop/parcels.gpkg, owned by the user
+3. immediately after     deleted from deploy/  ← delivered once, never again
+4. next save             mirrored back to the bucket as home/Desktop/parcels.gpkg
+```
+
+Step 3 is why it is safe to leave the prefix empty and reuse it: the file is not
+handed over repeatedly, and if the user deletes it, it does not come back. Step 4
+is why the file is not lost — once delivered it is the user's own file, so the
+mirror keeps it like anything else in their home directory.
+
+If the delivery fails — the container is down, the copy errors — nothing is
+deleted. The files stay in `deploy/` and are retried on the next cycle, so a
+container that is offline when you upload picks the file up when it starts.
+
+**`deploy/` is created for you at every start**, so it is already there when you
+open the bucket to send someone a file. S3 has no directories, so without this
+the delivery path would be invisible until somebody guessed the name and
+hand-created the path. It is a zero-byte directory marker: rclone ignores
+markers when listing, so an empty `deploy/` is still nothing to deliver, and the
 prefix survives a delivery that empties it.
 
-Set `QGIS_DESKTOP_PERSIST_CREATE_PREFIXES=0` to stop it — worth doing only when
-the container's credential may not write outside `home/`.
+`baseline/` is deliberately **not** created. The two prefixes are used at
+different moments: `deploy/` is where somebody drops a file in reaction to a
+request, so it has to be waiting for them; `baseline/` is set up once when a
+deployment is designed, by whoever is already scripting the bucket. An empty
+`baseline/` on every home would just be clutter implying an action nobody needs
+to take. Create it by putting something in it:
 
-### `provision/` — baseline material
+```bash
+aws s3 cp --recursive ./kit/ s3://qgis-homes/alice-9c1f4e2a/baseline/
+```
+
+Set `QGIS_DESKTOP_PERSIST_CREATE_DEPLOY=0` to stop `deploy/` being created —
+worth doing only when the container's credential may not write outside `home/`.
+
+### `baseline/` — baseline material
 
 Copied into the home directory **every time a container starts**. Never
 uploaded, never removed from the bucket, and it never overwrites a file the
 user already has.
 
 ```bash
-rclone copy ./house-style.qml remote:qgis-homes/alice-9c1f4e2a/provision/templates/
-rclone copy ./basemap.gpkg    remote:qgis-homes/alice-9c1f4e2a/provision/data/
+rclone copy ./house-style.qml remote:qgis-homes/alice-9c1f4e2a/baseline/templates/
+rclone copy ./basemap.gpkg    remote:qgis-homes/alice-9c1f4e2a/baseline/data/
 ```
 
-The layout is preserved: `provision/Desktop/logo.png` lands on the desktop,
-`provision/templates/x.qml` in `~/templates`. Good for templates, corporate
+The layout is preserved: `baseline/Desktop/logo.png` lands on the desktop,
+`baseline/templates/x.qml` in `~/templates`. Good for templates, corporate
 styles, a starter project, reference layers.
 
-Because it never overwrites, **updating a provisioned file does not reach users
+Because it never overwrites, **updating a baseline file does not reach users
 who already have it**. That is the right default — it cannot eat someone's
-work — but it means `provision/` is for the *initial* copy. Use the inbox to
+work — but it means `baseline/` is for the *initial* copy. Use `deploy/` to
 push out a new version.
 
-### `inbox/` — one-time delivery
+### `deploy/` — one-time delivery
 
 Delivered into the running desktop within one save interval, then **cleared
 from the bucket**. Drop a file in, it appears; delete it on the desktop and it
 does not come back.
 
 ```bash
-rclone copy ./aerial-2026.tif remote:qgis-homes/alice-9c1f4e2a/inbox/
+rclone copy ./aerial-2026.tif remote:qgis-homes/alice-9c1f4e2a/deploy/
 # within QGIS_DESKTOP_PERSIST_INTERVAL seconds it is on the user's desktop
 ```
 
 Files land in `~/Desktop` so they are visible immediately;
-`QGIS_DESKTOP_PERSIST_INBOX_DEST=incoming` puts them in `~/incoming` instead.
+`QGIS_DESKTOP_PERSIST_DEPLOY_DEST=incoming` puts them in `~/incoming` instead.
 
 To force a delivery without waiting for the next cycle:
 
@@ -183,12 +222,12 @@ docker exec <container> qgis-desktop-persist deliver
 ### How they are delivered
 
 Both are downloaded as root into a staging directory, then copied into the home
-**as the desktop user** — never as root. The inbox drains into a session that is
+**as the desktop user** — never as root. `deploy/` drains into a session that is
 already running, where the user can create symlinks in their own home; a
 root-owned copy would follow one and write wherever it pointed. Running the copy
 as uid 1000 means it can only reach what that user could already reach.
 
-The inbox is cleared only *after* a successful delivery, so a failure leaves the
+`deploy/` is cleared only *after* a successful delivery, so a failure leaves the
 files in the bucket to be retried rather than losing them.
 
 ## Safeguards

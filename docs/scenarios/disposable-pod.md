@@ -151,4 +151,4 @@ Being honest about the edges:
 
 - [Home persistence](../configuration/persistence.md) — every variable, and the filter list
 - [Persistent workstation](persistent-workstation.md) — the same storage, framed for daily use
-- [Delivering data through the bucket](team-data-drop.md) — `provision/` and `inbox/`
+- [Delivering data through the bucket](team-data-drop.md) — `baseline/` and `deploy/`

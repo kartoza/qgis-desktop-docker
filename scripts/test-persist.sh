@@ -229,27 +229,27 @@ else
 fi
 
 echo ""
-echo "persistence — provisioning data to the user"
+echo "persistence — the baseline data to the user"
 
-# provision/ is baseline material: applied on every start, never uploaded,
+# baseline/ is baseline material: applied on every start, never uploaded,
 # never removed from the bucket, and it never overwrites the user's own file.
-fixture provision
-mkdir -p "$BUCKET/alice-0f8b/provision/Desktop" "$BUCKET/alice-0f8b/provision/templates"
-echo "corporate style" > "$BUCKET/alice-0f8b/provision/templates/house-style.qml"
-echo "welcome" > "$BUCKET/alice-0f8b/provision/Desktop/README.txt"
+fixture baseline
+mkdir -p "$BUCKET/alice-0f8b/baseline/Desktop" "$BUCKET/alice-0f8b/baseline/templates"
+echo "corporate style" > "$BUCKET/alice-0f8b/baseline/templates/house-style.qml"
+echo "welcome" > "$BUCKET/alice-0f8b/baseline/Desktop/README.txt"
 run_persist restore
-assert_ok "restore with provision/ succeeds"
-assert_file "$HOME_DIR/templates/house-style.qml" "provisioned file lands in the home"
-assert_file "$HOME_DIR/Desktop/README.txt" "provisioned file keeps its subdirectory"
-assert_contains "$OUTPUT" "Provisioning 2 file(s)" "the provisioning is reported"
+assert_ok "restore with baseline/ succeeds"
+assert_file "$HOME_DIR/templates/house-style.qml" "baseline file lands in the home"
+assert_file "$HOME_DIR/Desktop/README.txt" "baseline file keeps its subdirectory"
+assert_contains "$OUTPUT" "Baseline: applying 2 file(s)" "the the baseline is reported"
 
 # The staged copy is read by the desktop user, not root. This caught a real
 # bug: the umask set while writing the credentials file leaked into the rest of
 # the process, so the staging directory came out 0700 root-owned and the
 # unprivileged copy could not read it. It only showed up in a container,
 # because the tests run as one user throughout.
-mkdir -p "$BUCKET/alice-0f8b/inbox"
-echo "check the mode" > "$BUCKET/alice-0f8b/inbox/mode-probe.txt"
+mkdir -p "$BUCKET/alice-0f8b/deploy"
+echo "check the mode" > "$BUCKET/alice-0f8b/deploy/mode-probe.txt"
 run_persist deliver
 STAGE_MODE="$(stat -c '%a' "$STAGE" 2>/dev/null || echo '?')"
 # Anything ending in 5 (or 7) for "other" is traversable; 0700 is the bug.
@@ -261,31 +261,31 @@ assert_equals "$(stat -c '%a' "$STATE/rclone.conf" 2>/dev/null)" "400" \
   "…while the credentials file stays 0400"
 
 run_persist push
-assert_ok "save after provisioning succeeds"
-assert_exists "$BUCKET/alice-0f8b/provision/templates/house-style.qml" \
-  "provision/ is left in the bucket, not consumed"
+assert_ok "save after the baseline succeeds"
+assert_exists "$BUCKET/alice-0f8b/baseline/templates/house-style.qml" \
+  "baseline/ is left in the bucket, not consumed"
 assert_file "$(remote_home)/templates/house-style.qml" \
-  "the provisioned file is now part of the user's saved home"
+  "the baseline file is now part of the user's saved home"
 
 # A user's own edit must survive the next container start: it is saved, then
-# restored, and provisioning must not put the pristine copy back over it.
+# restored, and the baseline must not put the pristine copy back over it.
 echo "my own version" > "$HOME_DIR/templates/house-style.qml"
 run_persist push
 assert_ok "saving the user's edit succeeds"
 rm -rf "${HOME_DIR:?}/templates"   # a fresh container has nothing local
 run_persist restore
 assert_contains "$(cat "$HOME_DIR/templates/house-style.qml" 2>&1)" "my own version" \
-  "provisioning never overwrites the user's own copy"
+  "the baseline never overwrites the user's own copy"
 
-# inbox/ is a one-time handover: delivered, then cleared from the bucket.
-fixture inbox
+# deploy/ is a one-time handover: delivered, then cleared from the bucket.
+fixture deploy
 run_persist restore
-mkdir -p "$BUCKET/alice-0f8b/inbox"
-echo "a picture" > "$BUCKET/alice-0f8b/inbox/photo.jpg"
+mkdir -p "$BUCKET/alice-0f8b/deploy"
+echo "a picture" > "$BUCKET/alice-0f8b/deploy/photo.jpg"
 run_persist deliver
-assert_ok "delivering the inbox succeeds"
-assert_file "$HOME_DIR/Desktop/photo.jpg" "the inbox file lands on the desktop"
-assert_absent "$BUCKET/alice-0f8b/inbox/photo.jpg" "the inbox is cleared once delivered"
+assert_ok "delivering deploy/ succeeds"
+assert_file "$HOME_DIR/Desktop/photo.jpg" "the deployed file lands on the desktop"
+assert_absent "$BUCKET/alice-0f8b/deploy/photo.jpg" "deploy/ is cleared once delivered"
 assert_contains "$OUTPUT" "delivered and cleared" "and says so"
 
 # Delivered once means delivered once: deleting it does not bring it back.
@@ -294,55 +294,56 @@ run_persist deliver
 assert_absent "$HOME_DIR/Desktop/photo.jpg" "a delivered file does not come back"
 
 # A different destination.
-mkdir -p "$BUCKET/alice-0f8b/inbox"
-echo "data" > "$BUCKET/alice-0f8b/inbox/layer.gpkg"
-run_persist QGIS_DESKTOP_PERSIST_INBOX_DEST=incoming deliver
-assert_file "$HOME_DIR/incoming/layer.gpkg" "the inbox destination is configurable"
+mkdir -p "$BUCKET/alice-0f8b/deploy"
+echo "data" > "$BUCKET/alice-0f8b/deploy/layer.gpkg"
+run_persist QGIS_DESKTOP_PERSIST_DEPLOY_DEST=incoming deliver
+assert_file "$HOME_DIR/incoming/layer.gpkg" "the deploy destination is configurable"
 
-# Both prefixes are created at restore, so an operator opening the bucket can
-# see where to put a file instead of having to know the names and hand-create
-# the path. On S3 these are zero-byte directory markers; on a local remote,
-# real directories.
+# deploy/ is created at restore, so an operator opening the bucket can see where
+# to put a file instead of having to know the name and hand-create the path. On
+# S3 this is a zero-byte directory marker; on a local remote, a real directory.
 fixture prefixes
 run_persist restore
 assert_ok "restore succeeds on an empty bucket"
-assert_exists "$BUCKET/alice-0f8b/provision" "provision/ is created at restore"
-assert_exists "$BUCKET/alice-0f8b/inbox" "inbox/ is created at restore"
+assert_exists "$BUCKET/alice-0f8b/deploy" "deploy/ is created at restore"
+# baseline/ is set up once by whoever designs the deployment, not by someone
+# reacting to a request, so an empty one on every home would be clutter.
+assert_absent "$BUCKET/alice-0f8b/baseline" "baseline/ is NOT created — nothing to react to"
 
-# An empty inbox is not something to deliver: no phantom file, no noise.
+# An empty deploy/ is not something to deliver: no phantom file, no noise.
 run_persist deliver
-assert_ok "delivering an empty inbox succeeds"
-if grep -q "Inbox: delivering" <<< "$OUTPUT"; then
-  no "an empty inbox must not report a delivery" "$(grep -i inbox <<< "$OUTPUT" | head -2)"
+assert_ok "delivering an empty deploy/ succeeds"
+if grep -q "Deploy: delivering" <<< "$OUTPUT"; then
+  no "an empty deploy/ must not report a delivery" "$(grep -i deploy <<< "$OUTPUT" | head -2)"
 else
-  ok "an empty inbox reports nothing to deliver"
+  ok "an empty deploy/ reports nothing to deliver"
 fi
-assert_absent "$HOME_DIR/Desktop/inbox" "no marker is delivered as a file"
+assert_absent "$HOME_DIR/Desktop/deploy" "no marker is delivered as a file"
 
 # Delivery must not remove the prefix — otherwise it is there once, disappears
 # after the first hand-off, and the operator is back to creating it by hand.
-echo "one off" > "$BUCKET/alice-0f8b/inbox/handover.txt"
+echo "one off" > "$BUCKET/alice-0f8b/deploy/handover.txt"
 run_persist deliver
 assert_file "$HOME_DIR/Desktop/handover.txt" "the delivery still works"
-assert_exists "$BUCKET/alice-0f8b/inbox" "inbox/ survives a delivery that empties it"
+assert_exists "$BUCKET/alice-0f8b/deploy" "deploy/ survives a delivery that empties it"
 
 # Opt out, for a credential scoped so tightly it cannot create them.
 fixture noprefixes
-run_persist QGIS_DESKTOP_PERSIST_CREATE_PREFIXES=0 restore
-assert_ok "restore succeeds with prefix creation off"
-assert_absent "$BUCKET/alice-0f8b/inbox" "prefix creation can be turned off"
+run_persist QGIS_DESKTOP_PERSIST_CREATE_DEPLOY=0 restore
+assert_ok "restore succeeds with deploy/ creation off"
+assert_absent "$BUCKET/alice-0f8b/deploy" "deploy/ creation can be turned off"
 
 # Both can be turned off.
 fixture nodeliver
-mkdir -p "$BUCKET/alice-0f8b/provision" "$BUCKET/alice-0f8b/inbox"
-echo x > "$BUCKET/alice-0f8b/provision/p.txt"
-echo y > "$BUCKET/alice-0f8b/inbox/i.txt"
-run_persist QGIS_DESKTOP_PERSIST_PROVISION=0 QGIS_DESKTOP_PERSIST_INBOX=0 restore
-assert_absent "$HOME_DIR/p.txt" "provisioning can be turned off"
-assert_absent "$HOME_DIR/Desktop/i.txt" "the inbox can be turned off"
-assert_exists "$BUCKET/alice-0f8b/inbox/i.txt" "and the inbox is left untouched"
+mkdir -p "$BUCKET/alice-0f8b/baseline" "$BUCKET/alice-0f8b/deploy"
+echo x > "$BUCKET/alice-0f8b/baseline/p.txt"
+echo y > "$BUCKET/alice-0f8b/deploy/i.txt"
+run_persist QGIS_DESKTOP_PERSIST_BASELINE=0 QGIS_DESKTOP_PERSIST_DEPLOY=0 restore
+assert_absent "$HOME_DIR/p.txt" "the baseline can be turned off"
+assert_absent "$HOME_DIR/Desktop/i.txt" "deploy/ can be turned off"
+assert_exists "$BUCKET/alice-0f8b/deploy/i.txt" "and deploy/ is left untouched"
 
-# The behaviour that sends people to the inbox in the first place: home/ is a
+# The behaviour that sends people to deploy/ in the first place: home/ is a
 # mirror, so a file dropped there is treated as one the user deleted. Pinned
 # here so nobody "fixes" it into a two-way sync by accident.
 fixture mirror

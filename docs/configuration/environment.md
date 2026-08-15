@@ -47,7 +47,7 @@ Open a specific project with it:
 ```
 
 That pairs with [home persistence](persistence.md): put the project in the
-user's `provision/` prefix and it is on disk before the session starts, so the
+user's `baseline/` prefix and it is on disk before the session starts, so the
 first thing they see is their own map.
 
 !!! note "How it works"

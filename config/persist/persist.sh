@@ -9,7 +9,7 @@
 #   push      local  -> remote, guarded, repeatedly
 #   loop      deliver + push on an interval until killed
 #   flush     a final push, on the way down
-#   deliver   apply provision/ and drain inbox/ now
+#   deliver   apply baseline/ and drain deploy/ now
 #   status    what is configured and how full it is
 #   release   drop the single-writer lease
 #
@@ -60,22 +60,27 @@ EXTRA_RCLONE_ARGS="${QGIS_DESKTOP_PERSIST_RCLONE_ARGS:-}"
 
 # Handing data to the user. Both are no-ops until the corresponding directory
 # exists in the bucket.
-USE_PROVISION="${QGIS_DESKTOP_PERSIST_PROVISION:-1}"
-USE_INBOX="${QGIS_DESKTOP_PERSIST_INBOX:-1}"
-INBOX_DEST="${QGIS_DESKTOP_PERSIST_INBOX_DEST:-Desktop}"
+USE_BASELINE="${QGIS_DESKTOP_PERSIST_BASELINE:-1}"
+USE_DEPLOY="${QGIS_DESKTOP_PERSIST_DEPLOY:-1}"
+DEPLOY_DEST="${QGIS_DESKTOP_PERSIST_DEPLOY_DEST:-Desktop}"
 
-# Create provision/ and inbox/ in the bucket at startup so an operator can see
-# where to put things. S3 has no directories — a prefix exists only while an
-# object is under it — so without this the two delivery paths are invisible in
-# a bucket browser, and whoever wants to send a user a file has to know the
-# names and hand-create the path. Both are written as zero-byte directory
-# markers, which rclone skips when listing, so an empty inbox/ is still worth
-# nothing to deliver.
-CREATE_PREFIXES="${QGIS_DESKTOP_PERSIST_CREATE_PREFIXES:-1}"
+# Create deploy/ in the bucket at startup so an operator can see where to put a
+# file. S3 has no directories — a prefix exists only while an object is under
+# it — so without this the delivery path is invisible in a bucket browser, and
+# whoever wants to send a user a file has to know the name and hand-create the
+# path. Written as a zero-byte directory marker, which rclone skips when
+# listing, so an empty deploy/ is still nothing to deliver.
+#
+# baseline/ deliberately does NOT get this treatment. deploy/ is where someone
+# drops a file at any moment, so it needs to be waiting for them; baseline/ is
+# set up once when a deployment is designed, by whoever is already scripting the
+# bucket. An empty baseline/ on every home would be clutter suggesting an
+# action nobody needs to take.
+CREATE_DEPLOY="${QGIS_DESKTOP_PERSIST_CREATE_DEPLOY:-1}"
 
 # Runtime state, root-only.
 STATE_DIR="${QGIS_DESKTOP_PERSIST_STATE_DIR:-/run/qgis-desktop/persist}"
-# Where provisioned and inbox files land before being copied into the home as
+# Where baseline and deployed files land before being copied into the home as
 # the desktop user. Root-owned but readable — it never holds a credential.
 STAGE_DIR="${QGIS_DESKTOP_PERSIST_STAGE_DIR:-/run/qgis-desktop/staging}"
 RCLONE_CONF="${STATE_DIR}/rclone.conf"
@@ -158,7 +163,7 @@ no_check_bucket = true"
 
   # The umask is scoped to the write, in a subshell, so it cannot leak. It used
   # to be set for the rest of the process, which made the staging directory
-  # 0700 root-owned — and the unprivileged copy that delivers provisioned files
+  # 0700 root-owned — and the unprivileged copy that delivers baseline files
   # could not read it. The file must never be group- or world-readable even for
   # the instant between creating and chmod'ing it.
   (
@@ -186,23 +191,35 @@ remote_lease() { printf '%s/%s' "$(remote_root)" "${LEASE_OBJECT}"; }
 # Two ways to hand data TO a user, both outside home/ so the mirror never
 # touches them:
 #
-#   provision/  copied in every time a container starts, never uploaded, never
+#   baseline/  copied in every time a container starts, never uploaded, never
 #               removed from the bucket. Baseline material — templates, base
 #               layers, a corporate style file. Existing files are left alone,
 #               so it cannot overwrite the user's own work.
-#   inbox/      delivered into the running desktop and then removed from the
+#   deploy/     delivered into the running desktop and then removed from the
 #               bucket. A one-time handover: drop a file in, it appears, it
 #               does not come back next restart.
 #
-# Anything dropped into home/ instead is treated as a file the user deleted —
-# home/ is a mirror of the container, and the next save makes it match again.
-remote_provision() { printf '%s/provision' "$(remote_root)"; }
-remote_inbox() { printf '%s/inbox' "$(remote_root)"; }
+# home/ is ONE-WAY: container -> bucket. It is a mirror of what the desktop
+# has, not a drop box. A file uploaded into home/ is, by definition, a file that
+# exists in the bucket and not in the container — which is exactly what a file
+# the user deleted looks like — so the next save removes it again (into
+# .persist-trash/, recoverable, but gone from the desktop). It never travels
+# the other way except during the restore at boot.
+#
+# That is the whole reason deploy/ exists. Its lifecycle:
+#
+#   1. someone uploads a file to deploy/
+#   2. the running container copies it into the user's home, as the user
+#   3. it is deleted from deploy/, so it is delivered once and not again
+#   4. the next save mirrors it back to the bucket, now under home/ — because
+#      it is a file the user has
+remote_baseline() { printf '%s/baseline' "$(remote_root)"; }
+remote_deploy() { printf '%s/deploy' "$(remote_root)"; }
 
-# Make both delivery prefixes visible in the bucket before anyone needs them.
-# Idempotent, and cheap enough to run at every boot.
+# Make deploy/ visible in the bucket before anyone needs it. Idempotent, and
+# cheap enough to run at every boot.
 ensure_prefixes() {
-  [ "$(to_bool "${CREATE_PREFIXES}")" = "1" ] || return 0
+  [ "$(to_bool "${CREATE_DEPLOY}")" = "1" ] || return 0
 
   local -a args=()
   # On S3 a directory has to be faked with a zero-byte object whose key ends in
@@ -211,12 +228,9 @@ ensure_prefixes() {
   # directories and needs no such flag.
   [ "${REMOTE_TYPE}" = "s3" ] && args+=(--s3-directory-markers)
 
-  local p
-  for p in "$(remote_provision)" "$(remote_inbox)"; do
-    # Never fatal: a credential scoped to home/ can legitimately refuse this,
-    # and a missing prefix only costs the operator a click later.
-    rc mkdir "${args[@]}" "${p}" >/dev/null 2>&1 || true
-  done
+  # Never fatal: a credential scoped to home/ can legitimately refuse this, and
+  # a missing prefix only costs the operator a click later.
+  rc mkdir "${args[@]}" "$(remote_deploy)" >/dev/null 2>&1 || true
 }
 
 rc() {
@@ -355,7 +369,7 @@ stage_readable() {
 
 # Copy a staged directory into the home AS THE DESKTOP USER, not as root.
 #
-# The user's session is running by the time the inbox is drained, and they can
+# The user's session is running by the time deploy/ is drained, and they can
 # create symlinks in their own home. A root-owned copy would follow one and
 # write wherever it pointed; the same copy running as uid 1000 can only reach
 # what that uid could already reach. The staging directory is root-owned and
@@ -399,25 +413,25 @@ deliver_as_user() {
 }
 
 # Baseline material, applied on every start. --ignore-existing on the download
-# and -n on the copy: a provisioned file never overwrites what the user has.
-# Changing a provisioned file therefore does not reach users who already have
-# it — use the inbox for that.
-apply_provision() {
-  [ "$(to_bool "${USE_PROVISION}")" = "1" ] || return 0
+# and -n on the copy: a baseline file never overwrites what the user has.
+# Changing a baseline file therefore does not reach users who already have
+# it — use deploy/ for that.
+apply_baseline() {
+  [ "$(to_bool "${USE_BASELINE}")" = "1" ] || return 0
 
-  local staged="${STAGE_DIR}/provision"
+  local staged="${STAGE_DIR}/baseline"
   rm -rf "${staged}"
   mkdir -p "${staged}"
 
   local count
-  count="$(rc size "$(remote_provision)" --json 2>/dev/null |
+  count="$(rc size "$(remote_baseline)" --json 2>/dev/null |
     sed -n 's/.*"count":\([0-9]*\).*/\1/p' | head -1)"
   count="${count:-0}"
   [ "${count}" -gt 0 ] || return 0
 
-  log "Provisioning ${count} file(s) from provision/"
-  if ! rc copy "$(remote_provision)" "${staged}" --transfers 8 --stats-one-line --stats 30s; then
-    err "Could not fetch provision/ — continuing without it."
+  log "Baseline: applying ${count} file(s) from baseline/"
+  if ! rc copy "$(remote_baseline)" "${staged}" --transfers 8 --stats-one-line --stats 30s; then
+    err "Could not fetch baseline/ — continuing without it."
     rm -rf "${staged}"
     return 0
   fi
@@ -425,19 +439,19 @@ apply_provision() {
   stage_readable "${staged}"
 
   deliver_as_user "${staged}" "${HOME_DIR}" no-clobber ||
-    err "Could not deliver provision/ into the home directory."
+    err "Could not deliver baseline/ into the home directory."
   rm -rf "${staged}"
 }
 
 # One-time delivery into a running session. Copy, deliver, and only then remove
-# from the bucket: if the delivery fails, the files stay in the inbox and are
+# from the bucket: if the delivery fails, the files stay in deploy/ and are
 # retried next cycle rather than disappearing.
-drain_inbox() {
-  [ "$(to_bool "${USE_INBOX}")" = "1" ] || return 0
+drain_deploy() {
+  [ "$(to_bool "${USE_DEPLOY}")" = "1" ] || return 0
 
-  local staged="${STAGE_DIR}/inbox"
+  local staged="${STAGE_DIR}/deploy"
   local count
-  count="$(rc size "$(remote_inbox)" --json 2>/dev/null |
+  count="$(rc size "$(remote_deploy)" --json 2>/dev/null |
     sed -n 's/.*"count":\([0-9]*\).*/\1/p' | head -1)"
   count="${count:-0}"
   [ "${count}" -gt 0 ] || return 0
@@ -445,26 +459,26 @@ drain_inbox() {
   rm -rf "${staged}"
   mkdir -p "${staged}"
 
-  log "Inbox: delivering ${count} file(s) to ${INBOX_DEST}"
-  if ! rc copy "$(remote_inbox)" "${staged}" --transfers 8 --stats-one-line --stats 30s; then
-    err "Could not fetch inbox/ — leaving it in place for the next cycle."
+  log "Deploy: delivering ${count} file(s) to ${DEPLOY_DEST}"
+  if ! rc copy "$(remote_deploy)" "${staged}" --transfers 8 --stats-one-line --stats 30s; then
+    err "Could not fetch deploy/ — leaving it in place for the next cycle."
     rm -rf "${staged}"
     return 0
   fi
 
   stage_readable "${staged}"
 
-  if ! deliver_as_user "${staged}" "${HOME_DIR}/${INBOX_DEST}" clobber; then
-    err "Could not deliver the inbox — leaving it in the bucket to retry."
+  if ! deliver_as_user "${staged}" "${HOME_DIR}/${DEPLOY_DEST}" clobber; then
+    err "Could not deliver deploy/ — leaving it in the bucket to retry."
     rm -rf "${staged}"
     return 0
   fi
 
   # Delivered. Now it can leave the bucket.
-  rc delete "$(remote_inbox)" --rmdirs 2>/dev/null ||
-    err "Delivered the inbox but could not clear it; the next cycle will deliver again."
+  rc delete "$(remote_deploy)" --rmdirs 2>/dev/null ||
+    err "Delivered deploy/ but could not clear it; the next cycle will deliver again."
   rm -rf "${staged}"
-  log "Inbox: delivered and cleared"
+  log "Deploy: delivered and cleared"
 }
 
 # --- Quota ------------------------------------------------------------------
@@ -568,8 +582,8 @@ cmd_restore() {
   mkdir -p "${STAGE_DIR}"
   chmod 0755 "${STAGE_DIR}"
   ensure_prefixes
-  apply_provision
-  drain_inbox
+  apply_baseline
+  drain_deploy
 
   mkdir -p "${STATE_DIR}"
   date -u '+%Y-%m-%dT%H:%M:%SZ' > "${SENTINEL}"
@@ -675,9 +689,9 @@ cmd_loop() {
   log "Sync loop started — saving every ${INTERVAL}s."
   while :; do
     sleep "${INTERVAL}"
-    # Deliver before saving: a file dropped into the inbox reaches the desktop
+    # Deliver before saving: a file dropped into deploy/ reaches the desktop
     # this cycle, and is part of the home directory the save then mirrors.
-    drain_inbox || true
+    drain_deploy || true
     cmd_push || true
   done
 }
@@ -727,8 +741,8 @@ cmd_deliver() {
   mkdir -p "${STAGE_DIR}"
   chmod 0755 "${STAGE_DIR}"
   ensure_prefixes
-  apply_provision
-  drain_inbox
+  apply_baseline
+  drain_deploy
 }
 
 case "${COMMAND}" in

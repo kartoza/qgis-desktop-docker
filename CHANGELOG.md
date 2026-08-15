@@ -13,9 +13,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   target**, concentrated on the two features that most needed them — object
   storage and single sign-on:
   - *Persistent workstation* (`run-persistence-demo`) — a home directory in a
-    bucket, with a provisioned project QGIS opens on.
+    bucket, with a baseline project QGIS opens on.
   - *Delivering data through the bucket* (`run-data-drop-scenario`) — the
-    `provision/` and `inbox/` prefixes, and what each one is for.
+    `baseline/` and `deploy/` prefixes, and what each one is for.
   - *The disposable desktop* (`run-disposable-scenario`) — the scenario you are
     meant to break, with a step for every persistence guard.
   - *Federating an identity provider* (`run-federated-idp-scenario`) — Keycloak
@@ -27,26 +27,40 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     troubleshooting table of failures reproduced against a stock Keycloak 26.
   - *SSO + persistent homes* (`run-sso-homes-scenario`) — both features
     composed, which is the production shape.
+  - *Kiosk display* (`run-kiosk-scenario`) — autostarted on a project, no
+    terminal, no clipboard, no network.
 - **`nix run .#check-oidc`** — preflight an OIDC provider you administer before
   pointing a container at it. Checks discovery, that the issuer announces the
   name you configured, that the client secret is accepted, that the redirect URI
   is registered, and that role gating is wired; names the specific cause instead
   of leaving you with a redirect loop or a bare 403. Reads the same variables
   the container does, including `_CLIENT_SECRET_FILE`.
-  - *Kiosk display* (`run-kiosk-scenario`) — autostarted on a project, no
-    terminal, no clipboard, no network.
-- **Diagrams generated at docs build time.** Nine D2 sources render to SVG in
+- **Diagrams generated at docs build time.** Ten D2 sources render to SVG in
   `nix run .#docs-diagrams`, are checked for drift by `nix run .#test`, and are
-  converted for the PDF — so unlike mermaid they appear in every output.
-
-- **`provision/` and `inbox/` are created in the bucket at startup**, so an
-  operator opening a bucket browser can see where to put a file. S3 has no
-  directories — a prefix exists only while an object is under it — so until now
-  the two delivery paths were invisible on a new home, and sending a user a file
-  meant knowing the names and hand-creating the path. Written as zero-byte
-  directory markers, which rclone ignores when listing: an empty `inbox/` is
-  still nothing to deliver, and the prefix survives a delivery that empties it.
-  `QGIS_DESKTOP_PERSIST_CREATE_PREFIXES=0` opts out.
+  converted for the PDF — so unlike mermaid they appear in every output. They
+  are laid out vertically and render at natural size, scrolling sideways when
+  they must, because a wide diagram squeezed into the content column has
+  unreadable labels.
+- **The two delivery prefixes are named for what they do**: `baseline/` (was
+  `provision/`) is the standard issue every session starts with, and `deploy/`
+  (was `inbox/`) is a one-off hand-off to a running desktop. The old pair was
+  guessable in the wrong direction — "inbox" says nothing about who it is for,
+  and it sat next to a near-synonym. Variables moved with them:
+  `QGIS_DESKTOP_PERSIST_BASELINE`, `QGIS_DESKTOP_PERSIST_DEPLOY`,
+  `_DEPLOY_DEST`. Nothing had shipped under the old names.
+- **`home/` being one-way is now stated where people will read it**, with the
+  four-step lifecycle of a delivered file. Uploading into `home/` does not give
+  the user the file — it looks exactly like a file they deleted, so the next
+  save removes it again. That confusion is what the rename and the docs fix.
+- **`deploy/` is created in the bucket at startup**, so an operator opening a
+  bucket browser can see where to put a file. S3 has no directories — a prefix
+  exists only while an object is under it — so until now the delivery path was
+  invisible on a new home, and sending a user a file meant knowing the name and
+  hand-creating the path. Written as a zero-byte directory marker, which rclone
+  ignores when listing: an empty `deploy/` is still nothing to deliver, and the
+  prefix survives a delivery that empties it. `baseline/` is deliberately not
+  created — it is set up once when a deployment is designed, not in reaction to
+  a request. `QGIS_DESKTOP_PERSIST_CREATE_DEPLOY=0` opts out.
 
 ### Fixed
 
@@ -167,8 +181,8 @@ the `VNC_*` session variables.
   logs in.
 - Caches, session scaffolding and `.kasmpasswd` are never uploaded.
 - Two directories alongside `home/` hand data *to* a user, both outside the
-  mirror: `provision/` is copied in at every container start and never
-  overwrites the user's own file, and `inbox/` is delivered into the running
+  mirror: `baseline/` is copied in at every container start and never
+  overwrites the user's own file, and `deploy/` is delivered into the running
   desktop and then cleared from the bucket. Both are downloaded as root and
   copied into the home as the desktop user, so a symlink in a live session
   cannot redirect a privileged write. Dropping a file into `home/` instead is

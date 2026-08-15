@@ -1,7 +1,7 @@
 # What you create in Keycloak, and which container variable consumes it.
 # Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
 
-direction: right
+direction: down
 
 kc: "Your Keycloak\n(you have admin)" {
   style.fill: "#F5F5F2"
@@ -56,11 +56,17 @@ kc -> check: "verified before\nanything is started" { style.bold: true }
 check -> env: "then run it"
 
 warn: |md
-  **The one that catches everyone:** the issuer must be the same name for the
-  browser and for the container. If the container reaches Keycloak as
-  `http://keycloak:8080` and the browser uses `http://localhost:8080`, the
-  token's `iss` will not match and every login fails at the last step. Use one
-  DNS name that resolves for both.
+  **The one that catches everyone:**
+  the issuer must be the same name for
+  the browser and for the container.
+
+  If the container reaches Keycloak as
+  `http://keycloak:8080` and the browser
+  uses `http://localhost:8080`, the
+  token's `iss` will not match and every
+  login fails at the last step.
+
+  Use one DNS name that resolves for both.
 | {
   near: bottom-center
   style.fill: "#FFF9E6"

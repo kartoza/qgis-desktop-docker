@@ -1,7 +1,7 @@
 # Two delivery prefixes, two different jobs.
 # Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
 
-direction: right
+direction: down
 
 operator: "Operator\nor a CI job" { shape: person }
 
@@ -10,11 +10,11 @@ bucket: "s3://qgis-homes/surveyor-7c1e/" {
   style.fill: "#F5F5F2"
   style.stroke: "#1C1D1D"
 
-  provision: "provision/\nstandard issue kit" {
+  baseline: "baseline/\nstandard issue kit" {
     style.fill: "#E8F4FB"
     style.stroke: "#1E88C7"
   }
-  inbox: "inbox/\none-off delivery" {
+  deploy: "deploy/\none-off delivery" {
     style.fill: "#FFF9E6"
     style.stroke: "#E8A33D"
   }
@@ -46,32 +46,46 @@ desktop: "~/ on the desktop" {
   desk: "~/Desktop\noverwritten on delivery"
 }
 
-operator -> bucket.provision: "mc cp (any S3 client)"
-operator -> bucket.inbox: "mc cp"
+operator -> bucket.baseline: "mc cp (any S3 client)"
+operator -> bucket.deploy: "mc cp"
 
-bucket.provision -> container.persist: "at every container start" {
+bucket.baseline -> container.persist: "at every container start" {
   style.stroke: "#1E88C7"
 }
-bucket.inbox -> container.persist: "every interval,\nwhile running" {
+bucket.deploy -> container.persist: "every interval,\nwhile running" {
   style.stroke: "#E8A33D"
   style.bold: true
 }
 
 container.copy -> desktop.projects: "skip-existing"
-container.copy -> desktop.desk: "clobber, then\ndelete from inbox/"
+container.copy -> desktop.desk: "clobber, then\ndelete from deploy/"
 
-desktop -> bucket.home: "saved back\nevery interval"
+desktop -> bucket.home: "saved back every interval\nONE WAY — container to bucket" {
+  style.bold: true
+}
 
 rules: |md
-  **provision/** is a baseline: it survives delivery, arrives at
-  every start, and loses to a file the user already has.
+  **baseline/** is standard issue:
+  arrives at every start, loses to
+  a file the user already has,
+  and stays in the bucket.
 
-  **inbox/** is a hand-off: it is drained while the session runs,
-  wins over what is there, and is deleted from the bucket once
-  delivered — so it is delivered once, not every minute.
+  **deploy/** is a hand-off:
+  drained while the session runs,
+  wins over what is there, and is
+  deleted once delivered — so it
+  arrives once, not every minute.
 
-  Both are copied by a process that has dropped to uid 1000, so a
-  crafted archive cannot write outside the user's home directory.
+  **home/ is a MIRROR, not a drop box.**
+  Uploading into it does not give the
+  user the file: it looks exactly like
+  a file they deleted, so the next save
+  removes it again. Use deploy/.
+
+  Both inputs are copied by a process
+  that has dropped to uid 1000, so a
+  crafted archive cannot write outside
+  the user's home directory.
 | {
   near: bottom-center
   style.fill: "#FFF9E6"

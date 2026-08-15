@@ -17,9 +17,9 @@
 #      `docker kill qgis-desktop-persist && docker compose up -d` — it comes
 #      back. A hard kill costs at most one interval; `docker compose stop` saves
 #      first and costs nothing.
-#   2. Drop a file into qgis-homes/tim-4f2f96a9/inbox/ in the MinIO console. It
-#      appears on the desktop within a minute and the inbox empties.
-#   3. Put one in provision/ instead: it arrives at every container start and
+#   2. Drop a file into qgis-homes/tim-4f2f96a9/deploy/ in the MinIO console. It
+#      appears on the desktop within a minute and deploy/ empties.
+#   3. Put one in baseline/ instead: it arrives at every container start and
 #      stays in the bucket.
 #
 # THIS IS A DEMO. The MinIO credentials below are in this file and in the
@@ -47,10 +47,10 @@ services:
       retries: 30
       start_period: 5s
 
-  # One-shot: create the bucket, seed the user's provision/ prefix, then exit.
+  # One-shot: create the bucket, seed the user's baseline/ prefix, then exit.
   # The desktop waits for it.
   #
-  # provision/ is the operator's way in: whatever is here lands in the home
+  # baseline/ is the operator's way in: whatever is here lands in the home
   # directory at every container start, without ever overwriting the user's own
   # copy. Seeding a starter project here is what makes the autostart flag below
   # open something useful instead of an empty canvas.
@@ -88,8 +88,8 @@ services:
         </qgis>
         PROJECT
 
-        mc cp --recursive /tmp/seed/ demo/qgis-homes/tim-4f2f96a9/provision/
-        echo "bucket ready: qgis-homes, provision/ seeded with a starter project"
+        mc cp --recursive /tmp/seed/ demo/qgis-homes/tim-4f2f96a9/baseline/
+        echo "bucket ready: qgis-homes, baseline/ seeded with a starter project"
 
   qgis-desktop:
     image: nix-xfce-kasm:latest
@@ -129,7 +129,7 @@ services:
       # their home saying so.
       - QGIS_DESKTOP_PERSIST_QUOTA=2G
 
-      # Open QGIS with the session, on the project seeded into provision/
+      # Open QGIS with the session, on the project seeded into baseline/
       # above. The user signs in and their map is already loading.
       - QGIS_DESKTOP_AUTOSTART_QGIS=1
       - QGIS_DESKTOP_AUTOSTART_QGIS_ARGS=--project /home/user/projects/starter.qgs

@@ -14,7 +14,7 @@ k8s -> entry: "start"
 boot: "Boot" {
   entry -> persist: "restore"
   persist -> bucket: "take the lease"
-  bucket -> persist: "home/ + provision/ + inbox/"
+  bucket -> persist: "home/ + baseline/ + deploy/"
   persist -> entry: "sentinel written"
   entry -> desktop: "start the session"
 }
@@ -22,7 +22,7 @@ boot: "Boot" {
 work: "While the user works" {
   desktop -> desktop: "edits projects,\nQGIS writes SQLite"
   persist -> bucket: "save every INTERVAL"
-  bucket -> persist: "anything in inbox/"
+  bucket -> persist: "anything in deploy/"
   persist -> desktop: "deliver to ~/Desktop"
 }
 

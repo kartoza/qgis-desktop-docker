@@ -11,17 +11,17 @@
 #
 # Two prefixes, two different jobs:
 #
-#   provision/  Baseline. Copied into the home directory at every container
+#   baseline/  Baseline. Copied into the home directory at every container
 #               start, never overwriting the user's own copy, and it STAYS in
 #               the bucket. This is the standard issue kit — basemaps, styles,
 #               a starter project.
 #
-#   inbox/      Delivery. Drained into ~/Desktop while the container runs,
+#   deploy/      Delivery. Drained into ~/Desktop while the container runs,
 #               overwriting, and REMOVED from the bucket once delivered. This is
 #               "here is the survey you asked for", mid-session.
 #
 # The `dispatch` service below waits a minute and then drops a file into
-# inbox/, so you can watch it land on a desktop that is already running.
+# deploy/, so you can watch it land on a desktop that is already running.
 #
 # DEMO CREDENTIALS, in plain sight. Real deployments use the _FILE variables.
 services:
@@ -44,8 +44,8 @@ services:
       retries: 30
       start_period: 5s
 
-  # One-shot: the kit every field surveyor gets, into provision/.
-  seed-provision:
+  # One-shot: the kit every field surveyor gets, into baseline/.
+  seed-baseline:
     image: minio/mc:latest
     container_name: data-drop-seed
     depends_on:
@@ -86,16 +86,16 @@ services:
         Edit it freely — your changes are yours and will not be overwritten.
         NOTE
 
-        mc cp --recursive /tmp/kit/ demo/qgis-homes/surveyor-7c1e/provision/
-        echo "provision/ seeded: survey.qgs, house-style.qml, README.txt"
+        mc cp --recursive /tmp/kit/ demo/qgis-homes/surveyor-7c1e/baseline/
+        echo "baseline/ seeded: survey.qgs, house-style.qml, README.txt"
 
-  # One-shot, deliberately late: a mid-session delivery into inbox/. Watch the
-  # desktop logs for "[persist] Inbox: delivering", then look at ~/Desktop.
+  # One-shot, deliberately late: a mid-session delivery into deploy/. Watch the
+  # desktop logs for "[persist] Deploy: delivering", then look at ~/Desktop.
   dispatch:
     image: minio/mc:latest
     container_name: data-drop-dispatch
     depends_on:
-      seed-provision:
+      seed-baseline:
         condition: service_completed_successfully
     entrypoint:
       - sh
@@ -106,15 +106,15 @@ services:
         echo "waiting 75s, so the delivery lands on a desktop that is already up..."
         sleep 75
         printf 'id,name,lat,lon\n1,Pump station,-33.92,18.42\n' > /tmp/assets.csv
-        mc cp /tmp/assets.csv demo/qgis-homes/surveyor-7c1e/inbox/assets.csv
-        echo "dispatched assets.csv -> inbox/ (expect it on the Desktop within one interval)"
+        mc cp /tmp/assets.csv demo/qgis-homes/surveyor-7c1e/deploy/assets.csv
+        echo "dispatched assets.csv -> deploy/ (expect it on the Desktop within one interval)"
 
   qgis-desktop:
     image: nix-xfce-kasm:latest
     container_name: data-drop-desktop
     hostname: qgis-desktop-0
     depends_on:
-      seed-provision:
+      seed-baseline:
         condition: service_completed_successfully
     ports:
       - "8443:8443"
@@ -132,9 +132,9 @@ services:
 
       # Both delivery paths are on by default; named here because they are the
       # point of this scenario.
-      - QGIS_DESKTOP_PERSIST_PROVISION=1
-      - QGIS_DESKTOP_PERSIST_INBOX=1
-      - QGIS_DESKTOP_PERSIST_INBOX_DEST=Desktop
+      - QGIS_DESKTOP_PERSIST_BASELINE=1
+      - QGIS_DESKTOP_PERSIST_DEPLOY=1
+      - QGIS_DESKTOP_PERSIST_DEPLOY_DEST=Desktop
 
       # Short, so a delivery is visible while you are watching.
       - QGIS_DESKTOP_PERSIST_INTERVAL=60

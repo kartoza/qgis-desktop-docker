@@ -1,7 +1,7 @@
 # What the home directory actually is, and where the durable copy lives.
 # Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
 
-direction: right
+direction: down
 
 container: Container {
   style.fill: "#F5F5F2"
@@ -34,15 +34,15 @@ bucket: "Object storage\ns3://bucket/user-uuid/" {
   style.stroke: "#1C1D1D"
 
   home_prefix: "home/\nthe mirror"
-  provision: "provision/\nbaseline, copied in at every start"
-  inbox: "inbox/\ndelivered once, then cleared"
+  baseline: "baseline/\nbaseline, copied in at every start"
+  deploy: "deploy/\ndelivered once, then cleared"
   trash: ".persist-trash/\nwhat the mirror moved aside"
 }
 
 container.sync -> bucket.home_prefix: "save\nevery INTERVAL, and on SIGTERM"
 bucket.home_prefix -> container.sync: "restore"
-bucket.provision -> container.sync: "copy in"
-bucket.inbox -> container.sync: "deliver"
+bucket.baseline -> container.sync: "copy in"
+bucket.deploy -> container.sync: "deliver"
 bucket.home_prefix -> bucket.trash: "replaced and deleted objects" {
   style.stroke-dash: 3
 }

@@ -22,9 +22,9 @@ tell.
 | Requirement | How |
 |-------------|-----|
 | Work survives the container being deleted | Home restored from the bucket at start, saved every interval and on shutdown |
-| A hard kill costs a bounded amount | `QGIS_DESKTOP_PERSIST_INTERVAL` — five minutes by default, 60s in the example |
-| The user opens their map, not an empty canvas | A project seeded into `provision/`, opened by `QGIS_DESKTOP_AUTOSTART_QGIS` |
-| The operator can hand them files later | `inbox/`, delivered into the running session |
+| A hard kill costs a bounded amount | `QGIS_DESKTOP_PERSIST_INTERVAL` — 300s (five minutes) by default, set to 60s in this example |
+| The user opens their map, not an empty canvas | A project seeded into `baseline/`, opened by `QGIS_DESKTOP_AUTOSTART_QGIS` |
+| The operator can hand them files later | `deploy/`, delivered into the running session |
 | Storage cannot grow without limit | `QGIS_DESKTOP_PERSIST_QUOTA`, enforced client-side |
 | The user cannot reach the bucket themselves | Credentials root-only, scrubbed from the session environment |
 
@@ -44,15 +44,15 @@ difference.
 | MinIO console | <http://localhost:9001> — `minioadmin` / `minioadmin123` |
 
 QGIS opens on `~/projects/starter.qgs`, which was never in the image: the
-compose file seeds it into the bucket's `provision/` prefix, and the container
+compose file seeds it into the bucket's `baseline/` prefix, and the container
 copies it into the home directory before the session starts.
 
 ## The daily cycle
 
-1. **Start.** The lease is taken, `home/` is restored, `provision/` is applied
-   over the top without overwriting anything the user has edited, and `inbox/`
+1. **Start.** The lease is taken, `home/` is restored, `baseline/` is applied
+   over the top without overwriting anything the user has edited, and `deploy/`
    is drained onto their desktop.
-2. **Work.** Every 60 seconds the home directory is mirrored into `home/`.
+2. **Work.** Every interval the home directory is mirrored into `home/` — 300s by default, and 60s in this example so it is watchable.
    Replaced and deleted objects move to `.persist-trash/<timestamp>/`.
 3. **Stop.** `SIGTERM` triggers a final save and releases the lease.
 
@@ -62,9 +62,9 @@ copies it into the home directory before the session starts.
 |------|----------|
 | Make a file, wait for `[persist] Saved`, then `docker kill qgis-desktop-persist` and start again | The file is back |
 | Make a file and `docker compose stop` instead | Also back — the final save runs on `SIGTERM` |
-| Upload a file to `.../inbox/` in the MinIO console | On the desktop within 60s; the inbox is empty afterwards |
-| Delete `~/projects/starter.qgs`, restart the container | Back again: `provision/` is applied at every start |
-| Edit `starter.qgs`, wait for a save, restart | Your edit survives — provisioning never overwrites the user's copy |
+| Upload a file to `.../deploy/` in the MinIO console | On the desktop within one interval (60s here); `deploy/` is empty afterwards |
+| Delete `~/projects/starter.qgs`, restart the container | Back again: `baseline/` is applied at every start |
+| Edit `starter.qgs`, wait for a save, restart | Your edit survives — the baseline never overwrites the user's copy |
 | `docker exec -u 1000 qgis-desktop-persist cat /run/qgis-desktop/persist/rclone.conf` | Permission denied |
 | Upload a file into `.../home/` directly | Gone at the next save, recoverable from `.persist-trash/` |
 

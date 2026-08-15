@@ -14,7 +14,7 @@ k8s: "Kubernetes (or you, with docker kill)" {
 life: "One container's life" {
   style.fill: "#F5F5F2"
   style.stroke: "#1E88C7"
-  direction: right
+  direction: down
 
   start: "start" { style.fill: "#1E88C7"; style.font-color: "#FFFFFF" }
   lease: "claim the lease\nkeyed on hostname"
@@ -48,12 +48,23 @@ bucket -> next.same: "restores the same home" { style.bold: true }
 guards: |md
   **What can go wrong, and what stops it**
 
-  Restore failed, then a save runs → no sentinel, the save is refused.
-  Two containers on one prefix → the second is refused by the lease.
-  A sync deletes the wrong thing → the old object is in `.persist-trash/`, timestamped.
-  The home directory collapses → the shrink guard pauses saving and warns the user.
-  The home directory grows without bound → the quota pauses saving and warns the user.
-  SIGKILL, no grace period → at most one interval of work is lost. Never more.
+  Restore failed, then a save runs →
+  no sentinel, the save is refused.
+
+  Two containers on one prefix →
+  the second is refused by the lease.
+
+  A sync deletes the wrong thing →
+  the old object is in `.persist-trash/`.
+
+  The home directory collapses →
+  the shrink guard pauses saving.
+
+  It grows without bound →
+  the quota pauses saving.
+
+  SIGKILL, no grace period →
+  at most one interval is lost.
 | {
   near: bottom-center
   style.fill: "#FFF9E6"

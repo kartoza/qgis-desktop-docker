@@ -1,7 +1,7 @@
 # A disposable container in front of a durable home directory.
 # Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
 
-direction: right
+direction: down
 
 user: "Analyst" { shape: person }
 
@@ -35,6 +35,6 @@ gone.b -> bucket: "work up to the last save\nis already there" { style.stroke-da
 bucket -> week2.c: "restored before\nthe session starts"
 user -> week2.c
 
-admin -> bucket: "drops a project into provision/" {
+admin -> bucket: "drops a project into baseline/" {
   style.stroke: "#2E7D32"
 }

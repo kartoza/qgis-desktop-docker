@@ -551,3 +551,33 @@ body,
     background: transparent !important;
     color: var(--text-default);
 }
+
+/* Build-time diagrams (docs/**/diagrams/*.svg, rendered from .d2).
+ *
+ * These are detailed enough that squeezing one into the content column makes
+ * its labels unreadable — a 1800px diagram at 800px is 44% scale, and the text
+ * is the point of the diagram. So they render at natural size and the figure
+ * scrolls sideways when it does not fit, rather than shrinking.
+ *
+ * The sources are laid out vertically for this reason too: `direction: down`
+ * keeps most of them near the column width, so the scrollbar is the exception
+ * rather than the rule. Clicking still opens the lightbox for a closer look.
+ */
+.md-typeset p:has(> a.glightbox > img[src*="diagrams/"]),
+.md-typeset p:has(> img[src*="diagrams/"]) {
+    max-width: 100%;
+    overflow-x: auto;
+    /* Room for the scrollbar so it never sits on top of the diagram. */
+    padding-bottom: 0.25rem;
+}
+
+.md-typeset img[src*="diagrams/"] {
+    max-width: none;
+    height: auto;
+}
+
+/* Without this the anchor shrink-wraps to the column and clips the image. */
+.md-typeset a.glightbox:has(> img[src*="diagrams/"]) {
+    display: inline-block;
+    max-width: none;
+}

@@ -186,8 +186,8 @@ config file, and they are removed from the environment before the desktop
 starts.
 
 Two directories alongside `home/` in the bucket hand data *to* a user —
-`provision/` is copied in at every start (templates, base layers, a house
-style), and `inbox/` is delivered into the running desktop and then cleared.
+`baseline/` is copied in at every start (templates, base layers, a house
+style), and `deploy/` is delivered into the running desktop and then cleared.
 Full details, including the Kubernetes shape, in
 [docs/configuration/persistence.md](docs/configuration/persistence.md).
 
@@ -380,12 +380,12 @@ compose file in [`examples/`](examples/), a diagram, and a `nix run` target.
 
 - **[Persistent workstation](docs/scenarios/persistent-workstation.md)** — a
   home directory that lives in a bucket, restored at boot and saved
-  continuously, with a project provisioned into it.
+  continuously, with a baseline project in it.
   `nix run .#run-persistence-demo`
 
 - **[Delivering data through the bucket](docs/scenarios/team-data-drop.md)** —
-  getting files to a user without touching their container: `provision/` for a
-  baseline, `inbox/` for a one-off hand-off.
+  getting files to a user without touching their container: `baseline/` for a
+  baseline, `deploy/` for a one-off hand-off.
   `nix run .#run-data-drop-scenario`
 
 - **[The disposable desktop](docs/scenarios/disposable-pod.md)** — the one you
@@ -507,7 +507,7 @@ nix run .#run-greeter       # LightDM greeter login
 nix run .#run-oidc          # Keycloak/OIDC SSO (reads QGIS_DESKTOP_OIDC_* from your env)
 nix run .#run-keycloak-demo # Throwaway Keycloak + SSO desktop
 nix run .#run-persistence-demo      # Home directory in object storage
-nix run .#run-data-drop-scenario    # provision/ and inbox/ delivery
+nix run .#run-data-drop-scenario    # baseline/ and deploy/ delivery
 nix run .#run-disposable-scenario   # Break it on purpose: every guard
 nix run .#run-federated-idp-scenario # Keycloak brokering another IdP
 nix run .#run-sso-homes-scenario    # SSO + persistent homes

@@ -14,8 +14,8 @@ nix run .#run-data-drop-scenario  # or: docker compose up
 ```
 
 Open <http://localhost:8443> (`user` / `password`). QGIS opens on a project that
-was provisioned from the bucket. About a minute later a dispatcher drops
-`assets.csv` into `inbox/` and it appears on the desktop.
+came from the bucket's baseline. About a minute later a dispatcher drops
+`assets.csv` into `deploy/` and it appears on the desktop.
 
 MinIO's console is at <http://localhost:9001> (`minioadmin` / `minioadmin123`).
 
@@ -23,11 +23,11 @@ MinIO's console is at <http://localhost:9001> (`minioadmin` / `minioadmin123`).
 
 | Prefix | Arrives | On conflict | Afterwards |
 |--------|---------|-------------|------------|
-| `provision/` | Every container start | The user's copy wins | Stays in the bucket |
-| `inbox/` | Every interval, while running | The delivery wins | Deleted once delivered |
+| `baseline/` | Every container start | The user's copy wins | Stays in the bucket |
+| `deploy/` | Every interval, while running | The delivery wins | Deleted once delivered |
 
-Use `provision/` for standard issue — a starter project, house styles. Use
-`inbox/` for a one-off hand-off. Getting them the wrong way round means either a
+Use `baseline/` for standard issue — a starter project, house styles. Use
+`deploy/` for a one-off hand-off. Getting them the wrong way round means either a
 file the user can never delete, or a baseline that arrives once and vanishes.
 
 ## Delivering to a real user
@@ -35,8 +35,8 @@ file the user can never delete, or a baseline that arrives once and vanishes.
 Any S3 client works; the container is only reading a prefix.
 
 ```bash
-aws s3 cp --recursive ./kit/ s3://qgis-homes/surveyor-7c1e/provision/
-aws s3 cp ./ward-7-parcels.gpkg s3://qgis-homes/surveyor-7c1e/inbox/
+aws s3 cp --recursive ./kit/ s3://qgis-homes/surveyor-7c1e/baseline/
+aws s3 cp ./ward-7-parcels.gpkg s3://qgis-homes/surveyor-7c1e/deploy/
 ```
 
 Nothing restarts. The next sync picks it up.
