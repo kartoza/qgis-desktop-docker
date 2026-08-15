@@ -64,6 +64,15 @@ USE_PROVISION="${QGIS_DESKTOP_PERSIST_PROVISION:-1}"
 USE_INBOX="${QGIS_DESKTOP_PERSIST_INBOX:-1}"
 INBOX_DEST="${QGIS_DESKTOP_PERSIST_INBOX_DEST:-Desktop}"
 
+# Create provision/ and inbox/ in the bucket at startup so an operator can see
+# where to put things. S3 has no directories — a prefix exists only while an
+# object is under it — so without this the two delivery paths are invisible in
+# a bucket browser, and whoever wants to send a user a file has to know the
+# names and hand-create the path. Both are written as zero-byte directory
+# markers, which rclone skips when listing, so an empty inbox/ is still worth
+# nothing to deliver.
+CREATE_PREFIXES="${QGIS_DESKTOP_PERSIST_CREATE_PREFIXES:-1}"
+
 # Runtime state, root-only.
 STATE_DIR="${QGIS_DESKTOP_PERSIST_STATE_DIR:-/run/qgis-desktop/persist}"
 # Where provisioned and inbox files land before being copied into the home as
@@ -189,6 +198,26 @@ remote_lease() { printf '%s/%s' "$(remote_root)" "${LEASE_OBJECT}"; }
 # home/ is a mirror of the container, and the next save makes it match again.
 remote_provision() { printf '%s/provision' "$(remote_root)"; }
 remote_inbox() { printf '%s/inbox' "$(remote_root)"; }
+
+# Make both delivery prefixes visible in the bucket before anyone needs them.
+# Idempotent, and cheap enough to run at every boot.
+ensure_prefixes() {
+  [ "$(to_bool "${CREATE_PREFIXES}")" = "1" ] || return 0
+
+  local -a args=()
+  # On S3 a directory has to be faked with a zero-byte object whose key ends in
+  # '/'. rclone only writes those when asked, and ignores them when listing, so
+  # the marker never looks like a file to deliver. A local remote makes real
+  # directories and needs no such flag.
+  [ "${REMOTE_TYPE}" = "s3" ] && args+=(--s3-directory-markers)
+
+  local p
+  for p in "$(remote_provision)" "$(remote_inbox)"; do
+    # Never fatal: a credential scoped to home/ can legitimately refuse this,
+    # and a missing prefix only costs the operator a click later.
+    rc mkdir "${args[@]}" "${p}" >/dev/null 2>&1 || true
+  done
+}
 
 rc() {
   rclone --config "${RCLONE_CONF}" "$@"
@@ -538,6 +567,7 @@ cmd_restore() {
   # user's own copy of a file always wins.
   mkdir -p "${STAGE_DIR}"
   chmod 0755 "${STAGE_DIR}"
+  ensure_prefixes
   apply_provision
   drain_inbox
 
@@ -696,6 +726,7 @@ cmd_deliver() {
   [ -f "${RCLONE_CONF}" ] || write_rclone_config
   mkdir -p "${STAGE_DIR}"
   chmod 0755 "${STAGE_DIR}"
+  ensure_prefixes
   apply_provision
   drain_inbox
 }

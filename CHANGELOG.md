@@ -39,6 +39,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `nix run .#docs-diagrams`, are checked for drift by `nix run .#test`, and are
   converted for the PDF — so unlike mermaid they appear in every output.
 
+- **`provision/` and `inbox/` are created in the bucket at startup**, so an
+  operator opening a bucket browser can see where to put a file. S3 has no
+  directories — a prefix exists only while an object is under it — so until now
+  the two delivery paths were invisible on a new home, and sending a user a file
+  meant knowing the names and hand-creating the path. Written as zero-byte
+  directory markers, which rclone ignores when listing: an empty `inbox/` is
+  still nothing to deliver, and the prefix survives a delivery that empties it.
+  `QGIS_DESKTOP_PERSIST_CREATE_PREFIXES=0` opts out.
+
 ### Fixed
 
 - The docs site now builds and deploys on every merge to `main`, rather than

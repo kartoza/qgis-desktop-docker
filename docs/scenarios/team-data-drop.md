@@ -47,7 +47,19 @@ browse `qgis-homes/surveyor-7c1e/` to see the three prefixes side by side.
 
 ## Delivering to a real user
 
-Any S3 client works, because the container is only reading a prefix:
+Any S3 client works, because the container is only reading a prefix.
+
+**From a bucket browser** — the MinIO console, S3 Browser, the AWS console:
+
+1. Open the bucket and go to the user's prefix, e.g. `qgis-homes/surveyor-7c1e/`
+2. Open **`inbox/`** — it is already there, created when the container first
+   started
+3. **Upload** the file
+
+Within one interval it appears on their desktop, owned by them, and `inbox/`
+empties itself. Nothing restarts, and nobody has to touch the container.
+
+**From the command line:**
 
 ```bash
 # a baseline for everyone on the team
@@ -60,6 +72,19 @@ aws s3 cp ./ward-7-parcels.gpkg s3://qgis-homes/surveyor-7c1e/inbox/
 ```
 
 Nothing needs to restart. The next interval picks it up.
+
+### Why both prefixes are already there
+
+S3 has no directories — a prefix exists only while an object sits under it — so
+a freshly created home would show nothing but `home/`, and anyone wanting to
+send a file would have to know the names and hand-create the path.
+
+The container therefore creates `provision/` and `inbox/` at every start, as
+zero-byte directory markers. rclone skips markers when listing, so an empty
+`inbox/` is still nothing to deliver, and the prefix survives a delivery that
+empties it. Set `QGIS_DESKTOP_PERSIST_CREATE_PREFIXES=0` to stop it — worth
+doing only if the container's credential is scoped so tightly that it may not
+write outside `home/`.
 
 ## What stops this being an attack surface
 

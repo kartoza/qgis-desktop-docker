@@ -60,6 +60,18 @@ Open **<http://keycloak:8443>**.
 | `docker exec -u 1000 sso-homes-desktop env \| grep -E 'SECRET\|ACCESS_KEY'` | Nothing — secrets are scrubbed before the desktop starts |
 | `docker exec sso-homes-desktop ss -ltn` (or `/proc/net/tcp`) | `8443` on `0.0.0.0`, `6901` on `127.0.0.1` only |
 
+## Getting a file to someone who is signed in
+
+Their home directory is a prefix in the bucket, so you can hand them a file
+without touching the container. Open `qgis-homes/alice-3d9f21c8/inbox/` in the
+MinIO console and upload it: within one interval it is on their desktop, owned
+by them, and the prefix empties itself. `provision/` next to it is the baseline
+that arrives at every start and never overwrites their own copy.
+
+Both prefixes are created at startup, so they are already there to upload into.
+See [Delivering data through the bucket](team-data-drop.md) for what each one is
+for and how to script it.
+
 ## Scaling it up
 
 This example runs **one** container for one prefix, which is the model the

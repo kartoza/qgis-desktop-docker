@@ -99,6 +99,7 @@ about — it *is* your worst-case data loss.
 | `QGIS_DESKTOP_PERSIST_PROVISION` | `1` | Apply `provision/` at every start. See [Giving users data](#giving-users-data). |
 | `QGIS_DESKTOP_PERSIST_INBOX` | `1` | Deliver `inbox/` into the running desktop. |
 | `QGIS_DESKTOP_PERSIST_INBOX_DEST` | `Desktop` | Where inbox files land, relative to the home directory. |
+| `QGIS_DESKTOP_PERSIST_CREATE_PREFIXES` | `1` | Create `provision/` and `inbox/` at start so they are visible in a bucket browser. |
 
 ## What is not saved
 
@@ -128,6 +129,16 @@ s3://qgis-homes/alice-9c1f4e2a/
     is a file the user deleted, so the next save removes it — into
     `.persist-trash/<timestamp>/`, recoverable, but gone from the desktop.
     Use `provision/` or `inbox/` instead.
+
+`provision/` and `inbox/` are created for you at every start, so they are
+already visible when you open the bucket — S3 has no directories, and without
+this the two delivery paths would be invisible until somebody guessed the names
+and hand-created the path. They are zero-byte directory markers: rclone ignores
+them when listing, so an empty `inbox/` is still nothing to deliver, and the
+prefix survives a delivery that empties it.
+
+Set `QGIS_DESKTOP_PERSIST_CREATE_PREFIXES=0` to stop it — worth doing only when
+the container's credential may not write outside `home/`.
 
 ### `provision/` — baseline material
 

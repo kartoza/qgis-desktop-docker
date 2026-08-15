@@ -299,6 +299,39 @@ echo "data" > "$BUCKET/alice-0f8b/inbox/layer.gpkg"
 run_persist QGIS_DESKTOP_PERSIST_INBOX_DEST=incoming deliver
 assert_file "$HOME_DIR/incoming/layer.gpkg" "the inbox destination is configurable"
 
+# Both prefixes are created at restore, so an operator opening the bucket can
+# see where to put a file instead of having to know the names and hand-create
+# the path. On S3 these are zero-byte directory markers; on a local remote,
+# real directories.
+fixture prefixes
+run_persist restore
+assert_ok "restore succeeds on an empty bucket"
+assert_exists "$BUCKET/alice-0f8b/provision" "provision/ is created at restore"
+assert_exists "$BUCKET/alice-0f8b/inbox" "inbox/ is created at restore"
+
+# An empty inbox is not something to deliver: no phantom file, no noise.
+run_persist deliver
+assert_ok "delivering an empty inbox succeeds"
+if grep -q "Inbox: delivering" <<< "$OUTPUT"; then
+  no "an empty inbox must not report a delivery" "$(grep -i inbox <<< "$OUTPUT" | head -2)"
+else
+  ok "an empty inbox reports nothing to deliver"
+fi
+assert_absent "$HOME_DIR/Desktop/inbox" "no marker is delivered as a file"
+
+# Delivery must not remove the prefix — otherwise it is there once, disappears
+# after the first hand-off, and the operator is back to creating it by hand.
+echo "one off" > "$BUCKET/alice-0f8b/inbox/handover.txt"
+run_persist deliver
+assert_file "$HOME_DIR/Desktop/handover.txt" "the delivery still works"
+assert_exists "$BUCKET/alice-0f8b/inbox" "inbox/ survives a delivery that empties it"
+
+# Opt out, for a credential scoped so tightly it cannot create them.
+fixture noprefixes
+run_persist QGIS_DESKTOP_PERSIST_CREATE_PREFIXES=0 restore
+assert_ok "restore succeeds with prefix creation off"
+assert_absent "$BUCKET/alice-0f8b/inbox" "prefix creation can be turned off"
+
 # Both can be turned off.
 fixture nodeliver
 mkdir -p "$BUCKET/alice-0f8b/provision" "$BUCKET/alice-0f8b/inbox"
