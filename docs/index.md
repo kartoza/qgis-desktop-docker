@@ -139,9 +139,9 @@ else is an environment variable &mdash; see
 
     ---
 
-    A locked-down analyst session with a co-located PostGIS, a shared
-    workstation with per-user logins, and single sign-on against a throwaway
-    Keycloak you can run in one command.
+    Nine scenarios, each a compose file and one command: homes that survive the
+    container, data delivered through a bucket, Keycloak brokering your own
+    directory, a locked-down analyst session, a kiosk.
 
     [:octicons-arrow-right-24: Scenarios](scenarios/index.md)
 

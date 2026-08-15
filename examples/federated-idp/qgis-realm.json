@@ -1,0 +1,100 @@
+{
+  "realm": "qgis",
+  "enabled": true,
+  "displayName": "QGIS Desktop",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "qgis-user",
+        "description": "May open a QGIS desktop. Granted by group membership in the corporate directory, never by hand."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "qgis-desktop",
+      "name": "QGIS Desktop",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "qgis-desktop-demo-secret-not-for-real-use",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://keycloak:8443/oauth2/callback",
+        "http://localhost:8443/oauth2/callback"
+      ],
+      "webOrigins": ["http://keycloak:8443", "http://localhost:8443"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "corporate",
+      "displayName": "Corporate sign-in",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "clientId": "qgis-broker",
+        "clientSecret": "corporate-broker-demo-secret-not-for-real-use",
+        "clientAuthMethod": "client_secret_post",
+        "issuer": "http://keycloak:8080/realms/corporate",
+        "authorizationUrl": "http://keycloak:8080/realms/corporate/protocol/openid-connect/auth",
+        "tokenUrl": "http://keycloak:8080/realms/corporate/protocol/openid-connect/token",
+        "userInfoUrl": "http://keycloak:8080/realms/corporate/protocol/openid-connect/userinfo",
+        "logoutUrl": "http://keycloak:8080/realms/corporate/protocol/openid-connect/logout",
+        "jwksUrl": "http://keycloak:8080/realms/corporate/protocol/openid-connect/certs",
+        "useJwksUrl": "true",
+        "validateSignature": "true",
+        "defaultScope": "openid profile email",
+        "syncMode": "FORCE",
+        "updateProfileFirstLoginMode": "off",
+        "backchannelSupported": "false"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "gis-team-grants-qgis-user",
+      "identityProviderAlias": "corporate",
+      "identityProviderMapper": "oidc-role-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "groups",
+        "claim.value": "/gis-team",
+        "role": "qgis-user"
+      }
+    },
+    {
+      "name": "username-from-preferred-username",
+      "identityProviderAlias": "corporate",
+      "identityProviderMapper": "oidc-username-idp-mapper",
+      "config": {
+        "syncMode": "INHERIT",
+        "template": "${CLAIM.preferred_username}",
+        "target": "LOCAL"
+      }
+    }
+  ]
+}

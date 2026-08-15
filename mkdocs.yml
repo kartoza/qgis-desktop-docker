@@ -170,7 +170,13 @@ nav:
     - scenarios/index.md
     - Analyst Locked-Down: scenarios/analyst-locked-down.md
     - Multi-User Greeter: scenarios/multi-user-greeter.md
+    - Persistent Workstation: scenarios/persistent-workstation.md
+    - Delivering Data: scenarios/team-data-drop.md
+    - The Disposable Desktop: scenarios/disposable-pod.md
     - Keycloak SSO: scenarios/keycloak-sso.md
+    - Federating an IdP: scenarios/federated-idp.md
+    - SSO + Persistent Homes: scenarios/sso-persistent-homes.md
+    - Kiosk Display: scenarios/kiosk.md
   - Developer Guide:
     - developer-guide/index.md
     - Architecture: developer-guide/architecture.md

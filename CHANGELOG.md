@@ -7,6 +7,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Six more worked scenarios, each with a compose file and a `nix run`
+  target**, concentrated on the two features that most needed them — object
+  storage and single sign-on:
+  - *Persistent workstation* (`run-persistence-demo`) — a home directory in a
+    bucket, with a provisioned project QGIS opens on.
+  - *Delivering data through the bucket* (`run-data-drop-scenario`) — the
+    `provision/` and `inbox/` prefixes, and what each one is for.
+  - *The disposable desktop* (`run-disposable-scenario`) — the scenario you are
+    meant to break, with a step for every persistence guard.
+  - *Federating an identity provider* (`run-federated-idp-scenario`) — Keycloak
+    brokering Entra ID / Google / Okta / LDAP, turning an existing group into
+    the role the container gates on.
+  - *SSO + persistent homes* (`run-sso-homes-scenario`) — both features
+    composed, which is the production shape.
+  - *Kiosk display* (`run-kiosk-scenario`) — autostarted on a project, no
+    terminal, no clipboard, no network.
+- **Diagrams generated at docs build time.** Nine D2 sources render to SVG in
+  `nix run .#docs-diagrams`, are checked for drift by `nix run .#test`, and are
+  converted for the PDF — so unlike mermaid they appear in every output.
+
+### Fixed
+
+- The docs site now builds and deploys on every merge to `main`, rather than
+  only when files under `docs/` changed.
+
 ## [2.0.0] — 2026-08-15
 
 A fourth authentication pathway that puts Keycloak (or any OIDC provider) in

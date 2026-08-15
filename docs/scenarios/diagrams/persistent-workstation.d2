@@ -1,0 +1,40 @@
+# A disposable container in front of a durable home directory.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: right
+
+user: "Analyst" { shape: person }
+
+week1: "Monday\ncontainer A" {
+  style.fill: "#F5F5F2"
+  a: "restore ->\nQGIS opens the project" { style.fill: "#FFFFFF" }
+}
+
+gone: "Tuesday\nthe node is drained" {
+  style.fill: "#FFEBEE"
+  style.stroke: "#C62828"
+  b: "container A is deleted" { style.fill: "#FFFFFF" }
+}
+
+week2: "Wednesday\ncontainer B" {
+  style.fill: "#F5F5F2"
+  c: "restore ->\nthe same desktop, same work" { style.fill: "#FFFFFF" }
+}
+
+bucket: "s3://qgis-homes/analyst-uuid/" {
+  shape: cylinder
+  style.fill: "#1E88C7"
+  style.font-color: "#FFFFFF"
+}
+
+admin: "Operator" { shape: person }
+
+user -> week1.a
+week1.a -> bucket: "saved every 5 min\nand on shutdown"
+gone.b -> bucket: "work up to the last save\nis already there" { style.stroke-dash: 3 }
+bucket -> week2.c: "restored before\nthe session starts"
+user -> week2.c
+
+admin -> bucket: "drops a project into provision/" {
+  style.stroke: "#2E7D32"
+}

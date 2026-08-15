@@ -47,7 +47,13 @@ services:
       retries: 30
       start_period: 5s
 
-  # One-shot: create the bucket, then exit. The desktop waits for it.
+  # One-shot: create the bucket, seed the user's provision/ prefix, then exit.
+  # The desktop waits for it.
+  #
+  # provision/ is the operator's way in: whatever is here lands in the home
+  # directory at every container start, without ever overwriting the user's own
+  # copy. Seeding a starter project here is what makes the autostart flag below
+  # open something useful instead of an empty canvas.
   create-bucket:
     image: minio/mc:latest
     container_name: minio-persistence-demo-init
@@ -58,9 +64,32 @@ services:
       - sh
       - -c
       - |
+        set -e
         mc alias set demo http://minio:9000 minioadmin minioadmin123
         mc mb --ignore-existing demo/qgis-homes
-        echo "bucket ready: qgis-homes"
+
+        # A minimal QGIS project, so the desktop opens with something in it.
+        mkdir -p /tmp/seed/projects
+        cat > /tmp/seed/projects/starter.qgs <<'PROJECT'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <qgis version="3.44.9" projectname="Starter project">
+          <title>Starter project</title>
+          <projectCrs>
+            <spatialrefsys>
+              <wkt></wkt>
+              <srid>4326</srid>
+              <authid>EPSG:4326</authid>
+              <description>WGS 84</description>
+              <geographicflag>true</geographicflag>
+            </spatialrefsys>
+          </projectCrs>
+          <layer-tree-group/>
+          <projectlayers/>
+        </qgis>
+        PROJECT
+
+        mc cp --recursive /tmp/seed/ demo/qgis-homes/tim-4f2f96a9/provision/
+        echo "bucket ready: qgis-homes, provision/ seeded with a starter project"
 
   qgis-desktop:
     image: nix-xfce-kasm:latest
@@ -100,9 +129,10 @@ services:
       # their home saying so.
       - QGIS_DESKTOP_PERSIST_QUOTA=2G
 
-      # Open QGIS with the session. Combine with a project in provision/ and
-      # the first thing the user sees is their own map.
-      # - QGIS_DESKTOP_AUTOSTART_QGIS=1
+      # Open QGIS with the session, on the project seeded into provision/
+      # above. The user signs in and their map is already loading.
+      - QGIS_DESKTOP_AUTOSTART_QGIS=1
+      - QGIS_DESKTOP_AUTOSTART_QGIS_ARGS=--project /home/user/projects/starter.qgs
 
       - VNC_RESOLUTION=1600x900
     # The final save runs on SIGTERM, so give it room before Docker escalates

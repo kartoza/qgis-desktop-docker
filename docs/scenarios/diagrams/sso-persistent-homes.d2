@@ -1,0 +1,52 @@
+# Identity at the edge, state in object storage, nothing durable in between.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: right
+
+user: "Alice" { shape: person }
+
+idp: "Keycloak\nrealm: qgis" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1C1D1D"
+  roles: "role: qgis-user\ndecides who gets in"
+}
+
+container: "The container — disposable" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+
+  proxy: "oauth2-proxy\n0.0.0.0:8443\nthe only public listener" {
+    style.fill: "#1E88C7"
+    style.font-color: "#FFFFFF"
+  }
+  kasm: "Xkasmvnc\n127.0.0.1:6901\nunreachable from outside"
+  desktop: "XFCE + QGIS\nuid 1000"
+  persist: "qgis-desktop-persist\nroot"
+
+  proxy -> kasm: "proxied, only with a session"
+  kasm -> desktop
+  persist -> desktop: "restores the home\nbefore it starts"
+}
+
+bucket: "s3://qgis-homes/alice-uuid/" {
+  shape: cylinder
+  style.fill: "#F5F5F2"
+}
+
+user -> container.proxy: "1. GET /"
+container.proxy -> idp: "2. redirect to sign in"
+idp -> container.proxy: "3. code, then tokens\nchecked for qgis-user"
+container.persist <-> bucket: "4. restore, then save\nevery 60s"
+user -> container.desktop: "5. their own desktop,\ntheir own files" {
+  style.bold: true
+}
+
+boundary: |md
+  Nothing durable lives in the container.
+  Identity is in Keycloak, state is in the bucket,
+  and the credentials for the bucket are readable
+  only by root — not by the session the user is in.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

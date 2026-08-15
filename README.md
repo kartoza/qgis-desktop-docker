@@ -373,17 +373,57 @@ details in [docs/configuration/giswater.md](docs/configuration/giswater.md).
 
 ## Scenarios
 
-Worked-example deployments combining several of the knobs above:
+Worked-example deployments combining several of the knobs above. Each has a
+compose file in [`examples/`](examples/), a diagram, and a `nix run` target.
 
-- **[Analyst locked-down session](docs/scenarios/analyst-locked-down.md)** —
-  single user `bob`, clipboard blocked in both directions, egress restricted
-  to a co-located `kartoza/postgis` container. Includes UML diagrams and a
-  ready-to-run `docker-compose.yml`. Try it with `nix run .#run-analyst-scenario`.
+**Object storage — persistent homes**
+
+- **[Persistent workstation](docs/scenarios/persistent-workstation.md)** — a
+  home directory that lives in a bucket, restored at boot and saved
+  continuously, with a project provisioned into it.
+  `nix run .#run-persistence-demo`
+
+- **[Delivering data through the bucket](docs/scenarios/team-data-drop.md)** —
+  getting files to a user without touching their container: `provision/` for a
+  baseline, `inbox/` for a one-off hand-off.
+  `nix run .#run-data-drop-scenario`
+
+- **[The disposable desktop](docs/scenarios/disposable-pod.md)** — the one you
+  are meant to break: hard kills, recreated pods, two containers on one prefix,
+  a wiped home, a blown quota, one step per guard. Run this before Kubernetes.
+  `nix run .#run-disposable-scenario`
+
+**Keycloak and single sign-on**
 
 - **[Keycloak single sign-on](docs/scenarios/keycloak-sso.md)** — no user
   accounts in the container at all: an OIDC proxy authenticates against your
   identity provider and admits only users holding the right role. Ships with a
-  throwaway Keycloak realm. Try it with `nix run .#run-keycloak-demo`.
+  throwaway Keycloak realm. `nix run .#run-keycloak-demo`
+
+- **[Federating an identity provider](docs/scenarios/federated-idp.md)** —
+  Keycloak as a *broker* in front of Entra ID / Google / Okta / LDAP, turning a
+  group that already exists in the customer's directory into entitlement here.
+  `nix run .#run-federated-idp-scenario`
+
+- **[SSO + persistent homes](docs/scenarios/sso-persistent-homes.md)** — both
+  features composed, which is the production shape: identity in your provider,
+  state in a bucket, nothing durable in between.
+  `nix run .#run-sso-homes-scenario`
+
+**Restricting the session**
+
+- **[Analyst locked-down session](docs/scenarios/analyst-locked-down.md)** —
+  single user `bob`, clipboard blocked in both directions, egress restricted
+  to a co-located `kartoza/postgis` container. Includes UML diagrams and a
+  ready-to-run `docker-compose.yml`. `nix run .#run-analyst-scenario`
+
+- **[Kiosk display](docs/scenarios/kiosk.md)** — QGIS on a screen someone walks
+  up to: autostarted on a project, no terminal, no clipboard, no network.
+  `nix run .#run-kiosk-scenario`
+
+- **[Multi-user greeter](docs/scenarios/multi-user-greeter.md)** — a shared
+  workstation with a LightDM login inside the desktop and a home directory per
+  person. `nix run .#run-greeter-scenario`
 
 ## Architecture
 
@@ -460,6 +500,13 @@ nix run .#run               # Run the container
 nix run .#run-greeter       # LightDM greeter login
 nix run .#run-oidc          # Keycloak/OIDC SSO (reads QGIS_DESKTOP_OIDC_* from your env)
 nix run .#run-keycloak-demo # Throwaway Keycloak + SSO desktop
+nix run .#run-persistence-demo      # Home directory in object storage
+nix run .#run-data-drop-scenario    # provision/ and inbox/ delivery
+nix run .#run-disposable-scenario   # Break it on purpose: every guard
+nix run .#run-federated-idp-scenario # Keycloak brokering another IdP
+nix run .#run-sso-homes-scenario    # SSO + persistent homes
+nix run .#run-kiosk-scenario        # Autostarted, locked-down kiosk
+nix run .#docs-diagrams     # Render the D2 diagrams to SVG
 nix run .#test              # Run the test suite (no Docker needed)
 nix run .#summary           # Generate build summary
 nix run                     # Show help

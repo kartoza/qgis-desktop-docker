@@ -1,0 +1,69 @@
+{
+  "realm": "corporate",
+  "enabled": true,
+  "displayName": "Corp Directory",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "groups": [
+    { "name": "gis-team", "path": "/gis-team" },
+    { "name": "finance", "path": "/finance" }
+  ],
+  "clients": [
+    {
+      "clientId": "qgis-broker",
+      "name": "QGIS desktop (via broker)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "corporate-broker-demo-secret-not-for-real-use",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://keycloak:8080/realms/qgis/broker/corporate/endpoint",
+        "http://keycloak:8080/realms/qgis/broker/corporate/endpoint/*"
+      ],
+      "webOrigins": ["http://keycloak:8080"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "true",
+            "claim.name": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "bob",
+      "email": "bob@corp.example",
+      "firstName": "Bob",
+      "lastName": "Ngwenya",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/gis-team"],
+      "credentials": [
+        { "type": "password", "value": "hunter2", "temporary": false }
+      ]
+    },
+    {
+      "username": "carol",
+      "email": "carol@corp.example",
+      "firstName": "Carol",
+      "lastName": "Adams",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": ["/finance"],
+      "credentials": [
+        { "type": "password", "value": "hunter2", "temporary": false }
+      ]
+    }
+  ]
+}

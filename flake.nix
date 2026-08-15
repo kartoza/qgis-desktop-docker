@@ -824,6 +824,13 @@ DBUSEOF
         # reproduced with a single command.
         greeterComposeFile = ./examples/multi-user-greeter/docker-compose.yml;
         persistenceComposeFile = ./examples/home-persistence/docker-compose.yml;
+        kioskComposeFile = ./examples/kiosk/docker-compose.yml;
+        dataDropComposeFile = ./examples/team-data-drop/docker-compose.yml;
+        disposableComposeFile = ./examples/disposable-pod/docker-compose.yml;
+        # Directories rather than files: these mount realm exports that sit
+        # beside the compose file, so the whole directory has to reach the store.
+        ssoHomesComposeDir = ./examples;
+        federatedComposeDir = ./examples/federated-idp;
 
         # Every scenario target has the same shape: refuse without the image,
         # print what the user is about to get, and tear down on Ctrl-C.
@@ -1169,6 +1176,100 @@ DBUSEOF
                 saved every 60s. Kill the container and start it again — the
                 work comes back. Drop a file into the bucket's inbox/ prefix
                 and it lands on the desktop. Press Ctrl-C to stop.'';
+          };
+
+          # QGIS on a screen someone walks up to: autostarted, no terminal, no
+          # clipboard, no network.
+          run-kiosk-scenario = mkScenario {
+            name = "run-kiosk-scenario";
+            composeFile = kioskComposeFile;
+            project = "qgis-kiosk";
+            banner = ''
+              ▶ Kiosk display
+
+                Desktop:  http://localhost:8443   (no login — see the docs)
+                Docs:     examples/kiosk/README.md
+
+                QGIS opens by itself on the mounted project. No terminal, no
+                clipboard, no outbound network. Replace examples/kiosk/project/
+                with your own. Press Ctrl-C to stop.'';
+          };
+
+          # Both headline features at once: SSO at the edge, home directory in
+          # object storage.
+          run-sso-homes-scenario = mkScenario {
+            name = "run-sso-homes-scenario";
+            composeFile = "${ssoHomesComposeDir}/sso-persistent-homes/docker-compose.yml";
+            project = "qgis-sso-homes";
+            banner = ''
+              ▶ Single sign-on with persistent homes
+
+                Login:    alice / hunter2      (mallory / hunter2 is refused)
+                Desktop:  http://keycloak:8443
+                Keycloak: http://keycloak:8080/admin   (admin / admin)
+                MinIO:    http://localhost:9001        (minioadmin / minioadmin123)
+                Docs:     examples/sso-persistent-homes/README.md
+
+                REQUIRED once, on the machine running the browser:
+                  echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+
+                Press Ctrl-C to stop.'';
+          };
+
+          # Object storage as a delivery channel: provision/ and inbox/.
+          run-data-drop-scenario = mkScenario {
+            name = "run-data-drop-scenario";
+            composeFile = dataDropComposeFile;
+            project = "qgis-data-drop";
+            banner = ''
+              ▶ Delivering data through the bucket
+
+                Desktop:  http://localhost:8443   (user / password)
+                MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
+                Docs:     docs/scenarios/team-data-drop.md
+
+                QGIS opens on a project that was provisioned from the bucket.
+                About a minute in, a dispatcher drops assets.csv into inbox/ —
+                watch it land on the desktop. Press Ctrl-C to stop.'';
+          };
+
+          # The one you are meant to break: kill it, recreate it, run two at
+          # once, wipe the home, blow the quota. Every guard has a step.
+          run-disposable-scenario = mkScenario {
+            name = "run-disposable-scenario";
+            composeFile = disposableComposeFile;
+            project = "qgis-disposable";
+            banner = ''
+              ▶ The disposable desktop
+
+                Desktop:  http://localhost:8443   (user / password)
+                MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
+                Docs:     docs/scenarios/disposable-pod.md
+
+                Tuned to be broken: 30s saves, a 200M quota, every guard on.
+                Try `docker kill disposable-desktop` and start it again — then
+                work through the docs page. Press Ctrl-C to stop.'';
+          };
+
+          # Keycloak as a broker in front of somebody else's directory — the
+          # shape nearly every real deployment ends up with.
+          run-federated-idp-scenario = mkScenario {
+            name = "run-federated-idp-scenario";
+            composeFile = "${federatedComposeDir}/docker-compose.yml";
+            project = "qgis-federated";
+            banner = ''
+              ▶ Federating the customer's identity provider
+
+                Desktop:  http://keycloak:8443    ("Corporate sign-in")
+                Bob:      bob / hunter2     in /gis-team  -> gets a desktop
+                Carol:    carol / hunter2   in /finance   -> Permission Denied
+                Keycloak: http://keycloak:8080/admin      (admin / admin)
+                Docs:     docs/scenarios/federated-idp.md
+
+                REQUIRED once, on the machine running the browser:
+                  echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+
+                Press Ctrl-C to stop.'';
           };
 
           # Locked-down demo: auth on, clipboard blocked, watermarked, DLP info logging.
@@ -1595,7 +1696,13 @@ DBUSEOF
               "$DOCS_DIR/scenarios/index.md"
               "$DOCS_DIR/scenarios/analyst-locked-down.md"
               "$DOCS_DIR/scenarios/multi-user-greeter.md"
+              "$DOCS_DIR/scenarios/persistent-workstation.md"
+              "$DOCS_DIR/scenarios/team-data-drop.md"
+              "$DOCS_DIR/scenarios/disposable-pod.md"
               "$DOCS_DIR/scenarios/keycloak-sso.md"
+              "$DOCS_DIR/scenarios/federated-idp.md"
+              "$DOCS_DIR/scenarios/sso-persistent-homes.md"
+              "$DOCS_DIR/scenarios/kiosk.md"
               "$DOCS_DIR/developer-guide/index.md"
               "$DOCS_DIR/developer-guide/architecture.md"
               "$DOCS_DIR/developer-guide/nix-flake.md"
