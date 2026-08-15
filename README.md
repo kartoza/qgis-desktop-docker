@@ -400,6 +400,12 @@ compose file in [`examples/`](examples/), a diagram, and a `nix run` target.
   identity provider and admits only users holding the right role. Ships with a
   throwaway Keycloak realm. `nix run .#run-keycloak-demo`
 
+- **[Using your own Keycloak](docs/scenarios/keycloak-byo.md)** — you already
+  run Keycloak and have admin on it: the nine steps to wire a container to it,
+  with the admin-console click-path and the `kcadm.sh` equivalent for each, a
+  preflight check, and a troubleshooting table of failures reproduced while
+  writing it. `nix run .#check-oidc`
+
 - **[Federating an identity provider](docs/scenarios/federated-idp.md)** —
   Keycloak as a *broker* in front of Entra ID / Google / Okta / LDAP, turning a
   group that already exists in the customer's directory into entitlement here.
@@ -506,6 +512,7 @@ nix run .#run-disposable-scenario   # Break it on purpose: every guard
 nix run .#run-federated-idp-scenario # Keycloak brokering another IdP
 nix run .#run-sso-homes-scenario    # SSO + persistent homes
 nix run .#run-kiosk-scenario        # Autostarted, locked-down kiosk
+nix run .#check-oidc        # Preflight your own OIDC provider before running
 nix run .#docs-diagrams     # Render the D2 diagrams to SVG
 nix run .#test              # Run the test suite (no Docker needed)
 nix run .#summary           # Generate build summary

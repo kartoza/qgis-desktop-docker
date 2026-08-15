@@ -155,6 +155,17 @@ For a complete, runnable example — including a throwaway Keycloak with a
 pre-imported realm and a user who is deliberately *refused* — see
 [Keycloak SSO](../scenarios/keycloak-sso.md).
 
+**Already run Keycloak?** [Using your own Keycloak](../scenarios/keycloak-byo.md)
+walks through creating the realm, client, redirect URI, secret, role and users
+— admin console and `kcadm.sh` side by side — and:
+
+```bash
+nix run .#check-oidc
+```
+
+checks the whole setup before you start a container, naming the specific thing
+that is wrong rather than leaving you to infer it from a redirect loop.
+
 ### OIDC variables
 
 | Variable | Default | Description |

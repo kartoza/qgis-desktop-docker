@@ -26,6 +26,7 @@ reaches the desktop.
 | Scenario | What it demonstrates | Run it |
 |----------|----------------------|--------|
 | **[Keycloak SSO](keycloak-sso.md)** | An OIDC proxy in front of the desktop, role-gated, with a user who is deliberately refused | `nix run .#run-keycloak-demo` |
+| **[Using your own Keycloak](keycloak-byo.md)** | You already run Keycloak and have admin: the nine steps to wire a container to it, console and `kcadm.sh`, with a preflight check | `nix run .#check-oidc` |
 | **[Federating an IdP](federated-idp.md)** | Keycloak as a *broker* in front of Entra ID / Google / Okta / LDAP, turning an existing group into entitlement | `nix run .#run-federated-idp-scenario` |
 | **[SSO + persistent homes](sso-persistent-homes.md)** | Identity in Keycloak, state in a bucket, nothing durable in between | `nix run .#run-sso-homes-scenario` |
 | **[Multi-user greeter](multi-user-greeter.md)** | A per-user Linux session inside the container, on its own or behind SSO | `nix run .#run-greeter-scenario` |
@@ -41,6 +42,8 @@ reaches the desktop.
 
 - **Giving one person a desktop they come back to?**
   [Persistent workstation](persistent-workstation.md).
+- **Already run Keycloak and just need this wired to it?** [Using your own
+  Keycloak](keycloak-byo.md) — start there, not with the demos.
 - **Rolling it out to a team with an existing directory?**
   [Federating an IdP](federated-idp.md), then add persistence.
 - **About to run this on Kubernetes?** [The disposable

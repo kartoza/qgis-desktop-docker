@@ -924,6 +924,17 @@ DBUSEOF
           '';
         };
 
+        # Preflight for an OIDC provider somebody else administers. Reads the
+        # same variables the container does, so a pass means the environment
+        # just verified is the environment about to be run.
+        checkOidcIssuer = pkgs.writeShellApplication {
+          name = "check-oidc";
+          runtimeInputs = with pkgs; [ curl jq coreutils gnused gnugrep ];
+          text = ''
+            exec bash ${./scripts/check-oidc-issuer.sh} "$@"
+          '';
+        };
+
         # Helper for docs-related apps that need the mkdocs Python env.
         mkDocsApp = name: extraInputs: script: {
           type = "app";
@@ -1461,6 +1472,18 @@ DBUSEOF
           };
 
           # Keeps the committed diagram SVGs in step with their .d2 sources.
+          test-check-oidc = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-check-oidc";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep gnused curl jq python3 ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-check-oidc.sh
+              '';
+            }}/bin/test-check-oidc";
+          };
+
           test-docs-diagrams = {
             type = "app";
             program = "${pkgs.writeShellApplication {
@@ -1539,6 +1562,9 @@ DBUSEOF
               runtimeInputs = with pkgs; [
                 bash coreutils gnused gnugrep gawk findutils diffutils
                 oauth2-proxy rclone d2
+                # test-check-oidc.sh serves a fake OIDC provider from python3
+                # and talks to it with curl/jq — no network, no Docker.
+                curl jq python3
               ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
@@ -1556,6 +1582,8 @@ DBUSEOF
                 bash ${self}/scripts/test-autostart.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-docs-diagrams.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-check-oidc.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
@@ -1595,6 +1623,13 @@ DBUSEOF
           docs-diagrams = {
             type = "app";
             program = "${docsDiagrams}/bin/docs-diagrams";
+          };
+
+          # Check an OIDC provider you administer before pointing a container
+          # at it. See docs/scenarios/keycloak-byo.md.
+          check-oidc = {
+            type = "app";
+            program = "${checkOidcIssuer}/bin/check-oidc";
           };
 
           # Build the static site into ./site/.
@@ -1700,6 +1735,7 @@ DBUSEOF
               "$DOCS_DIR/scenarios/team-data-drop.md"
               "$DOCS_DIR/scenarios/disposable-pod.md"
               "$DOCS_DIR/scenarios/keycloak-sso.md"
+              "$DOCS_DIR/scenarios/keycloak-byo.md"
               "$DOCS_DIR/scenarios/federated-idp.md"
               "$DOCS_DIR/scenarios/sso-persistent-homes.md"
               "$DOCS_DIR/scenarios/kiosk.md"

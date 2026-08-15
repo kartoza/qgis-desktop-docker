@@ -1,0 +1,67 @@
+# What you create in Keycloak, and which container variable consumes it.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: right
+
+kc: "Your Keycloak\n(you have admin)" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1C1D1D"
+
+  realm: "1. Realm\ngis" {
+    style.fill: "#E8F4FB"
+    style.stroke: "#1E88C7"
+  }
+  client: "2. Client\nqgis-desktop\nconfidential" {
+    style.fill: "#E8F4FB"
+    style.stroke: "#1E88C7"
+  }
+  redirect: "3. Valid redirect URI\nhttps://qgis.example.com/oauth2/callback"
+  secret: "4. Client secret" {
+    style.fill: "#FFF9E6"
+    style.stroke: "#E8A33D"
+  }
+  role: "5. Realm role\nqgis-user" {
+    style.fill: "#E8F4FB"
+    style.stroke: "#1E88C7"
+  }
+  users: "6. Users\nwith the role,\nand a complete profile"
+
+  realm -> client
+  client -> redirect
+  client -> secret
+  realm -> role
+  role -> users: "assigned to"
+}
+
+check: "nix run .#check-oidc" {
+  style.fill: "#1E88C7"
+  style.font-color: "#FFFFFF"
+  style.stroke: "#1E88C7"
+}
+
+env: "The container's environment" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+  v: |md
+    `QGIS_DESKTOP_AUTH_MODE=oidc`
+    `..._ISSUER_URL`      ← realm
+    `..._CLIENT_ID`       ← client
+    `..._CLIENT_SECRET`   ← secret
+    `..._REDIRECT_URL`    ← redirect URI
+    `..._ALLOWED_ROLES`   ← role
+  |
+}
+
+kc -> check: "verified before\nanything is started" { style.bold: true }
+check -> env: "then run it"
+
+warn: |md
+  **The one that catches everyone:** the issuer must be the same name for the
+  browser and for the container. If the container reaches Keycloak as
+  `http://keycloak:8080` and the browser uses `http://localhost:8080`, the
+  token's `iss` will not match and every login fails at the last step. Use one
+  DNS name that resolves for both.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

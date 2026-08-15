@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Point a desktop at a Keycloak you already run.
+#
+# Unlike every other example here, this one starts NO identity provider — yours
+# already exists. Copy .env.example to .env, fill it in, then:
+#
+#   docker compose up
+#
+# Check the Keycloak side first; it names the specific thing that is wrong
+# instead of leaving you with a 403:
+#
+#   set -a && . ./.env && set +a
+#   nix run .#check-oidc
+#
+# Setup walkthrough: docs/scenarios/keycloak-byo.md
+services:
+  qgis-desktop:
+    image: ghcr.io/kartoza/qgis-desktop-docker:latest
+    container_name: qgis-desktop
+    ports:
+      # The proxy's port, and ONLY the proxy's port. Publishing the desktop's
+      # own 6901 alongside it would hand out an unauthenticated way in.
+      - "8443:8443"
+    cap_add:
+      # Lets the container add your identity provider's host to the egress
+      # allowlist by itself. Drop it and the desktop still works; egress
+      # lockdown does not.
+      - NET_ADMIN
+    environment:
+      - QGIS_DESKTOP_AUTH_MODE=oidc
+
+      # Must be byte-identical to what Keycloak announces about itself, and
+      # reachable under the SAME name from the browser and from this container.
+      - QGIS_DESKTOP_OIDC_ISSUER_URL=${QGIS_DESKTOP_OIDC_ISSUER_URL:?set this in .env}
+      - QGIS_DESKTOP_OIDC_CLIENT_ID=${QGIS_DESKTOP_OIDC_CLIENT_ID:?set this in .env}
+      - QGIS_DESKTOP_OIDC_REDIRECT_URL=${QGIS_DESKTOP_OIDC_REDIRECT_URL:?set this in .env}
+
+      # Without this, ANY user your Keycloak can authenticate gets a desktop.
+      - QGIS_DESKTOP_OIDC_ALLOWED_ROLES=${QGIS_DESKTOP_OIDC_ALLOWED_ROLES:-qgis-user}
+
+      # Read from a file rather than the environment, so the value stays out of
+      # `docker inspect`. See the secrets mount below.
+      - QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
+
+      # Persist the cookie secret or every restart signs everybody out — and
+      # with more than one replica they must share it, or logins bounce between
+      # them. It must decode to 16, 24 or 32 bytes — see secrets/README.md.
+      - QGIS_DESKTOP_OIDC_COOKIE_SECRET_FILE=/run/secrets/oidc-cookie-secret
+
+      # Turn on when something terminates TLS in front of this container, so
+      # X-Forwarded-* is trusted and the proxy builds https:// URLs.
+      - QGIS_DESKTOP_OIDC_REVERSE_PROXY=${QGIS_DESKTOP_OIDC_REVERSE_PROXY:-0}
+
+      # Set to 1 only if the proxy itself serves TLS (see _TLS_CERT_FILE).
+      - QGIS_DESKTOP_OIDC_COOKIE_SECURE=${QGIS_DESKTOP_OIDC_COOKIE_SECURE:-0}
+
+      - VNC_RESOLUTION=${VNC_RESOLUTION:-1600x900}
+    volumes:
+      # Root-owned, 0400. The container reads them as root and scrubs both from
+      # the environment before the desktop session starts.
+      - ./secrets:/run/secrets:ro
+    restart: unless-stopped

@@ -21,8 +21,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - *Federating an identity provider* (`run-federated-idp-scenario`) — Keycloak
     brokering Entra ID / Google / Okta / LDAP, turning an existing group into
     the role the container gates on.
+  - *Using your own Keycloak* — for the case the demos do not cover: Keycloak
+    already exists and you have admin on it. Nine steps, each with the
+    admin-console click-path and the `kcadm.sh` equivalent, plus a
+    troubleshooting table of failures reproduced against a stock Keycloak 26.
   - *SSO + persistent homes* (`run-sso-homes-scenario`) — both features
     composed, which is the production shape.
+- **`nix run .#check-oidc`** — preflight an OIDC provider you administer before
+  pointing a container at it. Checks discovery, that the issuer announces the
+  name you configured, that the client secret is accepted, that the redirect URI
+  is registered, and that role gating is wired; names the specific cause instead
+  of leaving you with a redirect loop or a bare 403. Reads the same variables
+  the container does, including `_CLIENT_SECRET_FILE`.
   - *Kiosk display* (`run-kiosk-scenario`) — autostarted on a project, no
     terminal, no clipboard, no network.
 - **Diagrams generated at docs build time.** Nine D2 sources render to SVG in
