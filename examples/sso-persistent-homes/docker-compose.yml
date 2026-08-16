@@ -82,7 +82,7 @@ services:
         echo "bucket ready"
 
   qgis-desktop:
-    image: kartoza:latest
+    image: kartoza:qgis-desktop-ltr
     container_name: sso-homes-desktop
     hostname: qgis-desktop-0
     depends_on:

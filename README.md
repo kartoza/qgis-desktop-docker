@@ -27,8 +27,8 @@ A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) 
 > **Note:** If the package is private, authenticate first: `echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin`
 
 ```bash
-docker pull ghcr.io/kartoza/qgis-desktop-docker:latest
-docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:latest
+docker pull ghcr.io/kartoza/qgis-desktop-docker:ltr
+docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Open [http://localhost:8443](http://localhost:8443) in your browser.
@@ -45,7 +45,7 @@ docker compose up -d
 ### Basic (ephemeral)
 
 ```bash
-docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:latest
+docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ### Persistent home directory (named volume)
@@ -53,7 +53,7 @@ docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:latest
 ```bash
 docker run --rm -p 8443:8443 \
   -v qgis-home:/home/user \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 QGIS settings, plugins, and projects in `/home/user` survive container restarts.
@@ -63,7 +63,7 @@ QGIS settings, plugins, and projects in `/home/user` survive container restarts.
 ```bash
 docker run --rm -p 8443:8443 \
   -v "$HOME/qgis-data:/home/user/data" \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ### Persistent home + local data
@@ -72,7 +72,7 @@ docker run --rm -p 8443:8443 \
 docker run --rm -p 8443:8443 \
   -v qgis-home:/home/user \
   -v "$HOME/gis-projects:/home/user/projects" \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ### Custom resolution
@@ -80,7 +80,7 @@ docker run --rm -p 8443:8443 \
 ```bash
 docker run --rm -p 8443:8443 \
   -e VNC_RESOLUTION=1920x1080 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ### Custom port
@@ -88,7 +88,7 @@ docker run --rm -p 8443:8443 \
 ```bash
 docker run --rm -p 3000:3000 \
   -e VNC_PORT=3000 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ## Docker Compose
@@ -96,7 +96,7 @@ docker run --rm -p 3000:3000 \
 ```yaml
 services:
   qgis-desktop:
-    image: ghcr.io/kartoza/qgis-desktop-docker:latest
+    image: ghcr.io/kartoza/qgis-desktop-docker:ltr
     ports:
       - "8443:8443"
     environment:
@@ -118,22 +118,34 @@ is inside.
 
 | Tag | QGIS | Use it for |
 |-----|------|------------|
-| `:qgis-ltr`, `:latest` | **3.44.9 LTR** *(default)* | Production. The LTR line only takes bug fixes, so a project that opens today opens the same way next month. |
-| `:qgis-latest` | **4.0.1** (current release) | Testing your projects, plugins and data against what becomes the next LTR — before it becomes the next LTR. |
+| `:ltr` | **3.44.9 LTR** *(recommended)* | Production. The LTR line only takes bug fixes, so a project that opens today opens the same way next month. |
+| `:latest` | **4.0.1** (current release) | Testing your projects, plugins and data against what becomes the next LTR — before it becomes the next LTR. |
+
+Both tags move as QGIS ships. Every build is also published under its exact
+QGIS version, which is what you pin when a deployment must not move:
+
+| Tag | Points at |
+|-----|-----------|
+| `:3.44.9` | That exact QGIS, forever |
+| `:4.0.1` | That exact QGIS, forever |
+| `:<release>-ltr`, `:<release>-latest` | That channel as of that release, e.g. `:v3.0.0-ltr` |
 
 ```bash
-# The default (:latest points here too)
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:qgis-ltr
+# Production — the LTR line
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:ltr
 
 # Same container, current QGIS
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:qgis-latest
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:latest
+
+# Pinned to an exact QGIS, immune to both lines moving
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN ghcr.io/kartoza/qgis-desktop-docker:3.44.9
 ```
 
 Building either from source:
 
 ```bash
-nix run .#build-docker               # QGIS LTR    -> kartoza:qgis-ltr (+ :latest)
-nix run .#build-docker-qgis-latest   # QGIS latest -> kartoza:qgis-latest
+nix run .#build-docker          # QGIS LTR    -> kartoza:qgis-desktop-ltr    (+ :qgis-desktop-3.44.9)
+nix run .#build-docker-latest   # QGIS latest -> kartoza:qgis-desktop-latest (+ :qgis-desktop-4.0.1)
 ```
 
 Every other feature — auth modes, egress lockdown, terminal lockdown, Giswater
@@ -145,7 +157,7 @@ line, and `QGIS_DESKTOP_QGIS_CHANNEL` / `QGIS_DESKTOP_QGIS_VERSION` are set
 inside. Without starting it:
 
 ```bash
-docker image inspect ghcr.io/kartoza/qgis-desktop-docker:latest \
+docker image inspect ghcr.io/kartoza/qgis-desktop-docker:ltr \
   --format '{{index .Config.Labels "com.kartoza.qgis.version"}}'
 ```
 
@@ -167,7 +179,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_PERSIST_QUOTA=5G \
   -v /etc/qgis-desktop/s3-key:/run/secrets/s3-key:ro \
   -v /etc/qgis-desktop/s3-secret:/run/secrets/s3-secret:ro \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 It is a sync, not a mount, because a QGIS profile is SQLite and so is every
@@ -246,7 +258,7 @@ Block copy/paste both directions, watermark the desktop:
 ```bash
 docker run --rm -p 8443:8443 \
   -e KASM_WATERMARK_TEXT='${USER} %H:%M' \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Allow paste in but block copy out (a common data-exfil control), with a 4 KB cap:
@@ -256,7 +268,7 @@ docker run --rm -p 8443:8443 \
   -e KASM_ALLOW_CLIPBOARD_IN=1 \
   -e KASM_CLIPBOARD_IN_MAX=4096 \
   -e KASM_CLIPBOARD_MIME_TYPES=text/plain \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Fully permissive (matches the KasmVNC upstream default posture):
@@ -266,7 +278,7 @@ docker run --rm -p 8443:8443 \
   -e KASM_ALLOW_CLIPBOARD_IN=1 \
   -e KASM_ALLOW_CLIPBOARD_OUT=1 \
   -e KASM_ALLOW_PRIMARY_SELECTION=1 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ### File transfer
@@ -321,7 +333,7 @@ container **fails closed** — it prints a diagnostic and exits. Set
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_EGRESS_ALLOW='db.internal,10.0.0.0/24' \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Inside the desktop, `psql -h db.internal ...` works; `curl https://example.com`
@@ -481,7 +493,7 @@ nix build .#docker
 nix store cat $(nix build .#docker --print-out-paths) | docker load
 
 # Run
-docker run --rm -p 8443:8443 kartoza:latest
+docker run --rm -p 8443:8443 kartoza:qgis-desktop-ltr
 ```
 
 ### Using Make
@@ -635,7 +647,7 @@ EOF
 chmod 600 users
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -v "$PWD/users:/etc/qgis-desktop/users:ro" \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 **Greeter mode (in-desktop LightDM login form):**
@@ -643,7 +655,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_AUTH_MODE=greeter \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 # Log in as user / password. Wrong password re-prompts in place —
 # no browser tab to close, no cache to clear.
 ```
@@ -659,7 +671,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
   -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
   -v /path/to/secret:/run/secrets/oidc:ro \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 `oauth2-proxy` takes over the published port and KasmVNC moves to
@@ -671,7 +683,7 @@ with `nix run .#run-keycloak-demo`.
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN -e QGIS_DESKTOP_AUTH_MODE=none \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Notes:

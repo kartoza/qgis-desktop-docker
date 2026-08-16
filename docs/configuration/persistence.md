@@ -17,7 +17,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_PERSIST_QUOTA=5G \
   -v /etc/qgis-desktop/s3-key:/run/secrets/s3-key:ro \
   -v /etc/qgis-desktop/s3-secret:/run/secrets/s3-secret:ro \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ## The shape of it
@@ -271,7 +271,7 @@ spec:
       terminationGracePeriodSeconds: 60   # must exceed FLUSH_TIMEOUT
       containers:
         - name: qgis-desktop
-          image: ghcr.io/kartoza/qgis-desktop-docker:latest
+          image: ghcr.io/kartoza/qgis-desktop-docker:ltr
           env:
             - name: QGIS_DESKTOP_PERSIST
               value: "1"

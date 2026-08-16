@@ -16,8 +16,8 @@
 services:
   qgis-desktop:
     # Point at the locally built image (`nix run .#build-docker`).
-    # Swap for `ghcr.io/kartoza/qgis-desktop-docker:latest` for the published one.
-    image: kartoza:latest
+    # Swap for `ghcr.io/kartoza/qgis-desktop-docker:ltr` for the published one.
+    image: kartoza:qgis-desktop-ltr
     container_name: qgis-desktop
     depends_on:
       db:

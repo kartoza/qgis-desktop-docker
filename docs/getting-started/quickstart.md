@@ -5,9 +5,9 @@ Pull the pre-built image from GitHub Container Registry, run it, and log in.
 ## Pull and run
 
 ```bash
-docker pull ghcr.io/kartoza/qgis-desktop-docker:latest
+docker pull ghcr.io/kartoza/qgis-desktop-docker:ltr
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Open <http://localhost:8443> and log in with the built-in credentials
@@ -49,7 +49,7 @@ plugins, and projects survive container restarts:
 ```yaml
 services:
   qgis-desktop:
-    image: ghcr.io/kartoza/qgis-desktop-docker:latest
+    image: ghcr.io/kartoza/qgis-desktop-docker:ltr
     cap_add:
       - NET_ADMIN
     ports:
@@ -72,7 +72,7 @@ Common overrides via `-e`:
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e VNC_RESOLUTION=1920x1080 \
   -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 For the full matrix of knobs, see [Configuration](../configuration/index.md).

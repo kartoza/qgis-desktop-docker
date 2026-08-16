@@ -32,7 +32,7 @@ themselves. For a single-purpose deployment, start it with the session:
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_AUTOSTART_QGIS=1 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 QGIS opens a few seconds after the desktop appears — it is a normal application
@@ -72,7 +72,7 @@ Change the resolution:
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e VNC_RESOLUTION=1920x1080 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Change the port (remember to update the port mapping too):
@@ -80,7 +80,7 @@ Change the port (remember to update the port mapping too):
 ```bash
 docker run --rm -p 3000:3000 --cap-add=NET_ADMIN \
   -e VNC_PORT=3000 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 !!! tip

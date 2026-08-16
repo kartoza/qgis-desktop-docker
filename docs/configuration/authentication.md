@@ -146,7 +146,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
   -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
   -v /path/to/secret:/run/secrets/oidc:ro \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Or, with the same variables exported in your shell, `nix run .#run-oidc`.
@@ -238,7 +238,7 @@ EOF
 chmod 600 users
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -v "$PWD/users:/etc/qgis-desktop/users:ro" \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 **Greeter mode, single default user:**
@@ -246,7 +246,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_AUTH_MODE=greeter \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 # Browser at :8443 shows the LightDM login. Log in as user / password.
 ```
 
@@ -256,7 +256,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_AUTH_MODE=greeter \
   -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 **Disable auth (local dev only):**
@@ -264,7 +264,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_AUTH_MODE=none \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 **Single sign-on against Keycloak:**
@@ -277,7 +277,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
   -e QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
   -v /path/to/secret:/run/secrets/oidc:ro \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ## Branded login page

@@ -49,7 +49,7 @@ services:
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_EGRESS_ALLOW='db.internal,10.0.0.0/24' \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Inside the desktop `psql -h db.internal ...` works;

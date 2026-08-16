@@ -13,7 +13,7 @@
 # "kiosk": QGIS has a Python console, and this does not take it away.
 services:
   qgis-desktop:
-    image: kartoza:latest
+    image: kartoza:qgis-desktop-ltr
     container_name: qgis-desktop-kiosk
     ports:
       - "8443:8443"

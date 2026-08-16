@@ -80,16 +80,25 @@
         });
 
         qgisChannels = {
+          # `channel` is the semantic name — it goes in the image labels and in
+          # QGIS_DESKTOP_QGIS_CHANNEL. `tag` is the local image tag, and spells
+          # out what the image is: the repository half is just "kartoza", which
+          # says who built it but not what it holds, so `kartoza:qgis-desktop-ltr` sitting in
+          # `docker images` next to Kartoza's other images is a guessing game.
+          # Published images do not have this problem — the GHCR repository is
+          # already qgis-desktop-docker, so those stay :ltr and :latest.
           ltr = {
             package = withGiswater pkgs.qgis-ltr;
             version = pkgs.qgis-ltr.version;
-            tag = "qgis-ltr";
+            channel = "ltr";
+            tag = "qgis-desktop-ltr";
             description = "long-term release";
           };
           latest = {
             package = withGiswater pkgs.qgis;
             version = pkgs.qgis.version;
-            tag = "qgis-latest";
+            channel = "latest";
+            tag = "qgis-desktop-latest";
             description = "current release";
           };
         };
@@ -712,7 +721,7 @@ DBUSEOF
               "org.opencontainers.image.description" = "QGIS ${channel.version} (${channel.description}) in a Docker container with KasmVNC web-based access, built with Nix";
               # Which QGIS is inside, without having to start the container.
               "org.opencontainers.image.version" = channel.version;
-              "com.kartoza.qgis.channel" = channel.tag;
+              "com.kartoza.qgis.channel" = channel.channel;
               "com.kartoza.qgis.version" = channel.version;
               "org.opencontainers.image.url" = "https://github.com/kartoza/qgis-desktop-docker";
               "org.opencontainers.image.source" = "https://github.com/kartoza/qgis-desktop-docker";
@@ -732,7 +741,7 @@ DBUSEOF
               "VNC_COL_DEPTH=24"
               # Which QGIS this image was built from. Read-only: changing it
               # does not change the QGIS inside — pick the image tag instead.
-              "QGIS_DESKTOP_QGIS_CHANNEL=${channel.tag}"
+              "QGIS_DESKTOP_QGIS_CHANNEL=${channel.channel}"
               "QGIS_DESKTOP_QGIS_VERSION=${channel.version}"
               # Auth mode: basic (default) | none | greeter | oidc.
               # See docs/configuration/authentication.md.
@@ -839,9 +848,9 @@ DBUSEOF
           ${banner}
           BANNER
 
-          if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
+          if ! docker image inspect kartoza:qgis-desktop-ltr >/dev/null 2>&1; then
             echo ""
-            echo "ERROR: image 'kartoza:latest' not found."
+            echo "ERROR: image 'kartoza:qgis-desktop-ltr' not found."
             echo "       Build it first with:  nix run .#build-docker"
             exit 1
           fi
@@ -958,7 +967,7 @@ DBUSEOF
 
           # The current QGIS release, for testing projects and plugins against
           # what becomes the next LTR.
-          docker-qgis-latest = mkDockerImage qgisChannels.latest;
+          docker-latest = mkDockerImage qgisChannels.latest;
 
           # Giswater building blocks, exposed so they can be built and smoke
           # tested on their own: `nix build .#epanet` runs a real model through
@@ -971,34 +980,41 @@ DBUSEOF
         };
 
         apps = {
-          # QGIS LTR — the default. Also tagged :latest, because that is the
-          # image every run-* target and the compose files expect, and because
-          # "latest" in Docker means "the one you should be using", not "the
-          # newest upstream release".
+          # Two channels, each named for what it tracks:
+          #
+          #   :ltr     the QGIS long-term release — the default, and what every
+          #            run-* target and compose file uses
+          #   :latest  the current QGIS release, for testing projects and
+          #            plugins against what becomes the next LTR
+          #
+          # Both channels move as QGIS ships, so each build is also tagged with
+          # its exact QGIS version (:3.44.9, :4.0.1). A deployment that must not
+          # move pins that; :ltr and :latest are for following a line.
           build-docker = mkApp "build-docker" ''
             echo "Building Docker image with Nix (QGIS ${qgisChannels.ltr.version}, ${qgisChannels.ltr.description})..."
             nix build .#docker -o result
             OUT=$(nix build .#docker --print-out-paths)
             nix store cat "$OUT" | docker load
-            docker tag kartoza:qgis-ltr kartoza:latest
+            docker tag kartoza:qgis-desktop-ltr kartoza:qgis-desktop-${qgisChannels.ltr.version}
             echo ""
-            echo "Image loaded: kartoza:qgis-ltr (also tagged :latest)"
-            docker image inspect kartoza:latest --format \
-              "Size: {{.Size}} bytes ($(docker image inspect kartoza:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+            echo "Image loaded: kartoza:qgis-desktop-ltr (also tagged :qgis-desktop-${qgisChannels.ltr.version})"
+            docker image inspect kartoza:qgis-desktop-ltr --format \
+              "Size: {{.Size}} bytes ($(docker image inspect kartoza:qgis-desktop-ltr --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
           '';
 
           # The current QGIS release, side by side with the LTR image. Nothing
           # else differs, so a project that works here and not there is a QGIS
           # regression worth reporting upstream before it reaches an LTR.
-          build-docker-qgis-latest = mkApp "build-docker-qgis-latest" ''
+          build-docker-latest = mkApp "build-docker-latest" ''
             echo "Building Docker image with Nix (QGIS ${qgisChannels.latest.version}, ${qgisChannels.latest.description})..."
-            OUT=$(nix build .#docker-qgis-latest --print-out-paths)
+            OUT=$(nix build .#docker-latest --print-out-paths)
             nix store cat "$OUT" | docker load
+            docker tag kartoza:qgis-desktop-latest kartoza:qgis-desktop-${qgisChannels.latest.version}
             echo ""
-            echo "Image loaded: kartoza:qgis-latest"
-            echo "Run it with:  docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-latest"
-            docker image inspect kartoza:qgis-latest --format \
-              "Size: {{.Size}} bytes ($(docker image inspect kartoza:qgis-latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+            echo "Image loaded: kartoza:qgis-desktop-latest (also tagged :qgis-desktop-${qgisChannels.latest.version})"
+            echo "Run it with:  docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-desktop-latest"
+            docker image inspect kartoza:qgis-desktop-latest --format \
+              "Size: {{.Size}} bytes ($(docker image inspect kartoza:qgis-desktop-latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
           '';
 
           # Foreground run with default single-user auth (Ctrl-C to stop).
@@ -1007,7 +1023,7 @@ DBUSEOF
             docker rm -f qgis-desktop 2>/dev/null || true
             echo "▶ Auth: single-user (default VNC_USER=user, VNC_PW=password)"
             echo "  Open http://localhost:8443 — browser will prompt for creds."
-            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop kartoza:latest
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop kartoza:qgis-desktop-ltr
           '';
 
           # Multi-user via inline env var.
@@ -1018,7 +1034,7 @@ DBUSEOF
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # Multi-user via mounted file. Generates a temp file, mounts it 0600,
@@ -1038,7 +1054,7 @@ DBUSEOF
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -v "$USERS_FILE:/etc/qgis-desktop/users:ro" \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # No auth at all — for local sanity checks only.
@@ -1048,7 +1064,7 @@ DBUSEOF
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=none \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # LightDM greeter mode: browser sees an X-server-hosted login form
@@ -1063,7 +1079,7 @@ DBUSEOF
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # Greeter mode with two demo users (alice / bob). Each gets a real
@@ -1076,7 +1092,7 @@ DBUSEOF
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # OIDC / Keycloak mode against a real identity provider. Everything
@@ -1108,7 +1124,7 @@ DBUSEOF
               -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES \
               -e QGIS_DESKTOP_OIDC_EMAIL_DOMAINS \
               -e QGIS_DESKTOP_OIDC_INNER_MODE \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # End-to-end OIDC demo: a throwaway Keycloak with a pre-imported
@@ -1133,9 +1149,9 @@ DBUSEOF
               expects. Press Ctrl-C to stop and remove both containers.
             BANNER
 
-            if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
+            if ! docker image inspect kartoza:qgis-desktop-ltr >/dev/null 2>&1; then
               echo ""
-              echo "ERROR: image 'kartoza:latest' not found."
+              echo "ERROR: image 'kartoza:qgis-desktop-ltr' not found."
               echo "       Build it first with:  nix run .#build-docker"
               exit 1
             fi
@@ -1299,7 +1315,7 @@ DBUSEOF
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
               -e QGIS_DESKTOP_ALLOW_TERMINAL=0 \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # Demo the egress lockdown with a small allowlist. Try `curl 1.1.1.1`
@@ -1313,7 +1329,7 @@ DBUSEOF
             echo "  Log in as user / password  ·  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_EGRESS_ALLOW='1.1.1.1,example.com' \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # End-to-end scenario: bob / password123, clipboard blocked, egress
@@ -1334,9 +1350,9 @@ DBUSEOF
               Press Ctrl-C to stop and remove both containers.
             BANNER
 
-            if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
+            if ! docker image inspect kartoza:qgis-desktop-ltr >/dev/null 2>&1; then
               echo ""
-              echo "ERROR: image 'kartoza:latest' not found."
+              echo "ERROR: image 'kartoza:qgis-desktop-ltr' not found."
               echo "       Build it first with:  nix run .#build-docker"
               exit 1
             fi
@@ -1361,7 +1377,7 @@ DBUSEOF
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               -e QGIS_DESKTOP_EGRESS_LOCKDOWN=0 \
-              kartoza:latest
+              kartoza:qgis-desktop-ltr
           '';
 
           # Convenience: hard-stop the running container from another terminal.
@@ -1384,9 +1400,9 @@ DBUSEOF
             QGIS Desktop Docker — available commands
 
               Build
-                nix run .#build-docker      Build the image on QGIS LTR (default, tagged :qgis-ltr + :latest)
-                nix run .#build-docker-qgis-latest
-                                            Build the image on the current QGIS release (:qgis-latest)
+                nix run .#build-docker      Build the image on QGIS LTR (default, tagged :ltr)
+                nix run .#build-docker-latest
+                                            Build the image on the current QGIS release (:latest)
 
               Run (foreground, Ctrl-C to stop)
                 nix run .#run               Default: auth on, egress locked (empty allowlist)
@@ -1590,7 +1606,7 @@ DBUSEOF
           };
 
           summary = mkApp "summary" ''
-            bash build-summary.sh kartoza:latest build-summary.md
+            bash build-summary.sh kartoza:qgis-desktop-ltr build-summary.md
           '';
 
           # --- Documentation apps -----------------------------------------
@@ -1849,7 +1865,7 @@ META
 
               Build
                 nix run .#build-docker      Build the image on QGIS LTR (default)
-                nix run .#build-docker-qgis-latest   Build it on the current QGIS release
+                nix run .#build-docker-latest   Build it on the current QGIS release
 
               Run (foreground, Ctrl-C to stop)
                 nix run .#run               Default: auth on, egress locked (empty allowlist)

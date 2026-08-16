@@ -62,7 +62,7 @@ services:
       start_period: 20s
 
   qgis-desktop:
-    image: kartoza:latest
+    image: kartoza:qgis-desktop-ltr
     container_name: federated-desktop
     depends_on:
       keycloak:

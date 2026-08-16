@@ -1,6 +1,6 @@
 services:
   qgis-desktop:
-    image: ghcr.io/kartoza/qgis-desktop-docker:latest
+    image: ghcr.io/kartoza/qgis-desktop-docker:ltr
     container_name: qgis-desktop
     ports:
       - "8443:8443"

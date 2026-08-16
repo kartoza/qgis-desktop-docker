@@ -110,7 +110,7 @@ services:
         echo "dispatched assets.csv -> deploy/ (expect it on the Desktop within one interval)"
 
   qgis-desktop:
-    image: kartoza:latest
+    image: kartoza:qgis-desktop-ltr
     container_name: data-drop-desktop
     hostname: qgis-desktop-0
     depends_on:

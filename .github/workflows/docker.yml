@@ -56,16 +56,22 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Build and load the current-QGIS image
+        id: build
         run: |
-          OUT=$(nix build .#docker-qgis-latest --print-out-paths)
+          OUT=$(nix build .#docker-latest --print-out-paths)
           nix store cat "$OUT" | docker load
-          docker image inspect ${{ env.NIX_IMAGE }}:qgis-latest \
+          docker image inspect ${{ env.NIX_IMAGE }}:qgis-desktop-latest \
             --format 'QGIS {{index .Config.Labels "com.kartoza.qgis.version"}} ({{index .Config.Labels "com.kartoza.qgis.channel"}})'
+          # The exact QGIS version, so the image can be pinned even though
+          # :latest moves every time QGIS ships.
+          QGIS_VERSION=$(docker image inspect ${{ env.NIX_IMAGE }}:qgis-desktop-latest \
+            --format '{{index .Config.Labels "com.kartoza.qgis.version"}}')
+          echo "qgis_version=${QGIS_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke-test the desktop
         run: |
           docker run -d --name qgis-latest-smoke -p 8443:8443 --cap-add=NET_ADMIN \
-            ${{ env.NIX_IMAGE }}:qgis-latest
+            ${{ env.NIX_IMAGE }}:qgis-desktop-latest
           for _ in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8443/ || true)
             [ "$code" = "401" ] && break
@@ -89,10 +95,13 @@ jobs:
         run: |
           GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           VERSION="${{ github.event.release.tag_name }}"
-          docker tag ${{ env.NIX_IMAGE }}:qgis-latest "${GHCR_IMAGE}:qgis-latest"
-          docker tag ${{ env.NIX_IMAGE }}:qgis-latest "${GHCR_IMAGE}:${VERSION}-qgis-latest"
-          docker push "${GHCR_IMAGE}:qgis-latest"
-          docker push "${GHCR_IMAGE}:${VERSION}-qgis-latest"
+          QGIS_VERSION="${{ steps.build.outputs.qgis_version }}"
+          # :latest follows the current QGIS line; :<qgis-version> and
+          # :<release>-latest are the immovable pins.
+          for tag in "latest" "${QGIS_VERSION}" "${VERSION}-latest"; do
+            docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-latest "${GHCR_IMAGE}:${tag}"
+            docker push "${GHCR_IMAGE}:${tag}"
+          done
 
   build:
     needs: test
@@ -112,13 +121,20 @@ jobs:
         run: nix build .#docker -o result
 
       - name: Load Docker image
+        id: load
         run: |
           OUT=$(nix build .#docker --print-out-paths)
           nix store cat "$OUT" | docker load
-          # The default image is built on QGIS LTR and carries the :qgis-ltr tag.
-          # Everything downstream — SBOM, report, publish — works off :latest,
-          # which is also what users pull, so alias it here.
-          docker tag ${{ env.NIX_IMAGE }}:qgis-ltr ${{ env.NIX_IMAGE }}:latest
+          # The default image is built on QGIS LTR and carries the :ltr tag.
+          # It is NOT aliased to :latest — :latest tracks the current QGIS
+          # release, which the build-qgis-latest job publishes.
+          docker image inspect ${{ env.NIX_IMAGE }}:qgis-desktop-ltr \
+            --format 'QGIS {{index .Config.Labels "com.kartoza.qgis.version"}} ({{index .Config.Labels "com.kartoza.qgis.channel"}})'
+          # The exact QGIS version, so the image can be pinned even though
+          # :ltr moves when a new LTR ships.
+          QGIS_VERSION=$(docker image inspect ${{ env.NIX_IMAGE }}:qgis-desktop-ltr \
+            --format '{{index .Config.Labels "com.kartoza.qgis.version"}}')
+          echo "qgis_version=${QGIS_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Determine version tag
         id: version
@@ -131,16 +147,16 @@ jobs:
 
       - name: Tag image with version
         run: |
-          docker tag ${{ env.NIX_IMAGE }}:latest ${{ env.NIX_IMAGE }}:${{ steps.version.outputs.tag }}
+          docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-ltr ${{ env.NIX_IMAGE }}:${{ steps.version.outputs.tag }}
 
       - name: Export image as tarball
         run: |
-          docker save ${{ env.NIX_IMAGE }}:latest | gzip > ${{ env.NIX_IMAGE }}.tar.gz
+          docker save ${{ env.NIX_IMAGE }}:qgis-desktop-ltr | gzip > ${{ env.NIX_IMAGE }}.tar.gz
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.NIX_IMAGE }}:latest
+          image: ${{ env.NIX_IMAGE }}:qgis-desktop-ltr
           artifact-name: sbom.spdx.json
           output-file: sbom.spdx.json
           format: spdx-json
@@ -148,7 +164,7 @@ jobs:
       - name: Generate SBOM with syft (for table)
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-          syft ${{ env.NIX_IMAGE }}:latest -o json > sbom-syft.json
+          syft ${{ env.NIX_IMAGE }}:qgis-desktop-ltr -o json > sbom-syft.json
 
       - name: Generate SBOM table
         run: python3 scripts/sbom_table.py sbom-syft.json > sbom-table.md
@@ -168,10 +184,10 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.tag }}"
           GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE_ID=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{.Id}}' | cut -c8-19)
-          IMAGE_SIZE=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B)
+          IMAGE_ID=$(docker image inspect ${{ env.NIX_IMAGE }}:qgis-desktop-ltr --format '{{.Id}}' | cut -c8-19)
+          IMAGE_SIZE=$(docker image inspect ${{ env.NIX_IMAGE }}:qgis-desktop-ltr --format '{{.Size}}' | numfmt --to=iec-i --suffix=B)
           TARBALL_SIZE=$(stat --format=%s ${{ env.NIX_IMAGE }}.tar.gz | numfmt --to=iec-i --suffix=B)
-          LAYER_COUNT=$(docker image inspect ${{ env.NIX_IMAGE }}:latest --format '{{len .RootFS.Layers}}')
+          LAYER_COUNT=$(docker image inspect ${{ env.NIX_IMAGE }}:qgis-desktop-ltr --format '{{len .RootFS.Layers}}')
 
           cat > build-report.md <<EOF
           ## Docker Image Build
@@ -305,7 +321,7 @@ jobs:
           docker load < ${NIX_IMAGE}.tar.gz
 
           # Run it
-          docker run --rm -p 8443:8443 ${NIX_IMAGE}:latest
+          docker run --rm -p 8443:8443 ${NIX_IMAGE}:qgis-desktop-ltr
 
           # Open http://localhost:8443
           \`\`\`
@@ -336,15 +352,18 @@ jobs:
         run: |
           GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           VERSION="${{ steps.version.outputs.tag }}"
+          QGIS_VERSION="${{ steps.load.outputs.qgis_version }}"
 
-          docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:${VERSION}"
-          docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:latest"
-          # The channel tag, so the LTR line can be pinned by name the same way
-          # :qgis-latest pins the current release.
-          docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:qgis-ltr"
-          docker push "${GHCR_IMAGE}:${VERSION}"
-          docker push "${GHCR_IMAGE}:latest"
-          docker push "${GHCR_IMAGE}:qgis-ltr"
+          # :ltr follows the LTR line; :<qgis-version> and :<release>-ltr are
+          # the immovable pins. The bare :<release> tag stays on the LTR — it
+          # is the supported artefact, and existing pins point at it.
+          #
+          # Deliberately no :latest here. That tag belongs to the current QGIS
+          # release and is pushed by the build-qgis-latest job.
+          for tag in "ltr" "${QGIS_VERSION}" "${VERSION}-ltr" "${VERSION}"; do
+            docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-ltr "${GHCR_IMAGE}:${tag}"
+            docker push "${GHCR_IMAGE}:${tag}"
+          done
 
       - name: Set package visibility to public
         if: github.event_name == 'release'

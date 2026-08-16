@@ -71,7 +71,7 @@ runswmm   <input.inp> <report.rpt> [<output.out>]
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -v qgis-home:/home/user \
   -e QGIS_DESKTOP_EGRESS_ALLOW=plugins.qgis.org,gis.example.com \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 1. **Allow the egress you need.** The lockdown is on by default with an empty
