@@ -1,4 +1,4 @@
-# Kasm permissions
+# Permissions
 
 KasmVNC's data-loss-prevention knobs are wired to environment variables.
 Defaults are **restrictive** — clipboard sharing is disabled in both
@@ -20,6 +20,7 @@ else counts as off.
 | `KASM_CLIPBOARD_MIME_TYPES` | *(kasm default)* | `-DLP_ClipTypes` | Comma-separated MIME allowlist, e.g. `text/plain,text/html`. |
 | `KASM_WATERMARK_TEXT` | *(none)* | `-DLP_WatermarkText` | Overlay text on the desktop as a screenshot deterrent. |
 | `KASM_DLP_LOG` | `off` | `-DLP_Log` | `off`, `info`, or `verbose`. |
+| `QGIS_DESKTOP_ALLOW_TERMINAL` | `1` | *(not a Kasm flag)* | `0` removes the terminal emulators from the container. See [Terminal access](#terminal-access). |
 
 !!! danger "verbose DLP log captures keystrokes"
     `KASM_DLP_LOG=verbose` writes **KEYSTROKES AND CLIPBOARD CONTENT** to
@@ -31,9 +32,9 @@ else counts as off.
 `KASM_WATERMARK_TEXT` supports two kinds of substitution:
 
 - `${USER}` and `$USER` are expanded by `start-desktop.sh` before Xkasmvnc
-  sees them, using the first `KASM_USERS` entry, else `VNC_USER`, else the
+  sees them, using the first `QGIS_DESKTOP_USERS` entry, else `VNC_USER`, else the
   OS `$USER`. So `RESTRICTED - ${USER}` becomes `RESTRICTED - bob` when
-  `KASM_USERS=bob:...` is set.
+  `QGIS_DESKTOP_USERS=bob:...` is set.
 - strftime tokens (`%H:%M`, `%Y-%m-%d`, etc.) are expanded by KasmVNC at
   render time.
 
@@ -71,6 +72,49 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e KASM_ALLOW_PRIMARY_SELECTION=1 \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
+
+## Terminal access
+
+By default the desktop ships XFCE's terminal emulator, and a user can reach a
+shell from the panel launcher, the applications menu, Ctrl-Alt-T, or Thunar's
+right-click **Open Terminal Here**. For a deployment where people are meant to
+use a mapping application and nothing else:
+
+```bash
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
+  -e QGIS_DESKTOP_ALLOW_TERMINAL=0 \
+  ghcr.io/kartoza/qgis-desktop-docker:latest
+```
+
+At boot, while it is still root, the entrypoint:
+
+1. **Deletes the terminal emulators** — the `/bin` symlink *and* the binary it
+   points at, inside this container's own filesystem layer. This is the control
+   that holds: every route above ends in `exec()`ing one of those names, and
+   none of them can succeed once the executable is gone.
+2. **Deletes the command-runner dialogs** (`xfce4-appfinder`, `xfrun4`,
+   `exo-open`), which would otherwise let a user type an arbitrary command into
+   a "choose an application" prompt.
+3. **Hides the menu entries and removes the panel launcher**, so the desktop
+   does not offer an affordance that is only going to fail.
+
+Step 3 is cosmetic; steps 1 and 2 are the control. Nothing is written to the
+image — a fresh container starts from the image again, so the setting is per
+container and reversible by restarting without it.
+
+!!! warning "This is not a sandbox"
+    QGIS ships a Python console, and anything that can run Python can start a
+    subprocess. Removing the terminal raises the bar for a casual user and
+    removes the obvious affordance; it does not contain a determined one. The
+    boundaries that do that are the unprivileged UID the desktop runs as, the
+    [egress lockdown](egress-lockdown.md), and the container itself. If you
+    need to stop code execution outright, do not hand out a desktop with a
+    scripting console in it.
+
+!!! tip "Combine it"
+    `QGIS_DESKTOP_ALLOW_TERMINAL=0` composes with everything else — it is what the
+    [analyst locked-down scenario](../scenarios/analyst-locked-down.md) uses on
+    top of clipboard blocking, the watermark and the egress allowlist.
 
 ## File transfer
 

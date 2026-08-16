@@ -24,11 +24,54 @@ nix build .#docker -o result
 nix store cat "$(nix build .#docker --print-out-paths)" | docker load
 ```
 
-The image is loaded as `nix-xfce-kasm:latest`. Run it:
+The image is loaded as `kartoza:qgis-ltr`, and tagged `:latest` as well —
+that is the tag every `nix run .#run-*` target and both compose files expect.
+Run it:
 
 ```bash
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN nix-xfce-kasm:latest
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:latest
 ```
+
+## Choosing the QGIS channel
+
+Two images are built from the same source; the QGIS package is the only
+difference between them.
+
+| Target | QGIS | Image tag |
+|--------|------|-----------|
+| `nix run .#build-docker` *(default)* | Long-term release | `kartoza:qgis-ltr`, also tagged `:latest` |
+| `nix run .#build-docker-qgis-latest` | Current release | `kartoza:qgis-latest` |
+
+**Why LTR is the default.** The LTR line only takes bug fixes, so a project
+that opens today opens the same way next month. That is what you want in front
+of users.
+
+**Why the other one exists.** QGIS's current release becomes the next LTR. The
+`qgis-latest` image lets you open your real projects, plugins and data against
+it now — while a regression can still be reported and fixed upstream, rather
+than on the day the LTR ships.
+
+```bash
+nix run .#build-docker-qgis-latest
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-latest
+```
+
+Both images accept exactly the same environment variables, so a compose file
+can be pointed at either by changing the tag alone.
+
+Which QGIS is in a given image, without starting it:
+
+```bash
+docker image inspect kartoza:latest \
+  --format '{{index .Config.Labels "com.kartoza.qgis.channel"}} {{index .Config.Labels "com.kartoza.qgis.version"}}'
+```
+
+A running container prints the same on its first log line, and exports
+`QGIS_DESKTOP_QGIS_CHANNEL` and `QGIS_DESKTOP_QGIS_VERSION` into the session.
+
+To build only the QGIS package for a channel — useful when checking whether a
+plugin's dependencies resolve — use `nix build .#qgis-ltr` or
+`nix build .#qgis-latest`.
 
 ## With Make
 

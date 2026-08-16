@@ -1,0 +1,43 @@
+# What is left after everything else is taken away.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+visitor: "Whoever walks up" { shape: person }
+
+session: "The session" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+
+  qgis: "QGIS, already open\non the mounted project" {
+    style.fill: "#2E7D32"
+    style.font-color: "#FFFFFF"
+  }
+  xfce: "XFCE panel and desktop" { style.fill: "#FFFFFF" }
+}
+
+removed: "Removed before the session starts" {
+  style.fill: "#FFEBEE"
+  style.stroke: "#C62828"
+
+  term: "Terminal emulators\nbinaries deleted, not hidden"
+  dialogs: "Run-a-command dialogs\nxfce4-appfinder, exo-open"
+  clip: "Clipboard, both directions\nincluding X primary selection"
+  net: "Every outbound connection\nempty egress allowlist"
+}
+
+project: "./project mounted read-only" { shape: cylinder }
+
+visitor -> session.qgis: "sees"
+project -> session.qgis: "opened by\nQGIS_DESKTOP_AUTOSTART_QGIS"
+session -> removed: "cannot reach" { style.stroke-dash: 3; style.stroke: "#C62828" }
+
+caveat: |md
+  **Not a sandbox.** QGIS ships a Python console,
+  and anything that runs Python can start a process.
+  What contains a determined visitor is the
+  unprivileged UID, the egress filter and the container.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Kiosk — QGIS and nothing else.
+#
+#   docker compose up          (or: nix run .#run-kiosk-scenario)
+#
+# For a wall display, a public terminal, or a workshop machine: QGIS opens on a
+# project the moment the session starts, there is no terminal, nothing can be
+# copied out, and the container can reach nothing on the network.
+#
+# See docs/scenarios/kiosk.md. Read the caveat there before you trust the word
+# "kiosk": QGIS has a Python console, and this does not take it away.
+services:
+  qgis-desktop:
+    image: kartoza:latest
+    container_name: qgis-desktop-kiosk
+    ports:
+      - "8443:8443"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # QGIS opens with the session, on the project mounted below.
+      - QGIS_DESKTOP_AUTOSTART_QGIS=1
+      - QGIS_DESKTOP_AUTOSTART_QGIS_ARGS=--project /home/user/kiosk/display.qgs
+
+      # No terminal emulators, no run-a-command dialogs, no launcher, no menu
+      # entry. Deletes the binaries rather than hiding them.
+      - QGIS_DESKTOP_ALLOW_TERMINAL=0
+
+      # Nothing leaves the screen. Clipboard blocked both ways, including the
+      # X primary selection.
+      - KASM_ALLOW_CLIPBOARD_IN=0
+      - KASM_ALLOW_CLIPBOARD_OUT=0
+      - KASM_ALLOW_PRIMARY_SELECTION=0
+
+      # Anyone photographing the screen takes the machine's name with them.
+      - KASM_WATERMARK_TEXT=KIOSK %Y-%m-%d %H:%M
+
+      # A public display usually needs no password: whoever can reach the URL
+      # is meant to see it. Put it behind your own network boundary, or switch
+      # to basic/oidc if that is not true for you.
+      - QGIS_DESKTOP_AUTH_MODE=none
+
+      # Reaches nothing. Add the hosts your project's layers need — a WMS, a
+      # PostGIS server — and nothing else gets through.
+      - QGIS_DESKTOP_EGRESS_LOCKDOWN=1
+      - QGIS_DESKTOP_EGRESS_ALLOW=
+
+      - VNC_RESOLUTION=1920x1080
+    volumes:
+      # The project and its data, read-only. Nothing here can be modified from
+      # the desktop, so a kiosk that is restarted comes back identical.
+      - ./project:/home/user/kiosk:ro
+    restart: unless-stopped

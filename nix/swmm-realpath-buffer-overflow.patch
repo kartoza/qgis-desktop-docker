@@ -1,0 +1,48 @@
+Fix a buffer overflow in getAbsolutePath() that aborts every run on glibc.
+
+SWMM passes InpDir (char[MAXFNAME+1], i.e. 260 bytes) as the resolved-name
+buffer of realpath(). POSIX requires that buffer to hold PATH_MAX bytes, and
+glibc's _FORTIFY_SOURCE checks the object size at the call site: on any
+hardened build (which is the nixpkgs default) the solver aborts with
+"*** buffer overflow detected ***" while reading the project file, before a
+single simulation step runs.
+
+Ask glibc to allocate the buffer instead, then copy the result back inside the
+bounds of the caller's array. The neighbouring absolute-path branch has the
+same unbounded-copy shape, so it is bounded here too.
+
+The root cause is a Windows MAX_PATH assumption carried into the POSIX branch.
+Not yet submitted upstream (USEPA/Stormwater-Management-Model); the Windows
+branch is left untouched, so the change is safe to send there as-is.
+
+--
+--- a/src/solver/swmm5.c
++++ b/src/solver/swmm5.c
+@@ -1590,14 +1590,25 @@
+         #ifdef WINDOWS
+             GetFullPathName((LPCSTR)fname, (DWORD)size, (LPSTR)absPath, NULL);
+         #else
+-            realpath(fname, absPath);
++            // POSIX requires the resolved-name buffer passed to realpath() to
++            // hold PATH_MAX bytes; absPath is only MAXFNAME+1. Let glibc
++            // allocate a correctly sized buffer instead, then copy back within
++            // the bounds of absPath.
++            {
++                char* resolved = realpath(fname, NULL);
++                if (resolved != NULL)
++                {
++                    sstrncpy(absPath, resolved, size - 1);
++                    free(resolved);
++                }
++            }
+         #endif
+     }
+ 
+     // --- otherwise copy fname to absPath
+     else
+     {
+-        sstrncpy(absPath, fname, strlen(fname));
++        sstrncpy(absPath, fname, MIN(strlen(fname), size - 1));
+     }
+ 
+     // --- trim file name portion of absPath

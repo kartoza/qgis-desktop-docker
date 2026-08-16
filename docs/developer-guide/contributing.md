@@ -24,9 +24,9 @@ Small, focused pull requests are always welcome.
 Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```text
-feat(egress): allow CIDR notation in KASM_EGRESS_ALLOW
+feat(egress): allow CIDR notation in QGIS_DESKTOP_EGRESS_ALLOW
 
-fix(auth): trim trailing whitespace in KASM_USERS entries
+fix(auth): trim trailing whitespace in QGIS_DESKTOP_USERS entries
 
 docs(configuration): clarify watermark ${USER} expansion
 ```

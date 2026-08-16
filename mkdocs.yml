@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Kartoza
 # SPDX-License-Identifier: GPL-2.0-or-later
 site_name: QGIS Desktop Docker
-site_description: QGIS Desktop inside a Nix-built Docker container with browser access via KasmVNC, clipboard/DLP controls, three auth pathways (none, HTTP BasicAuth, or LightDM greeter), and an nftables egress lockdown.
+site_description: QGIS Desktop inside a Nix-built Docker container with browser access via KasmVNC, on QGIS LTR or the current release, with clipboard/DLP controls, four auth pathways (none, HTTP BasicAuth, LightDM greeter, or Keycloak/OIDC single sign-on), Giswater-ready QGIS, and an nftables egress lockdown.
 site_url: https://kartoza.github.io/qgis-desktop-docker/
 site_author: Kartoza
 copyright: >
@@ -161,13 +161,23 @@ nav:
   - Configuration:
     - configuration/index.md
     - Environment: configuration/environment.md
-    - Kasm Permissions: configuration/kasm-permissions.md
+    - Permissions: configuration/permissions.md
     - Authentication: configuration/authentication.md
     - Egress Lockdown: configuration/egress-lockdown.md
+    - Giswater: configuration/giswater.md
+    - Home Persistence: configuration/persistence.md
   - Scenarios:
     - scenarios/index.md
     - Analyst Locked-Down: scenarios/analyst-locked-down.md
     - Multi-User Greeter: scenarios/multi-user-greeter.md
+    - Persistent Workstation: scenarios/persistent-workstation.md
+    - Delivering Data: scenarios/team-data-drop.md
+    - The Disposable Desktop: scenarios/disposable-pod.md
+    - Keycloak SSO: scenarios/keycloak-sso.md
+    - Using Your Own Keycloak: scenarios/keycloak-byo.md
+    - Federating an IdP: scenarios/federated-idp.md
+    - SSO + Persistent Homes: scenarios/sso-persistent-homes.md
+    - Kiosk Display: scenarios/kiosk.md
   - Developer Guide:
     - developer-guide/index.md
     - Architecture: developer-guide/architecture.md

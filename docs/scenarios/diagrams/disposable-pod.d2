@@ -1,0 +1,71 @@
+# What survives when the container does not.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+k8s: "Kubernetes (or you, with docker kill)" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1C1D1D"
+  style.stroke-dash: 3
+
+  evict: "node drained,\npod evicted,\nimage updated"
+}
+
+life: "One container's life" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+  direction: down
+
+  start: "start" { style.fill: "#1E88C7"; style.font-color: "#FFFFFF" }
+  lease: "claim the lease\nkeyed on hostname"
+  restore: "restore home/\nwrite the sentinel"
+  run: "desktop runs\nsave every interval" { style.fill: "#E8F4FB" }
+  term: "SIGTERM"
+  final: "final save\nwithin the grace period" { style.fill: "#1E88C7"; style.font-color: "#FFFFFF" }
+  gone: "container gone" { style.stroke-dash: 3 }
+
+  start -> lease -> restore -> run -> term -> final -> gone
+}
+
+bucket: "s3://qgis-homes/disposable-9a4f/" {
+  shape: cylinder
+  style.fill: "#F5F5F2"
+  contents: "home/             the files\n.persist-trash/   what a sync replaced\n.persist-lease    who holds it"
+}
+
+k8s.evict -> life.term: "at any moment"
+life.restore <- bucket: "read"
+life.run -> bucket: "write"
+life.final -> bucket: "write" { style.bold: true }
+
+next: "The replacement container" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+  same: "same hostname,\nsame prefix"
+}
+bucket -> next.same: "restores the same home" { style.bold: true }
+
+guards: |md
+  **What can go wrong, and what stops it**
+
+  Restore failed, then a save runs →
+  no sentinel, the save is refused.
+
+  Two containers on one prefix →
+  the second is refused by the lease.
+
+  A sync deletes the wrong thing →
+  the old object is in `.persist-trash/`.
+
+  The home directory collapses →
+  the shrink guard pauses saving.
+
+  It grows without bound →
+  the quota pauses saving.
+
+  SIGKILL, no grace period →
+  at most one interval is lost.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

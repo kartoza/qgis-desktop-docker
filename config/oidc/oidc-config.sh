@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# Secret materialisation for QGIS_DESKTOP_AUTH_MODE=oidc.
+#
+# Runs as ROOT from entrypoint.sh, before privileges are dropped, and does the
+# two things that need root:
+#
+#   1. Reads the client secret from a file that may be mounted root-only
+#      (docker/compose secrets land as 0400 root:root by default).
+#   2. Writes an oauth2-proxy config file readable ONLY by the UID the proxy
+#      runs as, so no secret ever appears on a command line — `ps`,
+#      /proc/*/cmdline and `docker inspect` all stay clean.
+#
+# Every non-secret option is passed as a flag by oidc-proxy.sh instead.
+#
+# Exits non-zero on invalid configuration: the entrypoint treats that as fatal
+# rather than starting a desktop with no authentication in front of it.
+
+set -euo pipefail
+
+RUNTIME_DIR="${QGIS_DESKTOP_OIDC_RUNTIME_DIR:-/run/qgis-desktop/oidc}"
+SECRETS_FILE="${RUNTIME_DIR}/secrets.cfg"
+PROXY_UID="${QGIS_DESKTOP_OIDC_PROXY_UID:-1000}"
+PROXY_GID="${QGIS_DESKTOP_OIDC_PROXY_GID:-1000}"
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+# Read a secret from <NAME>_FILE (preferred — keeps it out of the environment,
+# which `docker inspect` exposes to anyone who can talk to the daemon) or from
+# <NAME> directly.
+read_secret() {
+  local name="$1"
+  local file_var="${name}_FILE"
+  local file value
+  file="${!file_var:-}"
+  if [ -n "${file}" ]; then
+    [ -r "${file}" ] || die "${file_var}=${file} is not readable."
+    value="$(cat "${file}")"
+  else
+    value="${!name:-}"
+  fi
+  # $(cat) already drops trailing newlines; also tolerate a CRLF-authored file.
+  value="${value%$'\r'}"
+  printf '%s' "${value}"
+}
+
+# TOML string escaping for the two values we write. Backslash first, then the
+# quote character, so an escaped quote is not double-escaped.
+toml_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+# --- Required configuration -------------------------------------------------
+
+[ -n "${QGIS_DESKTOP_OIDC_ISSUER_URL:-}" ] || die \
+  "QGIS_DESKTOP_AUTH_MODE=oidc requires QGIS_DESKTOP_OIDC_ISSUER_URL (e.g. https://keycloak.example.com/realms/qgis)."
+[ -n "${QGIS_DESKTOP_OIDC_CLIENT_ID:-}" ] || die \
+  "QGIS_DESKTOP_AUTH_MODE=oidc requires QGIS_DESKTOP_OIDC_CLIENT_ID."
+[ -n "${QGIS_DESKTOP_OIDC_REDIRECT_URL:-}" ] || die \
+  "QGIS_DESKTOP_AUTH_MODE=oidc requires QGIS_DESKTOP_OIDC_REDIRECT_URL (the browser-facing URL of this container + /oauth2/callback)."
+
+case "${QGIS_DESKTOP_OIDC_ISSUER_URL}" in
+  http://* | https://*) : ;;
+  *) die "QGIS_DESKTOP_OIDC_ISSUER_URL must start with http:// or https:// (got '${QGIS_DESKTOP_OIDC_ISSUER_URL}')." ;;
+esac
+
+case "${QGIS_DESKTOP_OIDC_REDIRECT_URL}" in
+  http://* | https://*) : ;;
+  *) die "QGIS_DESKTOP_OIDC_REDIRECT_URL must start with http:// or https:// (got '${QGIS_DESKTOP_OIDC_REDIRECT_URL}')." ;;
+esac
+
+case "${QGIS_DESKTOP_OIDC_REDIRECT_URL}" in
+  */oauth2/callback) : ;;
+  *)
+    echo "WARN: QGIS_DESKTOP_OIDC_REDIRECT_URL does not end in /oauth2/callback." >&2
+    echo "      That is the path oauth2-proxy serves; the login will fail unless you" >&2
+    echo "      also override the callback path via QGIS_DESKTOP_OIDC_EXTRA_ARGS." >&2
+    ;;
+esac
+
+CLIENT_SECRET="$(read_secret QGIS_DESKTOP_OIDC_CLIENT_SECRET)"
+[ -n "${CLIENT_SECRET}" ] || die \
+  "QGIS_DESKTOP_AUTH_MODE=oidc requires QGIS_DESKTOP_OIDC_CLIENT_SECRET or QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE."
+
+# --- Cookie secret ----------------------------------------------------------
+# oauth2-proxy encrypts its session cookie with this. It must decode (base64url,
+# padding optional) to exactly 16, 24 or 32 bytes.
+COOKIE_SECRET="$(read_secret QGIS_DESKTOP_OIDC_COOKIE_SECRET)"
+COOKIE_SECRET_SOURCE="supplied"
+if [ -z "${COOKIE_SECRET}" ]; then
+  # 32 random bytes, base64url, unpadded — exactly what oauth2-proxy's
+  # RawURLEncoding decoder expects. Straight from the kernel CSPRNG via
+  # coreutils, so this needs no crypto library on the path.
+  COOKIE_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '\n=' | tr -- '+/' '-_')"
+  COOKIE_SECRET_SOURCE="generated"
+fi
+
+# Length check on the encoded form: 22/32/43 chars decode to 16/24/32 bytes.
+# A warning rather than an error — the user may have supplied raw (non-base64)
+# bytes of a valid length, which oauth2-proxy also accepts.
+case "${#COOKIE_SECRET}" in
+  16 | 22 | 24 | 32 | 43 | 44) : ;;
+  *)
+    echo "WARN: QGIS_DESKTOP_OIDC_COOKIE_SECRET is ${#COOKIE_SECRET} characters; oauth2-proxy wants" >&2
+    echo "      16, 24 or 32 bytes (22, 32 or 43 base64url characters). Login may fail." >&2
+    ;;
+esac
+
+# --- Write the config -------------------------------------------------------
+
+mkdir -p "${RUNTIME_DIR}"
+chown "${PROXY_UID}:${PROXY_GID}" "${RUNTIME_DIR}"
+chmod 0700 "${RUNTIME_DIR}"
+
+# umask before the heredoc so the file is never momentarily group/world
+# readable, even between creation and chmod.
+umask 077
+TMP_FILE="${SECRETS_FILE}.tmp"
+cat > "${TMP_FILE}" <<CFG
+# Generated by qgis-desktop-oidc-config at container start. Do not edit — this file is
+# rewritten on every boot. Everything else is passed as a flag by
+# qgis-desktop-oidc-proxy; only the secrets live here, so that they stay out of \`ps\`.
+client_secret = "$(toml_escape "${CLIENT_SECRET}")"
+cookie_secret = "$(toml_escape "${COOKIE_SECRET}")"
+CFG
+chown "${PROXY_UID}:${PROXY_GID}" "${TMP_FILE}"
+chmod 0400 "${TMP_FILE}"
+mv -f "${TMP_FILE}" "${SECRETS_FILE}"
+
+echo "  issuer:        ${QGIS_DESKTOP_OIDC_ISSUER_URL}"
+echo "  client id:     ${QGIS_DESKTOP_OIDC_CLIENT_ID}"
+echo "  redirect url:  ${QGIS_DESKTOP_OIDC_REDIRECT_URL}"
+echo "  client secret: ****** (${#CLIENT_SECRET} chars)"
+if [ "${COOKIE_SECRET_SOURCE}" = "generated" ]; then
+  echo "  cookie secret: generated — sessions do not survive a container restart."
+  echo "                 Set QGIS_DESKTOP_OIDC_COOKIE_SECRET_FILE to make them persistent."
+else
+  echo "  cookie secret: supplied"
+fi
+echo "  config:        ${SECRETS_FILE} (0400, uid ${PROXY_UID})"

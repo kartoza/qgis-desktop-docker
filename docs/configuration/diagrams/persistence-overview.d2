@@ -1,0 +1,56 @@
+# What the home directory actually is, and where the durable copy lives.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+container: Container {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+
+  desktop: "XFCE + QGIS\n(uid 1000)" {
+    style.fill: "#FFFFFF"
+  }
+
+  home: "/home/user\nreal local filesystem" {
+    shape: cylinder
+    style.fill: "#FFFFFF"
+  }
+
+  sync: "qgis-desktop-persist\n(root)" {
+    style.fill: "#1E88C7"
+    style.font-color: "#FFFFFF"
+  }
+
+  desktop -> home: "reads and writes\nPOSIX locks, SQLite" {
+    style.bold: true
+  }
+  sync -> home: "restore, once,\nbefore the desktop starts"
+  home -> sync: "read for each save"
+}
+
+bucket: "Object storage\ns3://bucket/user-uuid/" {
+  shape: cylinder
+  style.fill: "#F5F5F2"
+  style.stroke: "#1C1D1D"
+
+  home_prefix: "home/\nthe mirror"
+  baseline: "baseline/\nbaseline, copied in at every start"
+  deploy: "deploy/\ndelivered once, then cleared"
+  trash: ".persist-trash/\nwhat the mirror moved aside"
+}
+
+container.sync -> bucket.home_prefix: "save\nevery INTERVAL, and on SIGTERM"
+bucket.home_prefix -> container.sync: "restore"
+bucket.baseline -> container.sync: "copy in"
+bucket.deploy -> container.sync: "deliver"
+bucket.home_prefix -> bucket.trash: "replaced and deleted objects" {
+  style.stroke-dash: 3
+}
+
+note: |md
+  The desktop never talks to the bucket.
+  It only ever sees a normal filesystem.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

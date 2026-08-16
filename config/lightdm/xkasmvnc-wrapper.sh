@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LightDM xserver-command wrapper for KASM_AUTH_MODE=greeter.
+# LightDM xserver-command wrapper for QGIS_DESKTOP_AUTH_MODE=greeter.
 #
 # LightDM invokes its xserver-command with args like:
 #   :1 -auth /var/run/lightdm/root/:1 -nolisten tcp -novtswitch
@@ -62,6 +62,24 @@ DISPLAY_ARG="${DISPLAY_ARG:-${DISPLAY:-:1}}"
 VNC_PORT="${VNC_PORT:-8443}"
 VNC_RESOLUTION="${VNC_RESOLUTION:-1280x720}"
 VNC_COL_DEPTH="${VNC_COL_DEPTH:-24}"
+QGIS_DESKTOP_BIND_INTERFACE="${QGIS_DESKTOP_BIND_INTERFACE:-0.0.0.0}"
+
+# LightDM spawns the X server with a scrubbed environment, so the entrypoint's
+# exports never reach us. In QGIS_DESKTOP_AUTH_MODE=oidc it also writes the listener
+# override to a file, which is the only channel that survives — without this,
+# Xkasmvnc would try to bind the public port that the OIDC proxy already owns.
+# Parsed key by key rather than sourced: root writes it, we are not root, and
+# sourcing would turn it into an arbitrary-code channel.
+QGIS_DESKTOP_LISTEN_ENV="${QGIS_DESKTOP_LISTEN_ENV:-/run/qgis-desktop/listen.env}"
+if [ -r "${QGIS_DESKTOP_LISTEN_ENV}" ]; then
+  while IFS='=' read -r _key _value; do
+    case "${_key}" in
+      VNC_PORT) VNC_PORT="${_value}" ;;
+      QGIS_DESKTOP_BIND_INTERFACE) QGIS_DESKTOP_BIND_INTERFACE="${_value}" ;;
+      *) : ;;
+    esac
+  done < "${QGIS_DESKTOP_LISTEN_ENV}"
+fi
 
 KASM_ALLOW_CLIPBOARD_IN="${KASM_ALLOW_CLIPBOARD_IN:-0}"
 KASM_ALLOW_CLIPBOARD_OUT="${KASM_ALLOW_CLIPBOARD_OUT:-0}"
@@ -73,16 +91,16 @@ KASM_CLIPBOARD_MIME_TYPES="${KASM_CLIPBOARD_MIME_TYPES:-}"
 KASM_WATERMARK_TEXT="${KASM_WATERMARK_TEXT:-}"
 KASM_DLP_LOG="${KASM_DLP_LOG:-off}"
 
-kasm_bool() {
+to_bool() {
   case "${1,,}" in
     1|yes|true|on|enabled) echo 1 ;;
     *) echo 0 ;;
   esac
 }
 
-CLIP_IN=$(kasm_bool "${KASM_ALLOW_CLIPBOARD_IN}")
-CLIP_OUT=$(kasm_bool "${KASM_ALLOW_CLIPBOARD_OUT}")
-CLIP_PRIMARY=$(kasm_bool "${KASM_ALLOW_PRIMARY_SELECTION}")
+CLIP_IN=$(to_bool "${KASM_ALLOW_CLIPBOARD_IN}")
+CLIP_OUT=$(to_bool "${KASM_ALLOW_CLIPBOARD_OUT}")
+CLIP_PRIMARY=$(to_bool "${KASM_ALLOW_PRIMARY_SELECTION}")
 
 case "${KASM_DLP_LOG,,}" in
   off|info|verbose) DLP_LOG="${KASM_DLP_LOG,,}" ;;
@@ -105,7 +123,7 @@ if [ -n "${KASM_WATERMARK_TEXT}" ]; then
   # In greeter mode the watermark's $USER placeholder is expanded to the
   # first materialised account (populated by entrypoint.sh); if none was
   # picked up, fall back to "user".
-  WATERMARK_USER="${KASM_GREETER_FIRST_USER:-user}"
+  WATERMARK_USER="${QGIS_DESKTOP_GREETER_FIRST_USER:-user}"
   KASM_WATERMARK_TEXT="${KASM_WATERMARK_TEXT//\$\{USER\}/${WATERMARK_USER}}"
   KASM_WATERMARK_TEXT="${KASM_WATERMARK_TEXT//\$USER/${WATERMARK_USER}}"
   DLP_ARGS+=(-DLP_WatermarkText "${KASM_WATERMARK_TEXT}")
@@ -129,6 +147,7 @@ fi
 XKB_DIR="${XKB_BASE_DIR:-/usr/share/X11/xkb}"
 
 wlog "display=${DISPLAY_ARG} auth=${AUTH_FILE:-<none>} bin=${XKASMVNC_BIN} www=${WWW_DIR} xkb=${XKB_DIR}"
+wlog "listening on ${QGIS_DESKTOP_BIND_INTERFACE}:${VNC_PORT}"
 
 # Route Xkasmvnc's stderr through PID 1 so its own failure messages reach
 # docker logs, not just /var/log/lightdm/x-0.log (which vanishes with --rm).
@@ -163,7 +182,7 @@ rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}"
   -geometry "${VNC_RESOLUTION}" \
   -depth "${VNC_COL_DEPTH}" \
   -websocketPort "${VNC_PORT}" \
-  -interface 0.0.0.0 \
+  -interface "${QGIS_DESKTOP_BIND_INTERFACE}" \
   -SecurityTypes None \
   -DisableBasicAuth \
   -RawKeyboard \

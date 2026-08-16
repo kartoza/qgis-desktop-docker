@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Single sign-on demo for QGIS_DESKTOP_AUTH_MODE=oidc: a throwaway Keycloak with a
+# pre-imported realm, and the QGIS desktop behind an OIDC proxy that trusts it.
+#
+#   nix run .#run-keycloak-demo        (or: docker compose up from this folder)
+#
+# ONE MANUAL STEP, on the machine running the browser:
+#
+#   echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+#
+# The browser and the desktop container must reach Keycloak under the SAME
+# name. The `iss` claim in the token is the issuer URL as Keycloak knows it, and
+# the proxy rejects a token whose issuer does not match what it was configured
+# with — so "localhost for the browser, keycloak for the container" cannot work.
+#
+# Then browse to http://keycloak:8443 and sign in as alice / hunter2.
+#
+# THIS IS A DEMO. The realm, its client secret and the passwords below are all
+# public knowledge in this repository. Never point anything real at it.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: keycloak-oidc-demo
+    command:
+      - start-dev
+      - --import-realm
+      - --http-port=8080
+    environment:
+      # Bootstrap admin for the admin console at http://keycloak:8080/admin.
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      # Fixes the issuer Keycloak advertises, so it is identical whether the
+      # request came from the browser or from the proxy inside the network.
+      - KC_HOSTNAME=http://keycloak:8080
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      - ./realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # The Keycloak image ships no curl or wget, so probe the management
+      # port's readiness endpoint with bash's own /dev/tcp. If this ever stops
+      # working, `docker compose up` fails after ~3 minutes with "dependency
+      # failed to start"; swapping the condition below to service_started is
+      # the workaround (the desktop then restarts until Keycloak answers).
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  qgis-desktop:
+    image: kartoza:latest
+    container_name: qgis-desktop-oidc-demo
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    # Needed for the nftables egress filter. The entrypoint adds the issuer's
+    # host to the allowlist by itself, which is why QGIS_DESKTOP_EGRESS_ALLOW can stay
+    # empty here and the desktop still reaches nothing but Keycloak.
+    cap_add:
+      - NET_ADMIN
+    secrets:
+      - oidc-client-secret
+    environment:
+      - QGIS_DESKTOP_AUTH_MODE=oidc
+      # Any OIDC provider works here — this is the only line that points the
+      # container at a particular identity provider.
+      - QGIS_DESKTOP_OIDC_ISSUER_URL=http://keycloak:8080/realms/qgis
+      - QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop
+      # Read from a file rather than an env var, so the secret never shows up
+      # in `docker inspect`.
+      - QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
+      # Where Keycloak sends the browser back to. Must be registered on the
+      # client in the realm (it is, in realm-export.json).
+      - QGIS_DESKTOP_OIDC_REDIRECT_URL=http://keycloak:8443/oauth2/callback
+      # Only realm members holding this role may in. Drop the line to let any
+      # account in the realm through.
+      - QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user
+      # Demo realm users have no verified email domain worth filtering on.
+      - QGIS_DESKTOP_OIDC_EMAIL_DOMAINS=*
+      # Shared desktop behind SSO. Set to `greeter` to additionally give each
+      # user their own Linux session inside the container.
+      - QGIS_DESKTOP_OIDC_INNER_MODE=none
+      - VNC_RESOLUTION=1600x900
+    volumes:
+      - qgis-home:/home/user
+    restart: unless-stopped
+
+secrets:
+  oidc-client-secret:
+    file: ./client-secret.txt
+
+volumes:
+  qgis-home:

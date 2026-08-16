@@ -1,0 +1,143 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# A desktop you are supposed to destroy. This scenario exists to be broken:
+# kill it, recreate it, run two at once, wipe the home directory, blow the
+# quota — and watch the guards hold.
+#
+#   docker compose up      (or: nix run .#run-disposable-scenario)
+#
+#   Desktop:  http://localhost:8443   (user / password)
+#   MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
+#
+# Everything here is tuned for a short attention span: a 30s save interval and
+# a 200M quota, so the behaviour you would otherwise wait an hour to see happens
+# while you are looking at it. Production defaults are 300s and no quota.
+#
+# The second desktop (`intruder`, in the `conflict` profile) is not started by
+# default. Bring it up with:
+#
+#   docker compose --profile conflict up -d intruder
+#
+# It points at the same prefix under a different hostname, and should refuse to
+# start rather than fight over the bucket.
+#
+# DEMO CREDENTIALS. Real deployments use the _FILE variables and a mounted
+# secret.
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: disposable-minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      # The bucket outlives every desktop in this file. That is the whole point:
+      # `docker compose down` without -v destroys the desktops and keeps the data.
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  create-bucket:
+    image: minio/mc:latest
+    container_name: disposable-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mc alias set demo http://minio:9000 minioadmin minioadmin123
+        mc mb --ignore-existing demo/qgis-homes
+        # Object versioning is belt-and-braces on top of the container's own
+        # trash prefix. Worth turning on in production too.
+        mc version enable demo/qgis-homes || true
+        echo "bucket ready (versioning on)"
+
+  qgis-desktop:
+    image: kartoza:latest
+    container_name: disposable-desktop
+    # The lease identity. In Kubernetes a StatefulSet gives you exactly this:
+    # a stable hostname, so a recreated pod reclaims its own lease instead of
+    # being locked out by the ghost of its predecessor.
+    hostname: qgis-desktop-0
+    depends_on:
+      create-bucket:
+        condition: service_completed_successfully
+    ports:
+      - "8443:8443"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - QGIS_DESKTOP_PERSIST=1
+      - QGIS_DESKTOP_PERSIST_TYPE=s3
+      - QGIS_DESKTOP_PERSIST_PROVIDER=Minio
+      - QGIS_DESKTOP_PERSIST_ENDPOINT=http://minio:9000
+      - QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes
+      - QGIS_DESKTOP_PERSIST_PREFIX=disposable-9a4f
+      - QGIS_DESKTOP_PERSIST_ACCESS_KEY=minioadmin
+      - QGIS_DESKTOP_PERSIST_SECRET_KEY=minioadmin123
+
+      # --- The guards, all named explicitly ------------------------------
+      # How much work a SIGKILL can cost. Nothing else.
+      - QGIS_DESKTOP_PERSIST_INTERVAL=30
+
+      # Refuse to start if another live container holds this prefix.
+      - QGIS_DESKTOP_PERSIST_LEASE=1
+      - QGIS_DESKTOP_PERSIST_LEASE_TTL=900
+
+      # Replaced and deleted objects move to a timestamped trash prefix instead
+      # of vanishing, so a bad sync is recoverable without provider versioning.
+      - QGIS_DESKTOP_PERSIST_TRASH=1
+
+      # If the file count collapses below this percentage of the last good
+      # save, stop saving and tell someone. 0 disables it.
+      - QGIS_DESKTOP_PERSIST_SHRINK_GUARD=50
+
+      # Small on purpose: `fallocate -l 300M ~/big` trips it in one interval.
+      - QGIS_DESKTOP_PERSIST_QUOTA=200M
+
+      - VNC_RESOLUTION=1600x900
+    # SIGTERM triggers a final save. Kubernetes calls this
+    # terminationGracePeriodSeconds — set it, or you lose the last interval.
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  # Not started by default. The same prefix, a different identity — the lease
+  # should refuse it. See the `conflict` profile note at the top of this file.
+  intruder:
+    image: kartoza:latest
+    container_name: disposable-intruder
+    hostname: qgis-desktop-1
+    profiles: [conflict]
+    depends_on:
+      create-bucket:
+        condition: service_completed_successfully
+    ports:
+      - "8444:8443"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - QGIS_DESKTOP_PERSIST=1
+      - QGIS_DESKTOP_PERSIST_TYPE=s3
+      - QGIS_DESKTOP_PERSIST_PROVIDER=Minio
+      - QGIS_DESKTOP_PERSIST_ENDPOINT=http://minio:9000
+      - QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes
+      - QGIS_DESKTOP_PERSIST_PREFIX=disposable-9a4f
+      - QGIS_DESKTOP_PERSIST_ACCESS_KEY=minioadmin
+      - QGIS_DESKTOP_PERSIST_SECRET_KEY=minioadmin123
+      - QGIS_DESKTOP_PERSIST_LEASE=1
+    restart: "no"
+
+volumes:
+  minio-data:

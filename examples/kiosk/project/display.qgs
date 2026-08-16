@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: Kartoza
+  SPDX-License-Identifier: GPL-2.0-or-later
+
+  A deliberately empty project, so the kiosk example runs with no data and no
+  network. Replace it with your own: drop the .qgs and its layers into this
+  directory and they are mounted read-only at /home/user/kiosk.
+-->
+<qgis version="3.44.9" projectname="Kiosk display">
+  <title>Kiosk display</title>
+  <projectCrs>
+    <spatialrefsys>
+      <wkt></wkt>
+      <srid>4326</srid>
+      <authid>EPSG:4326</authid>
+      <description>WGS 84</description>
+      <geographicflag>true</geographicflag>
+    </spatialrefsys>
+  </projectCrs>
+  <layer-tree-group/>
+  <projectlayers/>
+</qgis>

@@ -1,0 +1,68 @@
+# Keycloak as a broker in front of the customer's own directory.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+bob: "Bob\nin /gis-team" { shape: person }
+carol: "Carol\nin /finance" { shape: person; style.stroke-dash: 3 }
+
+corp: "The customer's directory\nEntra ID · Google · Okta · LDAP" {
+  style.fill: "#EFEFEC"
+  style.stroke: "#1C1D1D"
+  style.stroke-dash: 3
+  note: "You do not control this.\nYou do not administer users here.\nGroups already exist."
+}
+
+broker: "Keycloak — yours\nrealm: qgis, zero users" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+
+  idp: "identity provider\n'corporate'"
+  mapper: "role mapper\ngroups contains /gis-team\n→ realm role qgis-user" {
+    style.fill: "#1E88C7"
+    style.font-color: "#FFFFFF"
+  }
+  idp -> mapper: "on every login\n(syncMode: FORCE)"
+}
+
+container: "The container" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+  proxy: "oauth2-proxy\nALLOWED_ROLES=qgis-user"
+  desktop: "XFCE + QGIS"
+  proxy -> desktop: "only with the role"
+}
+
+bob -> container.proxy: "1. GET /"
+container.proxy -> broker.idp: "2. redirect"
+broker.idp -> corp: "3. the real login\nhappens here"
+corp -> broker.idp: "4. id_token\ngroups: [/gis-team]"
+broker -> container.proxy: "5. token with\nrealm_access.roles"
+container.proxy -> bob: "6. desktop" { style.bold: true }
+
+carol -> container.proxy: "authenticates fine"
+container.proxy -> carol: "403 Permission Denied\nno qgis-user role" {
+  style.stroke: "#C0392B"
+  style.bold: true
+}
+
+why: |md
+  **Why broker instead of pointing the
+  container at the customer's IdP**
+
+  One protocol to support — the container
+  only ever speaks OIDC to your realm,
+  whatever the customer runs behind it.
+
+  Entitlement is a group in *their*
+  directory. Add someone to /gis-team to
+  grant access, remove them to revoke it.
+  Nobody maintains a second list of users.
+
+  Swapping the upstream provider, adding a
+  second one, or bolting on MFA changes the
+  broker only. The container does not move.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

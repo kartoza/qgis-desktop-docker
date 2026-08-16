@@ -1,0 +1,66 @@
+# What happens to a file after you upload it to deploy/.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+op: "You, in a bucket browser\nor any S3 client" { shape: person }
+
+s1: "1. Upload\ns3://…/alice/deploy/parcels.gpkg" {
+  style.fill: "#FFF9E6"
+  style.stroke: "#E8A33D"
+}
+
+s2: "2. Next sync tick\ncopied into ~/Desktop/parcels.gpkg\nas uid 1000, not root" {
+  style.fill: "#E8F4FB"
+  style.stroke: "#1E88C7"
+}
+
+s3: "3. Immediately after\ndeleted from deploy/" {
+  style.fill: "#E8F4FB"
+  style.stroke: "#1E88C7"
+}
+
+s4: "4. Next save\nmirrored back as\nhome/Desktop/parcels.gpkg" {
+  style.fill: "#1E88C7"
+  style.font-color: "#FFFFFF"
+  style.stroke: "#1E88C7"
+}
+
+done: "The user has the file,\nand deploy/ is empty again" {
+  style.fill: "#F5F5F2"
+  style.bold: true
+}
+
+op -> s1
+s1 -> s2: "while the\ncontainer runs" {
+  style.stroke: "#E8A33D"
+}
+s2 -> s3: "delivered once,\nnever again"
+s3 -> s4
+s4 -> done
+
+wrong: |md
+  **If the container is offline**, or the
+  copy fails, nothing is deleted: the file
+  waits in `deploy/` and is retried on the
+  next cycle.
+
+  **The mistake to avoid**
+
+  Uploading into `home/` instead does
+  NOT hand the file over. `home/` is a
+  mirror of the container, one way only:
+  a file that is in the bucket and not on
+  the desktop looks exactly like one the
+  user deleted, so the next save removes
+  it again — into `.persist-trash/`.
+
+  Step 4 is why `deploy/` can be a
+  letterbox rather than storage: once
+  delivered, the file is simply one of
+  the user's own files, and the ordinary
+  mirror keeps it.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

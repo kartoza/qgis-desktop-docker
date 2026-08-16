@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Multi-user greeter session — the shared-workstation scenario.
+#
+#   docker compose up          (or: nix run .#run-greeter-scenario)
+#
+# Then open http://localhost:8443. LightDM's login form is the first thing on
+# the display: sign in as alice, log out from the XFCE menu, and bob can sign in
+# on the same browser tab. Each gets a real Linux account and their own home.
+#
+# See docs/scenarios/multi-user-greeter.md for what this demonstrates and why
+# the greeter exists at all.
+services:
+  qgis-desktop:
+    image: kartoza:latest
+    container_name: qgis-desktop-greeter
+    ports:
+      - "8443:8443"
+    # Required so the entrypoint can install the nftables egress rules. Drop it
+    # and you must also set QGIS_DESKTOP_EGRESS_LOCKDOWN=0, or the container
+    # refuses to start.
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # The greeter runs inside the X session, so the browser sees a login form
+      # instead of its own HTTP Basic Auth dialog. A wrong password re-prompts
+      # in place — no browser cache to fight, no tab to close.
+      - QGIS_DESKTOP_AUTH_MODE=greeter
+
+      # Each entry becomes a real Linux account with its own home directory,
+      # materialised at container start. Passwords may contain colons; only the
+      # first ':' on an entry is the separator.
+      - QGIS_DESKTOP_USERS=alice:hunter2,bob:correct-horse-battery-staple
+
+      # Mount a file instead, if you would rather not put passwords in compose:
+      # - QGIS_DESKTOP_USERS_FILE=/run/secrets/users
+
+      - VNC_RESOLUTION=1600x900
+
+      # Nothing outbound is allowed by default. Name the hosts these users need
+      # — a PostGIS server, a WMS — and nothing else gets through.
+      # - QGIS_DESKTOP_EGRESS_ALLOW=gis.example.com
+    volumes:
+      # One volume for every user's home. Alice cannot read bob's files: they
+      # are separate UIDs with 0700 home directories, enforced by the kernel
+      # rather than by the desktop.
+      - qgis-homes:/home
+    restart: unless-stopped
+
+    # Uncomment to mount the user list as a file instead of an env var.
+    # secrets:
+    #   - users
+
+# secrets:
+#   users:
+#     file: ./users.txt
+
+volumes:
+  qgis-homes:

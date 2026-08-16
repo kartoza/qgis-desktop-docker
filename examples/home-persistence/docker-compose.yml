@@ -1,0 +1,144 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Home persistence against object storage, end to end, on your machine.
+#
+#   docker compose up          (or: nix run .#run-persistence-demo)
+#
+# Brings up MinIO, creates the bucket, and starts a desktop whose home
+# directory is restored from it at boot and saved back every 60 seconds.
+#
+#   Desktop:  http://localhost:8443   (user / password)
+#   MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
+#
+# What to try:
+#
+#   1. Make a file on the desktop, wait for "[persist] Saved" in the logs, then
+#      `docker kill qgis-desktop-persist && docker compose up -d` — it comes
+#      back. A hard kill costs at most one interval; `docker compose stop` saves
+#      first and costs nothing.
+#   2. Drop a file into qgis-homes/tim-4f2f96a9/deploy/ in the MinIO console. It
+#      appears on the desktop within a minute and deploy/ empties.
+#   3. Put one in baseline/ instead: it arrives at every container start and
+#      stays in the bucket.
+#
+# THIS IS A DEMO. The MinIO credentials below are in this file and in the
+# container's environment; a real deployment uses the _FILE variables and a
+# mounted secret. See docs/configuration/persistence.md.
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio-persistence-demo
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      # Without this the bucket dies with the container, and so does every home
+      # directory in it.
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # One-shot: create the bucket, seed the user's baseline/ prefix, then exit.
+  # The desktop waits for it.
+  #
+  # baseline/ is the operator's way in: whatever is here lands in the home
+  # directory at every container start, without ever overwriting the user's own
+  # copy. Seeding a starter project here is what makes the autostart flag below
+  # open something useful instead of an empty canvas.
+  create-bucket:
+    image: minio/mc:latest
+    container_name: minio-persistence-demo-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mc alias set demo http://minio:9000 minioadmin minioadmin123
+        mc mb --ignore-existing demo/qgis-homes
+
+        # A minimal QGIS project, so the desktop opens with something in it.
+        mkdir -p /tmp/seed/projects
+        cat > /tmp/seed/projects/starter.qgs <<'PROJECT'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <qgis version="3.44.9" projectname="Starter project">
+          <title>Starter project</title>
+          <projectCrs>
+            <spatialrefsys>
+              <wkt></wkt>
+              <srid>4326</srid>
+              <authid>EPSG:4326</authid>
+              <description>WGS 84</description>
+              <geographicflag>true</geographicflag>
+            </spatialrefsys>
+          </projectCrs>
+          <layer-tree-group/>
+          <projectlayers/>
+        </qgis>
+        PROJECT
+
+        mc cp --recursive /tmp/seed/ demo/qgis-homes/tim-4f2f96a9/baseline/
+        echo "bucket ready: qgis-homes, baseline/ seeded with a starter project"
+
+  qgis-desktop:
+    image: kartoza:latest
+    container_name: qgis-desktop-persist
+    # A stable hostname is the lease identity: a container that is killed and
+    # recreated reclaims its own lease immediately, while a genuinely
+    # concurrent second container is refused.
+    hostname: qgis-desktop-0
+    depends_on:
+      create-bucket:
+        condition: service_completed_successfully
+    ports:
+      - "8443:8443"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - QGIS_DESKTOP_PERSIST=1
+      - QGIS_DESKTOP_PERSIST_TYPE=s3
+      - QGIS_DESKTOP_PERSIST_PROVIDER=Minio
+      - QGIS_DESKTOP_PERSIST_ENDPOINT=http://minio:9000
+      - QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes
+
+      # One prefix per user. The UUID stops a recreated account inheriting the
+      # previous holder's data.
+      - QGIS_DESKTOP_PERSIST_PREFIX=tim-4f2f96a9
+
+      # Demo only — use QGIS_DESKTOP_PERSIST_ACCESS_KEY_FILE and a mounted
+      # secret in anything real, so the value stays out of `docker inspect`.
+      - QGIS_DESKTOP_PERSIST_ACCESS_KEY=minioadmin
+      - QGIS_DESKTOP_PERSIST_SECRET_KEY=minioadmin123
+
+      # Short so the demo is watchable. 300 is the default, and this is also
+      # how much work a hard kill costs.
+      - QGIS_DESKTOP_PERSIST_INTERVAL=60
+
+      # Enforced client-side: over it, saving stops and the user gets a file in
+      # their home saying so.
+      - QGIS_DESKTOP_PERSIST_QUOTA=2G
+
+      # Open QGIS with the session, on the project seeded into baseline/
+      # above. The user signs in and their map is already loading.
+      - QGIS_DESKTOP_AUTOSTART_QGIS=1
+      - QGIS_DESKTOP_AUTOSTART_QGIS_ARGS=--project /home/user/projects/starter.qgs
+
+      - VNC_RESOLUTION=1600x900
+    # The final save runs on SIGTERM, so give it room before Docker escalates
+    # to SIGKILL. Kubernetes calls this terminationGracePeriodSeconds.
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+volumes:
+  minio-data:

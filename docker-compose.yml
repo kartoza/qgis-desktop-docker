@@ -5,7 +5,7 @@ services:
     ports:
       - "8443:8443"
     # Required so the entrypoint can install nftables egress-lockdown rules.
-    # If you drop this cap, you MUST also set KASM_EGRESS_LOCKDOWN=0 below or
+    # If you drop this cap, you MUST also set QGIS_DESKTOP_EGRESS_LOCKDOWN=0 below or
     # the container will refuse to start.
     cap_add:
       - NET_ADMIN
@@ -16,18 +16,57 @@ services:
       - VNC_COL_DEPTH=24
       - VNC_PORT=8443
       # --- Authentication ---------------------------------------------------
-      # Tri-state mode selector (default: basic).
+      # Mode selector (default: basic).
       #   basic   — HTTP Basic Auth on the web endpoint (browser dialog).
       #   greeter — LightDM login form inside the desktop (see docs).
+      #   oidc    — Keycloak/OIDC single sign-on in front of the desktop.
       #   none    — no auth (DEV ONLY — never expose to network).
-      # - KASM_AUTH_MODE=greeter
-      # Legacy: KASM_AUTH=0 still forces mode=none.
-      # - KASM_AUTH=0
+      # - QGIS_DESKTOP_AUTH_MODE=greeter
+      # NOTE: the KASM_* names for these settings were removed in 2.0.0 — the
+      # container refuses to start if it sees one, and names the replacement.
+      # KASM_* now means "a KasmVNC setting" only (clipboard, watermark, DLP).
       # Inline multi-user list (comma or newline separated); passwords may contain ':'.
-      # - KASM_USERS=alice:pw1,bob:pw2
+      # - QGIS_DESKTOP_USERS=alice:pw1,bob:pw2
       # Mounted user file (one 'user:password' per line, '#' for comments).
-      # File wins over KASM_USERS which wins over legacy VNC_USER/VNC_PW.
-      # - KASM_USERS_FILE=/etc/kasmvnc/users
+      # File wins over QGIS_DESKTOP_USERS which wins over legacy VNC_USER/VNC_PW.
+      # - QGIS_DESKTOP_USERS_FILE=/etc/qgis-desktop/users
+      # --- Single sign-on (QGIS_DESKTOP_AUTH_MODE=oidc) -----------------------------
+      # oauth2-proxy takes over the published port and KasmVNC moves to
+      # 127.0.0.1:6901 behind it, so nothing reaches the desktop unauthenticated.
+      # The identity provider's host is added to the egress allowlist for you.
+      # A full worked example lives in examples/keycloak-oidc/.
+      # - QGIS_DESKTOP_OIDC_ISSUER_URL=https://sso.example.com/realms/gis
+      # - QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop
+      # Prefer the _FILE form: an env var is visible to `docker inspect`.
+      # - QGIS_DESKTOP_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
+      # Public URL of THIS container + /oauth2/callback, registered on the client.
+      # - QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+      # Keep sessions alive across restarts (otherwise a key is generated per boot).
+      # - QGIS_DESKTOP_OIDC_COOKIE_SECRET_FILE=/run/secrets/oidc-cookie-secret
+      # Optional authorisation filters — omit to admit anyone in the realm.
+      # - QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user
+      # - QGIS_DESKTOP_OIDC_ALLOWED_GROUPS=/gis-users
+      # Give each SSO user their own Linux session inside the container.
+      # - QGIS_DESKTOP_OIDC_INNER_MODE=greeter
+      # --- Home persistence (one user, one container) -----------------------
+      # Restores /home/user from object storage before the desktop starts, saves
+      # it on an interval and again on shutdown. It is a sync, not a mount: QGIS
+      # profiles and GeoPackages are SQLite, which object-storage FUSE drivers
+      # corrupt. See docs/configuration/persistence.md.
+      # - QGIS_DESKTOP_PERSIST=1
+      # - QGIS_DESKTOP_PERSIST_ENDPOINT=https://fsn1.your-objectstorage.com
+      # - QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes
+      # One prefix per user; a UUID suffix stops a recreated account inheriting
+      # the previous holder's data.
+      # - QGIS_DESKTOP_PERSIST_PREFIX=alice-9c1f4e2a
+      # Prefer the _FILE forms: an env var is visible to `docker inspect`.
+      # - QGIS_DESKTOP_PERSIST_ACCESS_KEY_FILE=/run/secrets/s3-key
+      # - QGIS_DESKTOP_PERSIST_SECRET_KEY_FILE=/run/secrets/s3-secret
+      # Seconds between saves — this is also how much work a hard kill costs.
+      # - QGIS_DESKTOP_PERSIST_INTERVAL=300
+      # Enforced client-side; size the volume below to match if you want `df`
+      # inside the desktop to agree.
+      # - QGIS_DESKTOP_PERSIST_QUOTA=5G
       # --- Kasm permission controls (secure-by-default) ---
       # Clipboard is OFF in both directions unless explicitly enabled.
       # Set to 1 (or yes/true/on) to allow.
@@ -46,14 +85,18 @@ services:
       # DLP logging level: off | info | verbose.
       # WARNING: 'verbose' logs KEYSTROKES AND CLIPBOARD CONTENT to the server log.
       # - KASM_DLP_LOG=info
+      # Remove terminal access from the desktop: deletes the terminal emulators
+      # and the "run a command" dialogs, and strips the launcher/menu entries.
+      # Not a sandbox — QGIS's Python console can still start subprocesses.
+      # - QGIS_DESKTOP_ALLOW_TERMINAL=0
       # --- Egress network lockdown (ON by default) ---
       # When on, the container may only initiate outbound connections to hosts
-      # on KASM_EGRESS_ALLOW (plus DNS to the Docker embedded resolver).
-      # Leave KASM_EGRESS_ALLOW empty to reach nothing at all outbound.
-      # Set KASM_EGRESS_LOCKDOWN=0 to disable the filter entirely (dev only).
+      # on QGIS_DESKTOP_EGRESS_ALLOW (plus DNS to the Docker embedded resolver).
+      # Leave QGIS_DESKTOP_EGRESS_ALLOW empty to reach nothing at all outbound.
+      # Set QGIS_DESKTOP_EGRESS_LOCKDOWN=0 to disable the filter entirely (dev only).
       # Accepts IPv4 addresses, CIDRs, and hostnames (resolved once at startup).
-      # - KASM_EGRESS_ALLOW=db,postgres.internal,10.0.0.0/24
-      # - KASM_EGRESS_LOCKDOWN=0
+      # - QGIS_DESKTOP_EGRESS_ALLOW=db,postgres.internal,10.0.0.0/24
+      # - QGIS_DESKTOP_EGRESS_LOCKDOWN=0
     volumes:
       # Persist the user's home directory (QGIS projects, settings, plugins)
       - qgis-home:/home/user

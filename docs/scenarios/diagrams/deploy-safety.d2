@@ -1,0 +1,86 @@
+# Why root writing into a user's home on somebody else's say-so is safe here.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+bucket: "s3://…/alice/deploy/\nuploaded by an operator" {
+  shape: cylinder
+  style.fill: "#FFF9E6"
+  style.stroke: "#E8A33D"
+}
+
+root: "qgis-desktop-persist — ROOT\nthe only process that sees the credentials" {
+  style.fill: "#1E88C7"
+  style.font-color: "#FFFFFF"
+  style.stroke: "#1E88C7"
+}
+
+stage: "staging directory\n/run/qgis-desktop/staging\n0755, root-owned, no credential in it" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1C1D1D"
+}
+
+drop: "setpriv → uid 1000\nprivileges dropped BEFORE\nanything is written to the home" {
+  style.fill: "#E8F4FB"
+  style.stroke: "#1E88C7"
+  style.bold: true
+}
+
+home: "/home/user\nowned by the user, written as the user" {
+  style.fill: "#F5F5F2"
+}
+
+creds: "rclone.conf\n0400 root:root" {
+  style.fill: "#EFEFEC"
+  style.stroke: "#C0392B"
+}
+
+session: "The desktop session — uid 1000\nQGIS Python console, full shell access" {
+  style.fill: "#EFEFEC"
+  style.stroke: "#1C1D1D"
+  style.stroke-dash: 3
+}
+
+bucket -> root: "rclone, as root"
+root -> stage: "downloads here first"
+stage -> drop
+drop -> home: "copies"
+root -> creds: "reads"
+session -> creds: "cannot read" {
+  style.stroke: "#C0392B"
+  style.stroke-dash: 4
+}
+session -> bucket: "cannot reach" {
+  style.stroke: "#C0392B"
+  style.stroke-dash: 4
+}
+home -> session: "the files are simply theirs"
+
+why: |md
+  **Each arrow is a decision**
+
+  Downloads land in a staging directory
+  first, so a `../` in an object key
+  cannot escape into the filesystem.
+
+  The copy into the home runs as uid
+  1000, so a delivery cannot write
+  anywhere the user could not write
+  themselves, and everything delivered
+  ends up owned by them.
+
+  The credentials never leave root:
+  `0400 root:root`, and scrubbed from
+  the environment before the session
+  starts. A user with a Python console
+  still cannot enumerate the bucket or
+  reach anyone else's prefix.
+
+  The staging directory is `0755` on
+  purpose — an earlier `umask 077` made
+  it unreadable and broke the delivery.
+  There is a regression test for it.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

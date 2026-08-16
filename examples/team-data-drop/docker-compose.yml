@@ -1,0 +1,151 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Getting data to a user by putting it in their bucket — no exec, no ticket, no
+# restart.
+#
+#   docker compose up      (or: nix run .#run-data-drop-scenario)
+#
+#   Desktop:  http://localhost:8443   (user / password)
+#   MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
+#
+# Two prefixes, two different jobs:
+#
+#   baseline/  Baseline. Copied into the home directory at every container
+#               start, never overwriting the user's own copy, and it STAYS in
+#               the bucket. This is the standard issue kit — basemaps, styles,
+#               a starter project.
+#
+#   deploy/      Delivery. Drained into ~/Desktop while the container runs,
+#               overwriting, and REMOVED from the bucket once delivered. This is
+#               "here is the survey you asked for", mid-session.
+#
+# The `dispatch` service below waits a minute and then drops a file into
+# deploy/, so you can watch it land on a desktop that is already running.
+#
+# DEMO CREDENTIALS, in plain sight. Real deployments use the _FILE variables.
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: data-drop-minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # One-shot: the kit every field surveyor gets, into baseline/.
+  seed-baseline:
+    image: minio/mc:latest
+    container_name: data-drop-seed
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mc alias set demo http://minio:9000 minioadmin minioadmin123
+        mc mb --ignore-existing demo/qgis-homes
+
+        mkdir -p /tmp/kit/projects /tmp/kit/styles
+        cat > /tmp/kit/projects/survey.qgs <<'PROJECT'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <qgis version="3.44.9" projectname="Field survey">
+          <title>Field survey</title>
+          <projectCrs>
+            <spatialrefsys>
+              <wkt></wkt>
+              <srid>4326</srid>
+              <authid>EPSG:4326</authid>
+              <description>WGS 84</description>
+              <geographicflag>true</geographicflag>
+            </spatialrefsys>
+          </projectCrs>
+          <layer-tree-group/>
+          <projectlayers/>
+        </qgis>
+        PROJECT
+        cat > /tmp/kit/styles/house-style.qml <<'STYLE'
+        <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
+        <qgis version="3.44.9" styleCategories="Symbology"/>
+        STYLE
+        cat > /tmp/kit/README.txt <<'NOTE'
+        Everything in this folder was issued to you automatically.
+        Edit it freely — your changes are yours and will not be overwritten.
+        NOTE
+
+        mc cp --recursive /tmp/kit/ demo/qgis-homes/surveyor-7c1e/baseline/
+        echo "baseline/ seeded: survey.qgs, house-style.qml, README.txt"
+
+  # One-shot, deliberately late: a mid-session delivery into deploy/. Watch the
+  # desktop logs for "[persist] Deploy: delivering", then look at ~/Desktop.
+  dispatch:
+    image: minio/mc:latest
+    container_name: data-drop-dispatch
+    depends_on:
+      seed-baseline:
+        condition: service_completed_successfully
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mc alias set demo http://minio:9000 minioadmin minioadmin123
+        echo "waiting 75s, so the delivery lands on a desktop that is already up..."
+        sleep 75
+        printf 'id,name,lat,lon\n1,Pump station,-33.92,18.42\n' > /tmp/assets.csv
+        mc cp /tmp/assets.csv demo/qgis-homes/surveyor-7c1e/deploy/assets.csv
+        echo "dispatched assets.csv -> deploy/ (expect it on the Desktop within one interval)"
+
+  qgis-desktop:
+    image: kartoza:latest
+    container_name: data-drop-desktop
+    hostname: qgis-desktop-0
+    depends_on:
+      seed-baseline:
+        condition: service_completed_successfully
+    ports:
+      - "8443:8443"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - QGIS_DESKTOP_PERSIST=1
+      - QGIS_DESKTOP_PERSIST_TYPE=s3
+      - QGIS_DESKTOP_PERSIST_PROVIDER=Minio
+      - QGIS_DESKTOP_PERSIST_ENDPOINT=http://minio:9000
+      - QGIS_DESKTOP_PERSIST_BUCKET=qgis-homes
+      - QGIS_DESKTOP_PERSIST_PREFIX=surveyor-7c1e
+      - QGIS_DESKTOP_PERSIST_ACCESS_KEY=minioadmin
+      - QGIS_DESKTOP_PERSIST_SECRET_KEY=minioadmin123
+
+      # Both delivery paths are on by default; named here because they are the
+      # point of this scenario.
+      - QGIS_DESKTOP_PERSIST_BASELINE=1
+      - QGIS_DESKTOP_PERSIST_DEPLOY=1
+      - QGIS_DESKTOP_PERSIST_DEPLOY_DEST=Desktop
+
+      # Short, so a delivery is visible while you are watching.
+      - QGIS_DESKTOP_PERSIST_INTERVAL=60
+      - QGIS_DESKTOP_PERSIST_QUOTA=2G
+
+      - QGIS_DESKTOP_AUTOSTART_QGIS=1
+      - QGIS_DESKTOP_AUTOSTART_QGIS_ARGS=--project /home/user/projects/survey.qgs
+
+      - VNC_RESOLUTION=1600x900
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+volumes:
+  minio-data:

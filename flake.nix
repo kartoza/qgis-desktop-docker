@@ -14,6 +14,162 @@
         # KasmVNC package
         kasmvnc = pkgs.callPackage ./kasmvnc.nix {};
 
+        # --- Giswater support -------------------------------------------
+        # The two US EPA hydraulic solvers the Giswater plugin drives: EPANET
+        # for pressurised water supply ('ws') projects, SWMM for urban drainage
+        # ('ud'). Neither is in nixpkgs, so both are built from upstream source
+        # here — see nix/README.md for the packaging notes and the SWMM patch.
+        epanet = pkgs.callPackage ./nix/epanet.nix { };
+        swmm = pkgs.callPackage ./nix/swmm.nix { };
+
+        # Python packages Giswater imports from inside QGIS's own interpreter.
+        # Deliberately minimal: everything here is a genuine runtime import of
+        # the plugin, and anything Hydra has not built would land as a local
+        # source build in every image build.
+        giswaterPythonPackages = ps: [
+          ps.jsonschema
+          ps.debugpy
+          ps.psutil
+          ps.pyproj
+          ps.matplotlib
+        ];
+
+        epaSolvers = [ epanet swmm ];
+        epaPath = pkgs.lib.makeBinPath epaSolvers;
+        epaLibPath = pkgs.lib.makeLibraryPath epaSolvers;
+
+        # Giswater's go2epa tool shells out to the solvers, and its
+        # hydraulic_engine backend dlopen()s the toolkit libraries. Wrapping
+        # QGIS puts both within reach of anything QGIS spawns, without putting
+        # them on every process's path.
+        withEpaSolvers = qgisPackage:
+          pkgs.symlinkJoin {
+            name = "${qgisPackage.pname or "qgis"}-with-epa-solvers";
+            paths = [ qgisPackage ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postBuild = ''
+              for exe in "$out"/bin/*; do
+                # Skip anything that is not runnable — wrapProgram refuses
+                # those, and a stray data file in bin/ should not fail a build.
+                [ -f "$exe" ] && [ -x "$exe" ] || continue
+                wrapProgram "$exe" \
+                  --prefix PATH : "${epaPath}" \
+                  --prefix LD_LIBRARY_PATH : "${epaLibPath}" \
+                  --set-default GISWATER_EPANET_EXE "${epanet}/bin/runepanet" \
+                  --set-default GISWATER_SWMM_EXE "${swmm}/bin/runswmm"
+              done
+            '';
+            inherit (qgisPackage) meta;
+          };
+
+        # --- QGIS channels ----------------------------------------------
+        # Two images are built from the same source: one on the long-term
+        # release, one on the current release.
+        #
+        #   ltr    (default) — what you put in front of users. QGIS's LTR line
+        #                      only takes bug fixes, so a project that opens
+        #                      today opens the same way next month.
+        #   latest           — the current release, for testing your projects,
+        #                      plugins and data against what will become the
+        #                      next LTR, before it becomes the next LTR.
+        #
+        # Same flake, same auth modes, same lockdown, same Giswater wiring —
+        # the QGIS package is the only difference.
+        withGiswater = qgisPackage: withEpaSolvers (qgisPackage.override {
+          extraPythonPackages = giswaterPythonPackages;
+        });
+
+        qgisChannels = {
+          ltr = {
+            package = withGiswater pkgs.qgis-ltr;
+            version = pkgs.qgis-ltr.version;
+            tag = "qgis-ltr";
+            description = "long-term release";
+          };
+          latest = {
+            package = withGiswater pkgs.qgis;
+            version = pkgs.qgis.version;
+            tag = "qgis-latest";
+            description = "current release";
+          };
+        };
+
+        # The channel the plain `nix build .#docker` and every `nix run .#run-*`
+        # target use.
+        defaultChannel = qgisChannels.ltr;
+
+        # scripts/epa.sh in the store, so the desktop can wire the plugin up
+        # without a checkout being present. Giswater executes the solvers from
+        # fixed paths inside its own plugin directory, where it ships Windows
+        # binaries — repointing those is what makes go2epa work at all.
+        epaTool = pkgs.runCommand "giswater-epa-tool" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+        } ''
+          install -Dm755 ${./scripts/epa.sh} "$out/bin/epa"
+          # Explicit rather than relying on the fixup hook: wrapProgram hides
+          # the real script as .epa-wrapped, and an unpatched
+          # `/usr/bin/env bash` shebang would then fail.
+          patchShebangs "$out/bin/epa"
+          wrapProgram "$out/bin/epa" \
+            --set-default GISWATER_EPANET_EXE "${epanet}/bin/runepanet" \
+            --set-default GISWATER_SWMM_EXE "${swmm}/bin/runswmm" \
+            --set-default GISWATER_SWMM_SMOKE_MODEL "${./nix/swmm-smoke.inp}" \
+            --prefix PATH : "${pkgs.lib.makeBinPath (with pkgs; [
+              coreutils
+              findutils
+              gnused
+              gnugrep
+            ])}"
+        '';
+
+        # --- Autostart (QGIS_DESKTOP_AUTOSTART_QGIS=1) --------------------
+        # Runs as the desktop user from both session paths; writes an XDG
+        # autostart entry that XFCE picks up.
+        autostartScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-autostart";
+          runtimeInputs = with pkgs; [ coreutils gnugrep ];
+          text = builtins.readFile ./config/autostart/autostart.sh;
+        };
+
+        # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
+        # Restore/save the home directory against object storage. Runs as root
+        # so the credentials stay unreadable by the desktop user, and so the
+        # restore can write into a home owned by uid 1000.
+        persistScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-persist";
+          runtimeInputs = with pkgs; [
+            rclone
+            coreutils # timeout, numfmt, date, chown, id, cp
+            gnused
+            hostname
+            util-linux # setpriv, to deliver files as the desktop user
+            bash # the shell setpriv execs for that delivery
+          ];
+          text = builtins.readFile ./config/persist/persist.sh;
+        };
+
+        # --- Terminal lockdown (QGIS_DESKTOP_ALLOW_TERMINAL=0) ------------------
+        disableTerminalScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-disable-terminal";
+          runtimeInputs = with pkgs; [ coreutils gnused gnugrep ];
+          text = builtins.readFile ./config/lockdown/disable-terminal.sh;
+        };
+
+        # --- OIDC (QGIS_DESKTOP_AUTH_MODE=oidc) ---------------------------------
+        # Secret materialisation, run as root by the entrypoint.
+        oidcConfigScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-oidc-config";
+          runtimeInputs = with pkgs; [ coreutils gnused ];
+          text = builtins.readFile ./config/oidc/oidc-config.sh;
+        };
+
+        # The proxy itself, run unprivileged.
+        oidcProxyScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-oidc-proxy";
+          runtimeInputs = with pkgs; [ oauth2-proxy coreutils ];
+          text = builtins.readFile ./config/oidc/oidc-proxy.sh;
+        };
+
         # Startup script that launches KasmVNC + XFCE
         startupScript = pkgs.writeShellApplication {
           name = "start-desktop";
@@ -32,6 +188,9 @@
             gnugrep
             xkbcomp
             xrdb
+          ] ++ [
+            epaTool # `epa install` wires Giswater up to the native solvers
+            autostartScript # honours QGIS_DESKTOP_AUTOSTART_QGIS
           ];
           text = builtins.readFile ./start-desktop.sh;
         };
@@ -48,7 +207,9 @@
         # XDG_DATA_DIRS / XDG_CONFIG_DIRS for the XFCE session. Same set as
         # the image-level env vars in dockerImage.config.Env — repeated here
         # because lightdm strips those before spawning the user session.
-        xfceXdgDataDirs = pkgs.lib.concatStringsSep ":" [
+        # Parameterised on the QGIS package so each channel's image points at
+        # its own QGIS share directory.
+        mkXfceXdgDataDirs = qgisPackage: pkgs.lib.concatStringsSep ":" [
           "${pkgs.shared-mime-info}/share"
           "${pkgs.hicolor-icon-theme}/share"
           "${pkgs.adwaita-icon-theme}/share"
@@ -58,7 +219,7 @@
           "${pkgs.xfce4-settings}/share"
           "${pkgs.xfconf}/share"
           "${pkgs.thunar}/share"
-          "${pkgs.qgis}/share"
+          "${qgisPackage}/share"
         ];
         xfceXdgConfigDirs = pkgs.lib.concatStringsSep ":" [
           "${pkgs.xfce4-session}/etc/xdg"
@@ -85,7 +246,7 @@
 
         # LightDM session-wrapper. Runs as the authenticated user with a
         # stripped env — bake all the paths XFCE needs directly in.
-        xsessionScript = pkgs.writeShellScript "Xsession" ''
+        mkXsessionScript = qgisPackage: pkgs.writeShellScript "Xsession" ''
           #!${pkgs.bash}/bin/bash
           set -uo pipefail
 
@@ -113,7 +274,7 @@
 
           # Env vars lightdm strips that XFCE needs.
           export FONTCONFIG_FILE="${desktopFontsConf}"
-          export XDG_DATA_DIRS="${xfceXdgDataDirs}"
+          export XDG_DATA_DIRS="${mkXfceXdgDataDirs qgisPackage}"
           export XDG_CONFIG_DIRS="${xfceXdgConfigDirs}"
           export XKB_BASE_DIR="${pkgs.xkeyboard_config}/share/X11/xkb"
           export XKB_DEFAULT_RULES=evdev
@@ -124,6 +285,16 @@
           chmod 700 "$XDG_RUNTIME_DIR" || true
 
           export PATH="${xfcePath}:$PATH"
+
+          # Point the Giswater plugin at the native EPA solvers for THIS user's
+          # profile. Greeter mode gives every user their own home directory, so
+          # the wiring has to happen per session rather than once at boot.
+          # No-op when the plugin is not installed.
+          ${epaTool}/bin/epa install \
+            || echo "WARN: could not wire up the EPA solvers — run 'epa status' for detail"
+
+          # Same reasoning for the autostart entry: it lives in this user's home.
+          ${autostartScript}/bin/qgis-desktop-autostart || true
 
           # Background XFCE so we can force the wallpaper via xfconf-query
           # once xfconfd has come up (mirrors start-desktop.sh's post-start
@@ -145,7 +316,7 @@
         '';
 
         # Root entrypoint: sets up nftables egress filter, drops privileges,
-        # then execs the desktop startup script. In KASM_AUTH_MODE=greeter it
+        # then execs the desktop startup script. In QGIS_DESKTOP_AUTH_MODE=greeter it
         # instead materialises Linux user accounts and execs lightdm as root.
         entrypointScript = pkgs.writeShellApplication {
           name = "qgis-entrypoint";
@@ -156,7 +327,8 @@
             coreutils
             gawk
             gnugrep
-            glibc.bin     # getent
+            getent        # resolves allowlist hostnames; NOT part of glibc.bin
+            glibc.bin     # ldd/ldconfig and friends
             shadow        # chpasswd (kept for later reuse; runtime uses openssl+sed)
             openssl       # openssl passwd -6 to hash user passwords (greeter mode)
             gnused        # sed -i to edit /etc/shadow in place (greeter mode)
@@ -166,14 +338,21 @@
             kasmvnc       # Xkasmvnc on PATH so the lightdm xserver wrapper finds it
             xkeyboard_config # XKB_BASE_DIR sanity in greeter mode
             startupScript # so `start-desktop` is on PATH for setpriv --exec
+          ] ++ [
+            oidcConfigScript      # qgis-desktop-oidc-config (root: validates + writes secrets)
+            oidcProxyScript       # qgis-desktop-oidc-proxy  (uid 1000: runs oauth2-proxy)
+            disableTerminalScript # qgis-desktop-disable-terminal (root: QGIS_DESKTOP_ALLOW_TERMINAL=0)
+            persistScript         # qgis-desktop-persist (root: home restore/save)
           ];
           text = builtins.readFile ./entrypoint.sh;
         };
 
-        # Docker image built with Nix
-        dockerImage = pkgs.dockerTools.buildLayeredImage {
-          name = "nix-xfce-kasm";
-          tag = "latest";
+        # Docker image built with Nix, once per QGIS channel. `channel` is one
+        # of the qgisChannels attrsets above; everything else about the two
+        # images is identical.
+        mkDockerImage = channel: pkgs.dockerTools.buildLayeredImage {
+          name = "kartoza";
+          tag = channel.tag;
           maxLayers = 120;
 
           contents = with pkgs; [
@@ -214,15 +393,46 @@
             open-sans
 
             # Applications
-            qgis
+            channel.package
+
+            # Giswater's EPA hydraulic solvers, on PATH under both their
+            # upstream names (runepanet / runswmm) and the aliases Giswater
+            # and the wider tooling use (epanet, epanet2, swmm5).
+            epanet
+            swmm
+            epaTool
 
             # Egress lockdown deps
             nftables
             util-linux    # setpriv
             iproute2
-            glibc.bin     # getent for hostname resolution
+            # Hostname resolution for the egress allowlist. `getent` is its own
+            # package in nixpkgs — it is NOT in glibc.bin, and without it every
+            # hostname in QGIS_DESKTOP_EGRESS_ALLOW silently fails to resolve.
+            getent
+            glibc.bin
 
-            # Greeter mode (KASM_AUTH_MODE=greeter): LightDM + GTK greeter.
+            # TLS trust store. Needed by oauth2-proxy to verify the identity
+            # provider in QGIS_DESKTOP_AUTH_MODE=oidc, and by QGIS for any HTTPS
+            # service — the image previously shipped no CA bundle at all.
+            cacert
+
+            # OIDC auth mode (QGIS_DESKTOP_AUTH_MODE=oidc). The oauth2-proxy binary
+            # itself arrives through qgis-desktop-oidc-proxy's wrapper.
+            oidcConfigScript
+            oidcProxyScript
+
+            # Terminal lockdown (QGIS_DESKTOP_ALLOW_TERMINAL=0).
+            disableTerminalScript
+
+            # Autostart QGIS with the session (QGIS_DESKTOP_AUTOSTART_QGIS=1).
+            autostartScript
+
+            # Home persistence (QGIS_DESKTOP_PERSIST=1). rclone arrives through
+            # the wrapper; it is not on the desktop user's PATH.
+            persistScript
+
+            # Greeter mode (QGIS_DESKTOP_AUTH_MODE=greeter): LightDM + GTK greeter.
             # Kept out of the runtime path when mode != greeter, so basic /
             # none users don't pay a startup cost — but they do pay the
             # image-size cost. Roughly +40 MB uncompressed.
@@ -240,6 +450,12 @@
           fakeRootCommands = ''
             mkdir -p ./tmp ./run ./var/run ./var/log
             mkdir -p ./etc ./root
+            # Runtime state the entrypoint writes: the listener override that
+            # tells both KasmVNC launchers to move behind the OIDC proxy.
+            mkdir -p ./run/qgis-desktop
+            # Default mount point for a user:password file
+            # (QGIS_DESKTOP_USERS_FILE).
+            mkdir -p ./etc/qgis-desktop
             mkdir -p ./home/user/.vnc
             mkdir -p ./home/user/.config/xfce4/panel
             mkdir -p ./etc/xdg/xfce4/xfconf/xfce-perchannel-xml
@@ -280,6 +496,13 @@
             ln -sfn ${pkgs.coreutils}/bin/cut   ./usr/bin/cut
             ln -sfn ${pkgs.coreutils}/bin/tr    ./usr/bin/tr
             ln -sfn ${pkgs.gawk}/bin/awk        ./usr/bin/awk
+
+            # TLS trust store at the conventional path. oauth2-proxy honours
+            # SSL_CERT_FILE (set in Env below), but plenty of other tooling —
+            # curl, python, GDAL — only looks here.
+            mkdir -p ./etc/ssl/certs
+            ln -sfn ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt ./etc/ssl/certs/ca-certificates.crt
+            ln -sfn ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt ./etc/ssl/certs/ca-bundle.crt
 
             # LightDM strips the image env vars (incl. XKB_BASE_DIR) before
             # spawning children. Give the wrapper a fixed fallback path to
@@ -349,7 +572,7 @@ shadow: files
 hosts: files dns
 EOF
 
-            # --- LightDM (KASM_AUTH_MODE=greeter) ---------------------------
+            # --- LightDM (QGIS_DESKTOP_AUTH_MODE=greeter) ---------------------------
             # Config, session wrapper, xserver command, PAM stack, runtime
             # dirs, and a shared session .desktop file. All baked in so the
             # image works in greeter mode with zero mounted config.
@@ -377,7 +600,7 @@ EOF
 
             install -Dm 0644 ${./config/lightdm/lightdm-gtk-greeter.conf} ./etc/lightdm/lightdm-gtk-greeter.conf
             install -Dm 0755 ${./config/lightdm/xkasmvnc-wrapper.sh}      ./etc/lightdm/xkasmvnc-wrapper
-            ln -sfn ${xsessionScript}                                     ./etc/lightdm/Xsession
+            ln -sfn ${mkXsessionScript channel.package}                                     ./etc/lightdm/Xsession
             ln -sfn ${checkPasswordScript}/bin/check-password             ./etc/lightdm/check-password
             install -Dm 0644 ${./config/lightdm/xfce.desktop}             ./usr/share/xsessions/xfce.desktop
 
@@ -486,7 +709,11 @@ DBUSEOF
           config = {
             Labels = {
               "org.opencontainers.image.title" = "QGIS Desktop";
-              "org.opencontainers.image.description" = "QGIS Desktop in a Docker container with KasmVNC web-based access, built with Nix";
+              "org.opencontainers.image.description" = "QGIS ${channel.version} (${channel.description}) in a Docker container with KasmVNC web-based access, built with Nix";
+              # Which QGIS is inside, without having to start the container.
+              "org.opencontainers.image.version" = channel.version;
+              "com.kartoza.qgis.channel" = channel.tag;
+              "com.kartoza.qgis.version" = channel.version;
               "org.opencontainers.image.url" = "https://github.com/kartoza/qgis-desktop-docker";
               "org.opencontainers.image.source" = "https://github.com/kartoza/qgis-desktop-docker";
               "org.opencontainers.image.documentation" = "https://github.com/kartoza/qgis-desktop-docker#readme";
@@ -503,13 +730,31 @@ DBUSEOF
               "VNC_PORT=8443"
               "VNC_RESOLUTION=1280x720"
               "VNC_COL_DEPTH=24"
-              # Auth mode: basic (default) | none | greeter.
+              # Which QGIS this image was built from. Read-only: changing it
+              # does not change the QGIS inside — pick the image tag instead.
+              "QGIS_DESKTOP_QGIS_CHANNEL=${channel.tag}"
+              "QGIS_DESKTOP_QGIS_VERSION=${channel.version}"
+              # Auth mode: basic (default) | none | greeter | oidc.
               # See docs/configuration/authentication.md.
-              "KASM_AUTH_MODE=basic"
+              "QGIS_DESKTOP_AUTH_MODE=basic"
+              # Terminal access. Set to 0 to remove the terminal emulators and
+              # command-runner dialogs from the desktop entirely.
+              "QGIS_DESKTOP_ALLOW_TERMINAL=1"
+              # Start QGIS automatically with the desktop session. Off by
+              # default: the desktop is useful without it, and QGIS takes a
+              # while to load.
+              "QGIS_DESKTOP_AUTOSTART_QGIS=0"
+              # Home-directory persistence against object storage. Off unless
+              # configured; see docs/configuration/persistence.md.
+              "QGIS_DESKTOP_PERSIST=0"
+              "QGIS_DESKTOP_PERSIST_INTERVAL=300"
+              # Where the desktop listens when the OIDC proxy is in front of
+              # it. Only consulted in QGIS_DESKTOP_AUTH_MODE=oidc.
+              "QGIS_DESKTOP_OIDC_UPSTREAM_PORT=6901"
               # Egress lockdown defaults ON. Requires --cap-add=NET_ADMIN
               # on `docker run`. Set to 0 to disable (dev only).
-              "KASM_EGRESS_LOCKDOWN=1"
-              "KASM_EGRESS_ALLOW="
+              "QGIS_DESKTOP_EGRESS_LOCKDOWN=1"
+              "QGIS_DESKTOP_EGRESS_ALLOW="
               "XDG_RUNTIME_DIR=/tmp/runtime-user"
               "FONTCONFIG_FILE=${desktopFontsConf}"
               "XDG_DATA_DIRS=${pkgs.lib.concatStringsSep ":" [
@@ -522,7 +767,7 @@ DBUSEOF
                 "${pkgs.xfce4-settings}/share"
                 "${pkgs.xfconf}/share"
                 "${pkgs.thunar}/share"
-                "${pkgs.qgis}/share"
+                "${channel.package}/share"
               ]}"
               "XDG_CONFIG_DIRS=${pkgs.lib.concatStringsSep ":" [
                 "${pkgs.xfce4-session}/etc/xdg"
@@ -539,6 +784,15 @@ DBUSEOF
               "XKB_DEFAULT_LAYOUT=us"
               "XKB_BASE_DIR=${pkgs.xkeyboard_config}/share/X11/xkb"
               "XKB_RULES_DIR=${pkgs.xkeyboard_config}/share/X11/xkb/rules"
+              # TLS trust store for anything that reads the environment rather
+              # than /etc/ssl/certs (oauth2-proxy, python, requests).
+              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              # Giswater reads these to locate the EPA solvers directly, for the
+              # code paths that do not go through the QGIS wrapper.
+              "GISWATER_EPANET_EXE=${epanet}/bin/runepanet"
+              "GISWATER_SWMM_EXE=${swmm}/bin/runswmm"
+              "GISWATER_SWMM_SMOKE_MODEL=${./nix/swmm-smoke.inp}"
             ];
             ExposedPorts = {
               "8443/tcp" = {};
@@ -562,6 +816,46 @@ DBUSEOF
         # Compose file for the "analyst locked-down" scenario. Pinned into the
         # nix store so `nix run .#run-analyst-scenario` works from any PWD.
         analystComposeFile = ./examples/analyst-locked-down/docker-compose.yml;
+
+        # Self-contained Keycloak + desktop demo for QGIS_DESKTOP_AUTH_MODE=oidc.
+        keycloakComposeDir = ./examples/keycloak-oidc;
+
+        # One compose file per scenario, so every one in the docs can be
+        # reproduced with a single command.
+        greeterComposeFile = ./examples/multi-user-greeter/docker-compose.yml;
+        persistenceComposeFile = ./examples/home-persistence/docker-compose.yml;
+        kioskComposeFile = ./examples/kiosk/docker-compose.yml;
+        dataDropComposeFile = ./examples/team-data-drop/docker-compose.yml;
+        disposableComposeFile = ./examples/disposable-pod/docker-compose.yml;
+        # Directories rather than files: these mount realm exports that sit
+        # beside the compose file, so the whole directory has to reach the store.
+        ssoHomesComposeDir = ./examples;
+        federatedComposeDir = ./examples/federated-idp;
+
+        # Every scenario target has the same shape: refuse without the image,
+        # print what the user is about to get, and tear down on Ctrl-C.
+        mkScenario = { name, composeFile, project, banner }: mkApp name ''
+          cat <<'BANNER'
+          ${banner}
+          BANNER
+
+          if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
+            echo ""
+            echo "ERROR: image 'kartoza:latest' not found."
+            echo "       Build it first with:  nix run .#build-docker"
+            exit 1
+          fi
+
+          cleanup() {
+            echo ""
+            echo "Stopping…"
+            docker compose --project-name ${project} \
+              -f ${composeFile} down --remove-orphans 2>/dev/null || true
+          }
+          trap cleanup EXIT INT TERM
+
+          docker compose --project-name ${project} -f ${composeFile} up
+        '';
 
         # Python environment with mkdocs + Material + IM's plugin set.
         mkdocsPython = pkgs.python3.withPackages (ps: with ps; [
@@ -618,6 +912,29 @@ DBUSEOF
           ];
         };
 
+        # Renders docs/**/diagrams/*.d2 to SVG. Separate from the mkdocs apps
+        # because the PDF build needs it too, and because a diagram change
+        # should be re-renderable on its own.
+        docsDiagrams = pkgs.writeShellApplication {
+          name = "docs-diagrams";
+          runtimeInputs = with pkgs; [ d2 findutils coreutils diffutils ];
+          text = ''
+            export QGIS_DESKTOP_PROJECT_ROOT="''${QGIS_DESKTOP_PROJECT_ROOT:-$PWD}"
+            exec bash ${./scripts/render-diagrams.sh} "$@"
+          '';
+        };
+
+        # Preflight for an OIDC provider somebody else administers. Reads the
+        # same variables the container does, so a pass means the environment
+        # just verified is the environment about to be run.
+        checkOidcIssuer = pkgs.writeShellApplication {
+          name = "check-oidc";
+          runtimeInputs = with pkgs; [ curl jq coreutils gnused gnugrep ];
+          text = ''
+            exec bash ${./scripts/check-oidc-issuer.sh} "$@"
+          '';
+        };
+
         # Helper for docs-related apps that need the mkdocs Python env.
         mkDocsApp = name: extraInputs: script: {
           type = "app";
@@ -631,21 +948,57 @@ DBUSEOF
       in {
         packages = {
           kasmvnc = kasmvnc;
-          dockerImage = dockerImage;
-          docker = dockerImage;
-          default = dockerImage;
+
+          # QGIS LTR is the default everywhere: it is the build you put in
+          # front of users.
+          dockerImage = mkDockerImage defaultChannel;
+          docker = mkDockerImage defaultChannel;
+          default = mkDockerImage defaultChannel;
+          docker-ltr = mkDockerImage qgisChannels.ltr;
+
+          # The current QGIS release, for testing projects and plugins against
+          # what becomes the next LTR.
+          docker-qgis-latest = mkDockerImage qgisChannels.latest;
+
+          # Giswater building blocks, exposed so they can be built and smoke
+          # tested on their own: `nix build .#epanet` runs a real model through
+          # the solver as part of the derivation's install check.
+          inherit epanet swmm;
+          qgis = defaultChannel.package;
+          qgis-ltr = qgisChannels.ltr.package;
+          qgis-latest = qgisChannels.latest.package;
+          epa = epaTool;
         };
 
         apps = {
+          # QGIS LTR — the default. Also tagged :latest, because that is the
+          # image every run-* target and the compose files expect, and because
+          # "latest" in Docker means "the one you should be using", not "the
+          # newest upstream release".
           build-docker = mkApp "build-docker" ''
-            echo "Building Docker image with Nix..."
+            echo "Building Docker image with Nix (QGIS ${qgisChannels.ltr.version}, ${qgisChannels.ltr.description})..."
             nix build .#docker -o result
             OUT=$(nix build .#docker --print-out-paths)
             nix store cat "$OUT" | docker load
+            docker tag kartoza:qgis-ltr kartoza:latest
             echo ""
-            echo "Image loaded: nix-xfce-kasm:latest"
-            docker image inspect nix-xfce-kasm:latest --format \
-              "Size: {{.Size}} bytes ($(docker image inspect nix-xfce-kasm:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+            echo "Image loaded: kartoza:qgis-ltr (also tagged :latest)"
+            docker image inspect kartoza:latest --format \
+              "Size: {{.Size}} bytes ($(docker image inspect kartoza:latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
+          '';
+
+          # The current QGIS release, side by side with the LTR image. Nothing
+          # else differs, so a project that works here and not there is a QGIS
+          # regression worth reporting upstream before it reaches an LTR.
+          build-docker-qgis-latest = mkApp "build-docker-qgis-latest" ''
+            echo "Building Docker image with Nix (QGIS ${qgisChannels.latest.version}, ${qgisChannels.latest.description})..."
+            OUT=$(nix build .#docker-qgis-latest --print-out-paths)
+            nix store cat "$OUT" | docker load
+            echo ""
+            echo "Image loaded: kartoza:qgis-latest"
+            echo "Run it with:  docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-latest"
+            docker image inspect kartoza:qgis-latest --format \
+              "Size: {{.Size}} bytes ($(docker image inspect kartoza:qgis-latest --format '{{.Size}}' | numfmt --to=iec-i --suffix=B))"
           '';
 
           # Foreground run with default single-user auth (Ctrl-C to stop).
@@ -654,18 +1007,18 @@ DBUSEOF
             docker rm -f qgis-desktop 2>/dev/null || true
             echo "▶ Auth: single-user (default VNC_USER=user, VNC_PW=password)"
             echo "  Open http://localhost:8443 — browser will prompt for creds."
-            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop nix-xfce-kasm:latest
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop kartoza:latest
           '';
 
           # Multi-user via inline env var.
           run-multi-user = mkApp "run-multi-user" ''
             docker rm -f qgis-desktop 2>/dev/null || true
-            echo "▶ Auth: multi-user via KASM_USERS env"
+            echo "▶ Auth: multi-user via QGIS_DESKTOP_USERS env"
             echo "  Log in as  alice / pw1   or   bob / pw2"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_USERS='alice:pw1,bob:pw2' \
-              nix-xfce-kasm:latest
+              -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
+              kartoza:latest
           '';
 
           # Multi-user via mounted file. Generates a temp file, mounts it 0600,
@@ -684,8 +1037,8 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -v "$USERS_FILE:/etc/kasmvnc/users:ro" \
-              nix-xfce-kasm:latest
+              -v "$USERS_FILE:/etc/qgis-desktop/users:ro" \
+              kartoza:latest
           '';
 
           # No auth at all — for local sanity checks only.
@@ -694,8 +1047,8 @@ DBUSEOF
             echo "⚠  Auth: DISABLED. Do NOT expose this port to any untrusted network."
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH_MODE=none \
-              nix-xfce-kasm:latest
+              -e QGIS_DESKTOP_AUTH_MODE=none \
+              kartoza:latest
           '';
 
           # LightDM greeter mode: browser sees an X-server-hosted login form
@@ -709,8 +1062,8 @@ DBUSEOF
             echo "  For multi-user try:  nix run .#run-greeter-multi"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH_MODE=greeter \
-              nix-xfce-kasm:latest
+              -e QGIS_DESKTOP_AUTH_MODE=greeter \
+              kartoza:latest
           '';
 
           # Greeter mode with two demo users (alice / bob). Each gets a real
@@ -721,10 +1074,214 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH_MODE=greeter \
-              -e KASM_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
-              nix-xfce-kasm:latest
+              -e QGIS_DESKTOP_AUTH_MODE=greeter \
+              -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
+              kartoza:latest
           '';
+
+          # OIDC / Keycloak mode against a real identity provider. Everything
+          # comes from the caller's environment, so no flake edit is needed:
+          #   QGIS_DESKTOP_OIDC_ISSUER_URL=https://sso.example.com/realms/gis \
+          #   QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop \
+          #   QGIS_DESKTOP_OIDC_CLIENT_SECRET=… \
+          #   nix run .#run-oidc
+          # For a batteries-included local IdP, use nix run .#run-keycloak-demo.
+          run-oidc = mkApp "run-oidc" ''
+            : "''${QGIS_DESKTOP_OIDC_ISSUER_URL:?set QGIS_DESKTOP_OIDC_ISSUER_URL (e.g. https://sso.example.com/realms/gis)}"
+            : "''${QGIS_DESKTOP_OIDC_CLIENT_ID:?set QGIS_DESKTOP_OIDC_CLIENT_ID}"
+            : "''${QGIS_DESKTOP_OIDC_CLIENT_SECRET:?set QGIS_DESKTOP_OIDC_CLIENT_SECRET}"
+            REDIRECT_URL="''${QGIS_DESKTOP_OIDC_REDIRECT_URL:-http://localhost:8443/oauth2/callback}"
+            docker rm -f qgis-desktop 2>/dev/null || true
+            echo "▶ Auth mode: oidc — oauth2-proxy fronting KasmVNC"
+            echo "  Issuer:    $QGIS_DESKTOP_OIDC_ISSUER_URL"
+            echo "  Client:    $QGIS_DESKTOP_OIDC_CLIENT_ID"
+            echo "  Redirect:  $REDIRECT_URL"
+            echo "  The identity provider's host is added to the egress allowlist"
+            echo "  automatically. Open http://localhost:8443 to be sent to the IdP."
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_AUTH_MODE=oidc \
+              -e QGIS_DESKTOP_OIDC_ISSUER_URL \
+              -e QGIS_DESKTOP_OIDC_CLIENT_ID \
+              -e QGIS_DESKTOP_OIDC_CLIENT_SECRET \
+              -e QGIS_DESKTOP_OIDC_REDIRECT_URL="$REDIRECT_URL" \
+              -e QGIS_DESKTOP_OIDC_ALLOWED_GROUPS \
+              -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES \
+              -e QGIS_DESKTOP_OIDC_EMAIL_DOMAINS \
+              -e QGIS_DESKTOP_OIDC_INNER_MODE \
+              kartoza:latest
+          '';
+
+          # End-to-end OIDC demo: a throwaway Keycloak with a pre-imported
+          # realm, plus the desktop wired to it. See
+          # examples/keycloak-oidc/README.md — the one manual step is a hosts
+          # entry, because the browser and the container must resolve the
+          # issuer to the same name.
+          run-keycloak-demo = mkApp "run-keycloak-demo" ''
+            cat <<'BANNER'
+            ▶ Keycloak single sign-on demo
+
+              Login:     alice / hunter2   (realm: qgis)
+              Admin:     http://localhost:8080  (admin / admin)
+              Desktop:   http://keycloak:8443   ← note the host name
+              Docs:      examples/keycloak-oidc/README.md
+
+              REQUIRED once, on the host running the browser:
+                echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+
+              The browser and the container have to reach the issuer under the
+              same name, or the token's `iss` will not match what the proxy
+              expects. Press Ctrl-C to stop and remove both containers.
+            BANNER
+
+            if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
+              echo ""
+              echo "ERROR: image 'kartoza:latest' not found."
+              echo "       Build it first with:  nix run .#build-docker"
+              exit 1
+            fi
+
+            cleanup() {
+              echo ""
+              echo "Stopping demo…"
+              docker compose --project-name keycloak-oidc \
+                -f ${keycloakComposeDir}/docker-compose.yml down -v --remove-orphans 2>/dev/null || true
+            }
+            trap cleanup EXIT INT TERM
+
+            docker compose --project-name keycloak-oidc \
+              -f ${keycloakComposeDir}/docker-compose.yml up
+          '';
+
+          # Shared workstation: LightDM inside the desktop, two real accounts.
+          run-greeter-scenario = mkScenario {
+            name = "run-greeter-scenario";
+            composeFile = greeterComposeFile;
+            project = "qgis-greeter";
+            banner = ''
+              ▶ Multi-user greeter session
+
+                Login:    alice / hunter2
+                          bob / correct-horse-battery-staple
+                Desktop:  http://localhost:8443
+                Docs:     examples/multi-user-greeter/README.md
+
+                Log out from the XFCE menu and the next person signs in on the
+                same browser tab. Each account has its own home directory.
+                Press Ctrl-C to stop.'';
+          };
+
+          # The home directory living in object storage, with MinIO standing in
+          # for a real provider.
+          run-persistence-demo = mkScenario {
+            name = "run-persistence-demo";
+            composeFile = persistenceComposeFile;
+            project = "qgis-persistence";
+            banner = ''
+              ▶ Home persistence demo
+
+                Desktop:  http://localhost:8443    (user / password)
+                MinIO:    http://localhost:9001    (minioadmin / minioadmin123)
+                Docs:     examples/home-persistence/README.md
+
+                The home directory is restored from the bucket at boot and
+                saved every 60s. Kill the container and start it again — the
+                work comes back. Drop a file into the bucket's deploy/ prefix
+                and it lands on the desktop. Press Ctrl-C to stop.'';
+          };
+
+          # QGIS on a screen someone walks up to: autostarted, no terminal, no
+          # clipboard, no network.
+          run-kiosk-scenario = mkScenario {
+            name = "run-kiosk-scenario";
+            composeFile = kioskComposeFile;
+            project = "qgis-kiosk";
+            banner = ''
+              ▶ Kiosk display
+
+                Desktop:  http://localhost:8443   (no login — see the docs)
+                Docs:     examples/kiosk/README.md
+
+                QGIS opens by itself on the mounted project. No terminal, no
+                clipboard, no outbound network. Replace examples/kiosk/project/
+                with your own. Press Ctrl-C to stop.'';
+          };
+
+          # Both headline features at once: SSO at the edge, home directory in
+          # object storage.
+          run-sso-homes-scenario = mkScenario {
+            name = "run-sso-homes-scenario";
+            composeFile = "${ssoHomesComposeDir}/sso-persistent-homes/docker-compose.yml";
+            project = "qgis-sso-homes";
+            banner = ''
+              ▶ Single sign-on with persistent homes
+
+                Login:    alice / hunter2      (mallory / hunter2 is refused)
+                Desktop:  http://keycloak:8443
+                Keycloak: http://keycloak:8080/admin   (admin / admin)
+                MinIO:    http://localhost:9001        (minioadmin / minioadmin123)
+                Docs:     examples/sso-persistent-homes/README.md
+
+                REQUIRED once, on the machine running the browser:
+                  echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+
+                Press Ctrl-C to stop.'';
+          };
+
+          # Object storage as a delivery channel: baseline/ and deploy/.
+          run-data-drop-scenario = mkScenario {
+            name = "run-data-drop-scenario";
+            composeFile = dataDropComposeFile;
+            project = "qgis-data-drop";
+            banner = ''
+              ▶ Delivering data through the bucket
+
+                Desktop:  http://localhost:8443   (user / password)
+                MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
+                Docs:     docs/scenarios/team-data-drop.md
+
+                QGIS opens on a project from the bucket's baseline.
+                About a minute in, a dispatcher drops assets.csv into deploy/ —
+                watch it land on the desktop. Press Ctrl-C to stop.'';
+          };
+
+          # The one you are meant to break: kill it, recreate it, run two at
+          # once, wipe the home, blow the quota. Every guard has a step.
+          run-disposable-scenario = mkScenario {
+            name = "run-disposable-scenario";
+            composeFile = disposableComposeFile;
+            project = "qgis-disposable";
+            banner = ''
+              ▶ The disposable desktop
+
+                Desktop:  http://localhost:8443   (user / password)
+                MinIO:    http://localhost:9001   (minioadmin / minioadmin123)
+                Docs:     docs/scenarios/disposable-pod.md
+
+                Tuned to be broken: 30s saves, a 200M quota, every guard on.
+                Try `docker kill disposable-desktop` and start it again — then
+                work through the docs page. Press Ctrl-C to stop.'';
+          };
+
+          # Keycloak as a broker in front of somebody else's directory — the
+          # shape nearly every real deployment ends up with.
+          run-federated-idp-scenario = mkScenario {
+            name = "run-federated-idp-scenario";
+            composeFile = "${federatedComposeDir}/docker-compose.yml";
+            project = "qgis-federated";
+            banner = ''
+              ▶ Federating the customer's identity provider
+
+                Desktop:  http://keycloak:8443    ("Corporate sign-in")
+                Bob:      bob / hunter2     in /gis-team  -> gets a desktop
+                Carol:    carol / hunter2   in /finance   -> Permission Denied
+                Keycloak: http://keycloak:8080/admin      (admin / admin)
+                Docs:     docs/scenarios/federated-idp.md
+
+                REQUIRED once, on the machine running the browser:
+                  echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+
+                Press Ctrl-C to stop.'';
+          };
 
           # Locked-down demo: auth on, clipboard blocked, watermarked, DLP info logging.
           # Handy for validating the permission controls end-to-end.
@@ -735,12 +1292,14 @@ DBUSEOF
             echo "  - Clipboard IN and OUT blocked"
             echo "  - Watermark overlay enabled"
             echo "  - DLP audit log = info"
+            echo "  - Terminal access removed"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
               -e KASM_WATERMARK_TEXT='CONFIDENTIAL - ''${USER} %H:%M' \
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
-              nix-xfce-kasm:latest
+              -e QGIS_DESKTOP_ALLOW_TERMINAL=0 \
+              kartoza:latest
           '';
 
           # Demo the egress lockdown with a small allowlist. Try `curl 1.1.1.1`
@@ -753,8 +1312,8 @@ DBUSEOF
             echo "  Everything else is blocked. DNS to Docker's resolver stays open."
             echo "  Log in as user / password  ·  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_EGRESS_ALLOW='1.1.1.1,example.com' \
-              nix-xfce-kasm:latest
+              -e QGIS_DESKTOP_EGRESS_ALLOW='1.1.1.1,example.com' \
+              kartoza:latest
           '';
 
           # End-to-end scenario: bob / password123, clipboard blocked, egress
@@ -775,9 +1334,9 @@ DBUSEOF
               Press Ctrl-C to stop and remove both containers.
             BANNER
 
-            if ! docker image inspect nix-xfce-kasm:latest >/dev/null 2>&1; then
+            if ! docker image inspect kartoza:latest >/dev/null 2>&1; then
               echo ""
-              echo "ERROR: image 'nix-xfce-kasm:latest' not found."
+              echo "ERROR: image 'kartoza:latest' not found."
               echo "       Build it first with:  nix run .#build-docker"
               exit 1
             fi
@@ -800,9 +1359,9 @@ DBUSEOF
             echo "⚠  Dev mode: auth OFF and egress lockdown OFF."
             echo "  Open http://localhost:8443 — connects with no prompt, full network access."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
-              -e KASM_AUTH=0 \
-              -e KASM_EGRESS_LOCKDOWN=0 \
-              nix-xfce-kasm:latest
+              -e QGIS_DESKTOP_AUTH_MODE=none \
+              -e QGIS_DESKTOP_EGRESS_LOCKDOWN=0 \
+              kartoza:latest
           '';
 
           # Convenience: hard-stop the running container from another terminal.
@@ -825,15 +1384,18 @@ DBUSEOF
             QGIS Desktop Docker — available commands
 
               Build
-                nix run .#build-docker      Build the Docker image with Nix
+                nix run .#build-docker      Build the image on QGIS LTR (default, tagged :qgis-ltr + :latest)
+                nix run .#build-docker-qgis-latest
+                                            Build the image on the current QGIS release (:qgis-latest)
 
               Run (foreground, Ctrl-C to stop)
                 nix run .#run               Default: auth on, egress locked (empty allowlist)
-                nix run .#run-multi-user    Multi-user via KASM_USERS env
+                nix run .#run-multi-user    Multi-user via QGIS_DESKTOP_USERS env
                 nix run .#run-users-file    Multi-user via bind-mounted file
                 nix run .#run-no-auth       Auth DISABLED (dev only)
                 nix run .#run-greeter       LightDM greeter (in-session login form)
                 nix run .#run-greeter-multi Greeter with alice + bob accounts
+                nix run .#run-oidc          Keycloak/OIDC SSO (reads QGIS_DESKTOP_OIDC_* from your env)
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)
@@ -842,9 +1404,24 @@ DBUSEOF
                 nix run .#run-analyst-scenario   bob / password123 + kartoza/postgis db;
                                                   clipboard blocked, egress restricted to db.
                                                   See docs/scenarios/analyst-locked-down.md
+                nix run .#run-keycloak-demo      Throwaway Keycloak + SSO desktop.
+                                                  See examples/keycloak-oidc/README.md
+
+              Giswater
+                nix build .#epanet          EPA water-supply solver (runs a model on build)
+                nix build .#swmm            EPA drainage solver (runs a model on build)
+                epa status                  Solver + plugin wiring state (inside the desktop)
 
               All run-* targets pass --cap-add=NET_ADMIN so the entrypoint can
               manage nftables. Egress lockdown is ON by default in the image.
+
+              Test
+                nix run .#test              Run every check that needs no Docker
+                nix run .#test-oidc         Unit-test the OIDC plumbing
+                nix run .#test-terminal-lockdown   Unit-test the terminal lockdown
+                nix run .#test-renamed-variables   Unit-test the 2.0.0 rename guard
+                nix run .#test-persist      Unit-test home persistence
+                nix run .#test-docs-glyphs  Check the docs against the PDF build
 
               Manage
                 nix run .#stop              Stop and remove the qgis-desktop container
@@ -862,19 +1439,202 @@ DBUSEOF
             HELP
           '';
 
+          # Unit tests for the OIDC plumbing: configuration validation, secret
+          # handling and the flag list handed to oauth2-proxy. Runs in a couple
+          # of seconds with no Docker, no container and no identity provider —
+          # the proxy binary is stubbed out.
+          test-oidc = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-oidc";
+              # oauth2-proxy is here so the suite can validate every flag the
+              # launcher emits against the real binary's --help.
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk oauth2-proxy ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-oidc-config.sh
+              '';
+            }}/bin/test-oidc";
+          };
+
+          # Unit tests for the terminal lockdown, driven against a throwaway
+          # tree shaped like the container's /bin and /home.
+          test-terminal-lockdown = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-terminal-lockdown";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-terminal-lockdown.sh
+              '';
+            }}/bin/test-terminal-lockdown";
+          };
+
+          # Keeps the committed diagram SVGs in step with their .d2 sources.
+          test-check-oidc = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-check-oidc";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep gnused curl jq python3 ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-check-oidc.sh
+              '';
+            }}/bin/test-check-oidc";
+          };
+
+          test-docs-diagrams = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-docs-diagrams";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep findutils diffutils d2 ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-docs-diagrams.sh
+              '';
+            }}/bin/test-docs-diagrams";
+          };
+
+          # Unit tests for the QGIS autostart flag.
+          test-autostart = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-autostart";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-autostart.sh
+              '';
+            }}/bin/test-autostart";
+          };
+
+          # Guards the PDF build: any character pdflatex cannot set fails here,
+          # in a second, instead of ten minutes into `docs-pdf`.
+          test-docs-glyphs = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-docs-glyphs";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-docs-glyphs.sh
+              '';
+            }}/bin/test-docs-glyphs";
+          };
+
+          # Unit tests for home persistence, driven against a local rclone
+          # remote — the whole restore/save/guard cycle without S3.
+          test-persist = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-persist";
+              runtimeInputs = with pkgs; [
+                bash coreutils gnused gnugrep findutils rclone
+                util-linux # setpriv, for the privileged delivery path
+              ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-persist.sh
+              '';
+            }}/bin/test-persist";
+          };
+
+          # Unit tests for the 2.0.0 rename guard: every legacy KASM_* name is
+          # refused, and KasmVNC's own settings are left alone.
+          test-renamed-variables = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-renamed-variables";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-renamed-variables.sh
+              '';
+            }}/bin/test-renamed-variables";
+          };
+
+          # Everything that can be checked without Docker.
+          test = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test";
+              runtimeInputs = with pkgs; [
+                bash coreutils gnused gnugrep gawk findutils diffutils
+                oauth2-proxy rclone d2
+                # test-check-oidc.sh serves a fake OIDC provider from python3
+                # and talks to it with curl/jq — no network, no Docker.
+                curl jq python3
+              ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                rc=0
+                bash ${self}/scripts/test-oidc-config.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-terminal-lockdown.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-renamed-variables.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-persist.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-docs-glyphs.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-autostart.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-docs-diagrams.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-check-oidc.sh || rc=1
+                exit "$rc"
+              '';
+            }}/bin/test";
+          };
+
           summary = mkApp "summary" ''
-            bash build-summary.sh nix-xfce-kasm:latest build-summary.md
+            bash build-summary.sh kartoza:latest build-summary.md
           '';
 
           # --- Documentation apps -----------------------------------------
           # Local preview at http://127.0.0.1:8000.
-          docs-serve = mkDocsApp "docs-serve" [] ''
-            echo "Serving docs at http://127.0.0.1:8000 (Ctrl-C to stop)"
-            mkdocs serve
+          # `site_url` points at GitHub Pages, and mkdocs serve honours its path
+          # component — so a plain `mkdocs serve` answers on
+          # /qgis-desktop-docker/ and 404s at the root, which is a poor way to
+          # review your own docs. Serve through a temporary config that
+          # inherits everything and overrides the URL. Relative paths in an
+          # inherited config resolve against the child file, so docs_dir and
+          # site_dir have to be spelled out absolutely.
+          docs-serve = mkDocsApp "docs-serve" (with pkgs; [ coreutils ]) ''
+            ADDR="''${1:-127.0.0.1:8000}"
+            WORK=$(mktemp -d -t qgis-docs-serve.XXXXXX)
+            trap 'rm -rf "$WORK"' EXIT
+
+            cat > "$WORK/mkdocs.yml" <<CFG
+            INHERIT: $PWD/mkdocs.yml
+            site_url: http://$ADDR/
+            docs_dir: $PWD/docs
+            site_dir: $WORK/site
+            CFG
+            sed -i 's/^            //' "$WORK/mkdocs.yml"
+
+            echo "Serving docs at http://$ADDR (Ctrl-C to stop)"
+            mkdocs serve -f "$WORK/mkdocs.yml" -a "$ADDR"
           '';
+
+          # Re-render every diagram from its .d2 source.
+          docs-diagrams = {
+            type = "app";
+            program = "${docsDiagrams}/bin/docs-diagrams";
+          };
+
+          # Check an OIDC provider you administer before pointing a container
+          # at it. See docs/scenarios/keycloak-byo.md.
+          check-oidc = {
+            type = "app";
+            program = "${checkOidcIssuer}/bin/check-oidc";
+          };
 
           # Build the static site into ./site/.
           docs-build = mkDocsApp "docs-build" [] ''
+            ${docsDiagrams}/bin/docs-diagrams
             mkdocs build --strict
             echo "Built site into ./site/"
           '';
@@ -888,6 +1648,7 @@ DBUSEOF
           # doesn't exist on non-FHS distros like NixOS. lualatex writes PDF
           # directly, no /bin/sh needed.
           docs-pdf = mkDocsApp "docs-pdf" (with pkgs; [
+            d2
             pandoc
             pdfLatex
             fontconfig
@@ -943,22 +1704,41 @@ DBUSEOF
 
             echo "Assembling PDF at $OUT_ABS"
 
+            # Diagrams first: the PDF embeds the rendered SVGs, so a stale one
+            # would print an old picture next to new prose.
+            ${docsDiagrams}/bin/docs-diagrams
+
             # Nav order to match mkdocs.yml.
+            #
+            # docs/index.md is deliberately absent: it is a landing page built
+            # from a hero, call-to-action buttons and icon shortcodes, none of
+            # which mean anything in print — and the PDF has its own cover
+            # (docs/pdf/cover.tex). The content it summarises is in the pages
+            # below anyway.
             DOCS_DIR=${./docs}
             PAGES=(
-              "$DOCS_DIR/index.md"
               "$DOCS_DIR/getting-started/index.md"
               "$DOCS_DIR/getting-started/quickstart.md"
               "$DOCS_DIR/getting-started/nix-workflow.md"
               "$DOCS_DIR/getting-started/building.md"
               "$DOCS_DIR/configuration/index.md"
               "$DOCS_DIR/configuration/environment.md"
-              "$DOCS_DIR/configuration/kasm-permissions.md"
+              "$DOCS_DIR/configuration/permissions.md"
               "$DOCS_DIR/configuration/authentication.md"
               "$DOCS_DIR/configuration/egress-lockdown.md"
+              "$DOCS_DIR/configuration/giswater.md"
+              "$DOCS_DIR/configuration/persistence.md"
               "$DOCS_DIR/scenarios/index.md"
               "$DOCS_DIR/scenarios/analyst-locked-down.md"
               "$DOCS_DIR/scenarios/multi-user-greeter.md"
+              "$DOCS_DIR/scenarios/persistent-workstation.md"
+              "$DOCS_DIR/scenarios/team-data-drop.md"
+              "$DOCS_DIR/scenarios/disposable-pod.md"
+              "$DOCS_DIR/scenarios/keycloak-sso.md"
+              "$DOCS_DIR/scenarios/keycloak-byo.md"
+              "$DOCS_DIR/scenarios/federated-idp.md"
+              "$DOCS_DIR/scenarios/sso-persistent-homes.md"
+              "$DOCS_DIR/scenarios/kiosk.md"
               "$DOCS_DIR/developer-guide/index.md"
               "$DOCS_DIR/developer-guide/architecture.md"
               "$DOCS_DIR/developer-guide/nix-flake.md"
@@ -970,16 +1750,31 @@ DBUSEOF
               "$DOCS_DIR/about/license.md"
             )
 
-            # Convert SVGs to PDF so pandoc/xelatex can embed them at vector
-            # quality.
+            # Convert every diagram to PDF so pandoc/pdflatex embeds it at
+            # vector quality. Any docs/**/diagrams/ directory, not just the
+            # scenarios one — the pages rewrite `diagrams/x.svg` to the
+            # converted file by basename, so those names have to stay unique
+            # across directories (scripts/test-docs-diagrams.sh checks that).
             mkdir -p "$WORK/diagrams"
-            for svg in "$DOCS_DIR/scenarios/diagrams"/*.svg; do
+            while IFS= read -r svg; do
               name=$(basename "$svg" .svg)
               rsvg-convert -f pdf -o "$WORK/diagrams/$name.pdf" "$svg"
-            done
+            done < <(find "$DOCS_DIR" -path '*/diagrams/*.svg' | sort)
 
             # Concatenate pages with page breaks between chapters. Chapters map
             # to top-level sections in the nav.
+            # Glyph substitutions come from a single source of truth that
+            # scripts/test-docs-glyphs.sh checks the docs against, so a
+            # character pdflatex cannot set fails in a second rather than ten
+            # minutes into this build. Neither column ever contains '|', which
+            # is what lets it be the sed delimiter.
+            GLYPH_ARGS=()
+            while IFS=$'\t' read -r glyph replacement; do
+              case "$glyph" in "" | "#"*) continue ;; esac
+              GLYPH_ARGS+=(-e "s|$glyph|$replacement|g")
+            done < ${./docs/pdf/glyph-substitutions.tsv}
+            echo "Applying ''${#GLYPH_ARGS[@]} glyph substitutions (2 args each)"
+
             {
               cat <<'META'
 ---
@@ -995,8 +1790,8 @@ META
                 [ "$chapter" -gt 1 ] && printf '\n\n\\newpage\n\n'
                 # Rewrite SVG references in the analyst scenario to point at
                 # the pre-rendered PDFs, transform admonitions to bold labels,
-                # and knock out the odd Unicode glyph (pdflatex doesn't take
-                # arbitrary UTF-8 without inputenc utf8x which we don't ship).
+                # and replace the glyphs pdflatex cannot set (it does not take
+                # arbitrary UTF-8 without inputenc utf8x, which we don't ship).
                 sed \
                   -e 's|diagrams/\([a-z-]*\)\.svg|'"$WORK/diagrams/"'\1.pdf|g' \
                   -e 's|!!! note|**Note:**|g' \
@@ -1004,18 +1799,7 @@ META
                   -e 's|!!! warning|**Warning:**|g' \
                   -e 's|!!! danger|**Danger:**|g' \
                   -e 's|!!! quote ""||g' \
-                  -e 's|⚠|WARNING:|g' \
-                  -e 's|▶|>|g' \
-                  -e 's|✗|X|g' \
-                  -e 's|↳| ->|g' \
-                  -e 's|→| -> |g' \
-                  -e 's|─|-|g' \
-                  -e 's|│| |g' \
-                  -e 's|└|`|g' \
-                  -e 's|├||g' \
-                  -e 's|…|...|g' \
-                  -e 's|§|Section |g' \
-                  -e 's|—|--|g' \
+                  "''${GLYPH_ARGS[@]}" \
                   "$page"
               done
             } > "$WORK/combined.md"
@@ -1064,21 +1848,27 @@ META
             QGIS Desktop Docker — dev shell
 
               Build
-                nix run .#build-docker      Build the Docker image
+                nix run .#build-docker      Build the image on QGIS LTR (default)
+                nix run .#build-docker-qgis-latest   Build it on the current QGIS release
 
               Run (foreground, Ctrl-C to stop)
                 nix run .#run               Default: auth on, egress locked (empty allowlist)
-                nix run .#run-multi-user    Multi-user via KASM_USERS env
+                nix run .#run-multi-user    Multi-user via QGIS_DESKTOP_USERS env
                 nix run .#run-users-file    Multi-user via bind-mounted file
                 nix run .#run-no-auth       Auth DISABLED (dev only)
                 nix run .#run-greeter       LightDM greeter (in-session login form)
                 nix run .#run-greeter-multi Greeter with alice + bob accounts
+                nix run .#run-oidc          Keycloak/OIDC SSO (reads QGIS_DESKTOP_OIDC_* from your env)
                 nix run .#run-locked-down   Auth + full DLP (clipboard blocked, watermark, logging)
                 nix run .#run-egress-locked Demo egress allowlist (1.1.1.1, example.com only)
                 nix run .#run-no-lockdown   Auth OFF and egress lockdown OFF (dev only)
 
               Scenario
                 nix run .#run-analyst-scenario   bob + kartoza/postgis (see docs/)
+                nix run .#run-keycloak-demo      Keycloak SSO demo (see examples/)
+
+              Test
+                nix run .#test-oidc         Unit-test the OIDC plumbing
 
               Manage
                 nix run .#stop              Stop the qgis-desktop container

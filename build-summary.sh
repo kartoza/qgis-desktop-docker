@@ -3,7 +3,7 @@
 # Usage: ./build-summary.sh [image-name:tag] [output-file]
 set -euo pipefail
 
-IMAGE="${1:-nix-xfce-kasm:latest}"
+IMAGE="${1:-kartoza:latest}"
 SUMMARY_FILE="${2:-build-summary.md}"
 
 echo "Generating build summary for ${IMAGE}..."

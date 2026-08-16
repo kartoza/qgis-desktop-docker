@@ -1,0 +1,92 @@
+# Two delivery prefixes, two different jobs.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+direction: down
+
+operator: "Operator\nor a CI job" { shape: person }
+
+bucket: "s3://qgis-homes/surveyor-7c1e/" {
+  shape: cylinder
+  style.fill: "#F5F5F2"
+  style.stroke: "#1C1D1D"
+
+  baseline: "baseline/\nstandard issue kit" {
+    style.fill: "#E8F4FB"
+    style.stroke: "#1E88C7"
+  }
+  deploy: "deploy/\none-off delivery" {
+    style.fill: "#FFF9E6"
+    style.stroke: "#E8A33D"
+  }
+  home: "home/\nthe user's own files" {
+    style.fill: "#F5F5F2"
+  }
+}
+
+container: "The container" {
+  style.fill: "#F5F5F2"
+  style.stroke: "#1E88C7"
+
+  persist: "qgis-desktop-persist\nroot — holds the credentials" {
+    style.fill: "#1E88C7"
+    style.font-color: "#FFFFFF"
+  }
+  stage: "staging dir\n0755, root-owned"
+  copy: "setpriv → uid 1000\ncopies as the user" {
+    style.stroke-dash: 3
+  }
+
+  persist -> stage: "downloads"
+  stage -> copy
+}
+
+desktop: "~/ on the desktop" {
+  style.fill: "#F5F5F2"
+  projects: "~/projects, ~/styles\nnever overwritten"
+  desk: "~/Desktop\noverwritten on delivery"
+}
+
+operator -> bucket.baseline: "mc cp (any S3 client)"
+operator -> bucket.deploy: "mc cp"
+
+bucket.baseline -> container.persist: "at every container start" {
+  style.stroke: "#1E88C7"
+}
+bucket.deploy -> container.persist: "every interval,\nwhile running" {
+  style.stroke: "#E8A33D"
+  style.bold: true
+}
+
+container.copy -> desktop.projects: "skip-existing"
+container.copy -> desktop.desk: "clobber, then\ndelete from deploy/"
+
+desktop -> bucket.home: "saved back every interval\nONE WAY — container to bucket" {
+  style.bold: true
+}
+
+rules: |md
+  **baseline/** is standard issue:
+  arrives at every start, loses to
+  a file the user already has,
+  and stays in the bucket.
+
+  **deploy/** is a hand-off:
+  drained while the session runs,
+  wins over what is there, and is
+  deleted once delivered — so it
+  arrives once, not every minute.
+
+  **home/ is a MIRROR, not a drop box.**
+  Uploading into it does not give the
+  user the file: it looks exactly like
+  a file they deleted, so the next save
+  removes it again. Use deploy/.
+
+  Both inputs are copied by a process
+  that has dropped to uid 1000, so a
+  crafted archive cannot write outside
+  the user's home directory.
+| {
+  near: bottom-center
+  style.fill: "#FFF9E6"
+}

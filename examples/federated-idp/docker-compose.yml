@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: Kartoza
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Keycloak in front of somebody else's identity provider — the shape almost
+# every real deployment ends up with, because the customer already has Entra ID,
+# Google Workspace, Okta or an LDAP directory and is not going to move off it.
+#
+#   docker compose up      (or: nix run .#run-federated-idp-scenario)
+#
+# ONE MANUAL STEP, on the machine running the browser:
+#
+#   echo '127.0.0.1 keycloak' | sudo tee -a /etc/hosts
+#
+# Two realms in one Keycloak stand in for two systems:
+#
+#   corporate   The customer's existing directory. Bob is in /gis-team, Carol is
+#               in /finance. Neither has ever heard of QGIS. In your deployment
+#               this is Entra ID / Google / Okta / LDAP — you do not control it.
+#
+#   qgis        Yours. It holds no users at all. It brokers `corporate`, and a
+#               mapper turns membership of /gis-team into the qgis-user role.
+#
+# So entitlement is decided by a group in the customer's directory. Add someone
+# to /gis-team and they can sign in; remove them and they cannot. Nobody
+# administers a second list of users, which is the entire point.
+#
+#   Desktop:   http://keycloak:8443   -> "Corporate sign-in"
+#   Bob:       bob / hunter2      in /gis-team    -> gets a desktop
+#   Carol:     carol / hunter2    in /finance     -> Permission Denied
+#   Admin:     http://keycloak:8080/admin  (admin / admin)
+#
+# DEMO CREDENTIALS, public in this repository.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: federated-keycloak
+    command: [start-dev, --import-realm, --http-port=8080]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_HOSTNAME=http://keycloak:8080
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+    volumes:
+      # Both realms are imported at boot. The broker realm references the
+      # corporate one by URL, so the container must reach itself as `keycloak` —
+      # which is why the hosts entry above matters for the browser too.
+      - ./corporate-realm.json:/opt/keycloak/data/import/corporate-realm.json:ro
+      - ./qgis-realm.json:/opt/keycloak/data/import/qgis-realm.json:ro
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  qgis-desktop:
+    image: kartoza:latest
+    container_name: federated-desktop
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # The container only ever talks to YOUR realm. It has no idea the
+      # corporate directory exists, and swapping that directory for another one
+      # changes nothing here — that indirection is what you are buying by
+      # putting Keycloak in the middle.
+      - QGIS_DESKTOP_AUTH_MODE=oidc
+      - QGIS_DESKTOP_OIDC_ISSUER_URL=http://keycloak:8080/realms/qgis
+      - QGIS_DESKTOP_OIDC_CLIENT_ID=qgis-desktop
+      - QGIS_DESKTOP_OIDC_CLIENT_SECRET=qgis-desktop-demo-secret-not-for-real-use
+      - QGIS_DESKTOP_OIDC_REDIRECT_URL=http://keycloak:8443/oauth2/callback
+
+      # Granted by the identity-provider mapper, never by hand. Carol
+      # authenticates perfectly well and still does not get in.
+      - QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user
+      - QGIS_DESKTOP_OIDC_EMAIL_DOMAINS=*
+
+      - VNC_RESOLUTION=1600x900
+    restart: unless-stopped

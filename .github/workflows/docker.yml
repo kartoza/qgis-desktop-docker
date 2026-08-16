@@ -13,10 +13,89 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  NIX_IMAGE: nix-xfce-kasm
+  NIX_IMAGE: kartoza
 
 jobs:
+  # Fast, hermetic checks. Runs first so a broken auth path fails in seconds
+  # rather than after a full image build.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Run the test suite
+        run: nix run .#test
+
+  # The same container on the current QGIS release rather than the LTR, so a
+  # regression in what will become the next LTR shows up here — while it can
+  # still be reported upstream — instead of on the day that LTR ships.
+  #
+  # Deliberately leaner than the job below: no SBOM, no CVE table, no build
+  # report. The LTR image is the supported artefact; this one is a test
+  # vehicle. It runs in parallel, so it does not lengthen the critical path.
+  build-qgis-latest:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build and load the current-QGIS image
+        run: |
+          OUT=$(nix build .#docker-qgis-latest --print-out-paths)
+          nix store cat "$OUT" | docker load
+          docker image inspect ${{ env.NIX_IMAGE }}:qgis-latest \
+            --format 'QGIS {{index .Config.Labels "com.kartoza.qgis.version"}} ({{index .Config.Labels "com.kartoza.qgis.channel"}})'
+
+      - name: Smoke-test the desktop
+        run: |
+          docker run -d --name qgis-latest-smoke -p 8443:8443 --cap-add=NET_ADMIN \
+            ${{ env.NIX_IMAGE }}:qgis-latest
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8443/ || true)
+            [ "$code" = "401" ] && break
+            sleep 2
+          done
+          docker logs qgis-latest-smoke | head -30
+          # 401 means Xkasmvnc is serving and BasicAuth is enforced.
+          test "$code" = "401"
+          docker rm -f qgis-latest-smoke
+
+      - name: Push to GHCR
+        if: github.event_name == 'release'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push
+        if: github.event_name == 'release'
+        run: |
+          GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          VERSION="${{ github.event.release.tag_name }}"
+          docker tag ${{ env.NIX_IMAGE }}:qgis-latest "${GHCR_IMAGE}:qgis-latest"
+          docker tag ${{ env.NIX_IMAGE }}:qgis-latest "${GHCR_IMAGE}:${VERSION}-qgis-latest"
+          docker push "${GHCR_IMAGE}:qgis-latest"
+          docker push "${GHCR_IMAGE}:${VERSION}-qgis-latest"
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,6 +115,10 @@ jobs:
         run: |
           OUT=$(nix build .#docker --print-out-paths)
           nix store cat "$OUT" | docker load
+          # The default image is built on QGIS LTR and carries the :qgis-ltr tag.
+          # Everything downstream — SBOM, report, publish — works off :latest,
+          # which is also what users pull, so alias it here.
+          docker tag ${{ env.NIX_IMAGE }}:qgis-ltr ${{ env.NIX_IMAGE }}:latest
 
       - name: Determine version tag
         id: version
@@ -256,8 +339,12 @@ jobs:
 
           docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:${VERSION}"
           docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:latest"
+          # The channel tag, so the LTR line can be pinned by name the same way
+          # :qgis-latest pins the current release.
+          docker tag ${{ env.NIX_IMAGE }}:latest "${GHCR_IMAGE}:qgis-ltr"
           docker push "${GHCR_IMAGE}:${VERSION}"
           docker push "${GHCR_IMAGE}:latest"
+          docker push "${GHCR_IMAGE}:qgis-ltr"
 
       - name: Set package visibility to public
         if: github.event_name == 'release'

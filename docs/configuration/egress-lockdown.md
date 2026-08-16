@@ -12,7 +12,7 @@ switches to UID 1000 so the desktop process cannot alter the firewall.
   (`ct state established,related`).
 - DNS to Docker's embedded resolver (`127.0.0.11`, both UDP and TCP on 53)
   and any nameserver listed in `/etc/resolv.conf`.
-- Every host, CIDR, or hostname you name in `KASM_EGRESS_ALLOW`.
+- Every host, CIDR, or hostname you name in `QGIS_DESKTOP_EGRESS_ALLOW`.
 
 Everything else outbound is dropped.
 
@@ -20,8 +20,8 @@ Everything else outbound is dropped.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KASM_EGRESS_LOCKDOWN` | `1` | `0` disables the filter entirely. **Dev only.** |
-| `KASM_EGRESS_ALLOW` | *(empty)* | Comma-separated allowlist: IPv4 addresses, CIDRs, and/or hostnames. Hostnames are resolved once at startup. |
+| `QGIS_DESKTOP_EGRESS_LOCKDOWN` | `1` | `0` disables the filter entirely. **Dev only.** |
+| `QGIS_DESKTOP_EGRESS_ALLOW` | *(empty)* | Comma-separated allowlist: IPv4 addresses, CIDRs, and/or hostnames. Hostnames are resolved once at startup. |
 
 ## Required capability
 
@@ -39,16 +39,16 @@ services:
 ```
 
 !!! danger "Fail closed"
-    If `NET_ADMIN` is missing and `KASM_EGRESS_LOCKDOWN=1` (the default)
+    If `NET_ADMIN` is missing and `QGIS_DESKTOP_EGRESS_LOCKDOWN=1` (the default)
     the container refuses to start. It prints a diagnostic pointing at the
-    fix and exits non-zero. Setting `KASM_EGRESS_LOCKDOWN=0` opts out — do
+    fix and exits non-zero. Setting `QGIS_DESKTOP_EGRESS_LOCKDOWN=0` opts out — do
     this only in local dev.
 
 ## Example: only a Postgres DB reachable
 
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-  -e KASM_EGRESS_ALLOW='db.internal,10.0.0.0/24' \
+  -e QGIS_DESKTOP_EGRESS_ALLOW='db.internal,10.0.0.0/24' \
   ghcr.io/kartoza/qgis-desktop-docker:latest
 ```
 
@@ -61,7 +61,7 @@ For a full worked example with a co-located PostGIS container see
 ## Caveats
 
 !!! warning "Hostnames resolved once"
-    Hostnames in `KASM_EGRESS_ALLOW` are resolved **once at container
+    Hostnames in `QGIS_DESKTOP_EGRESS_ALLOW` are resolved **once at container
     start** via `getent ahostsv4`. If the target's IP changes (typical for
     cloud-managed databases and Docker service IPs on network restarts),
     restart the container to re-resolve.
@@ -78,9 +78,23 @@ For a full worked example with a co-located PostGIS container see
 
 ## How the drop happens
 
-The entrypoint sets `chain output { policy drop; }`, then adds `accept`
-rules for the allowlist. After the ruleset is installed, `setpriv` clears
+The entrypoint installs a table of its own, `inet qgis_desktop_egress`, whose output
+chain is `policy drop` plus `accept` rules for loopback, established traffic,
+DNS and the allowlist. After the ruleset is installed, `setpriv` clears
 `NET_ADMIN` from the inheritable and ambient sets before it execs
 `start-desktop`. From that point on, `nft` inside the desktop returns
 `Operation not permitted`, even though the container was launched with
 `--cap-add=NET_ADMIN`.
+
+```bash
+docker exec <container> nft list table inet qgis_desktop_egress
+```
+
+!!! note "Only our own table is replaced"
+    The rules go into `inet qgis_desktop_egress`, and only that table is deleted and
+    recreated on boot. Flushing the whole ruleset would also delete Docker's
+    `ip nat` table — the one holding the DNAT rules that make the embedded
+    resolver at `127.0.0.11:53` answer at all — and nftables labels that table
+    "managed by iptables-nft, do not touch". Releases before 2.0.0 flushed it,
+    which broke *all* name resolution inside the container on user-defined and
+    Compose networks, allowlisted or not.

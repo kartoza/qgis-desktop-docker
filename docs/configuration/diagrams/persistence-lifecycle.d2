@@ -1,0 +1,53 @@
+# The life of a container, from first boot to being deleted and replaced.
+# Rendered by scripts/render-diagrams.sh — edit the .d2, not the .svg.
+
+shape: sequence_diagram
+
+k8s: "Kubernetes\nor docker"
+entry: "qgis-entrypoint\n(PID 1, root)"
+persist: "qgis-desktop-persist\n(root)"
+bucket: "Object storage" { shape: cylinder }
+desktop: "Desktop\n(uid 1000)"
+
+k8s -> entry: "start"
+
+boot: "Boot" {
+  entry -> persist: "restore"
+  persist -> bucket: "take the lease"
+  bucket -> persist: "home/ + baseline/ + deploy/"
+  persist -> entry: "sentinel written"
+  entry -> desktop: "start the session"
+}
+
+work: "While the user works" {
+  desktop -> desktop: "edits projects,\nQGIS writes SQLite"
+  persist -> bucket: "save every INTERVAL"
+  bucket -> persist: "anything in deploy/"
+  persist -> desktop: "deliver to ~/Desktop"
+}
+
+stop: "Graceful stop" {
+  k8s -> entry: "SIGTERM"
+  entry -> desktop: "SIGTERM"
+  desktop -> entry: "exited"
+  entry -> persist: "flush"
+  persist -> bucket: "final save + release lease"
+  entry -> k8s: "exit 0"
+}
+
+kill: "Hard kill (SIGKILL)" {
+  k8s -> entry: "SIGKILL — no warning" {
+    style.stroke: "#C62828"
+    style.bold: true
+  }
+  entry -> k8s: "gone; work since the last save is lost" {
+    style.stroke: "#C62828"
+  }
+}
+
+again: "The replacement container" {
+  k8s -> entry: "start"
+  entry -> persist: "restore"
+  persist -> bucket: "same hostname, so reclaim our own lease"
+  bucket -> persist: "everything up to the last save"
+}

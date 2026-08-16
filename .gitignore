@@ -1,5 +1,12 @@
 result
 result-man
+# Local GISWater dev checkout, copied in for reference only — not part of
+# this repo. Its EPA solver derivations are vendored into ./nix/ instead.
+GISWater/
+# mkdocs build output (nix run .#docs-build)
+site/
+# PDF handbook output (nix run .#docs-pdf) — attached to releases by CI
+qgis-desktop-docker.pdf
 PROMPT.log
 .claude
 git.sh

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pam_exec verifier for KASM_AUTH_MODE=greeter.
+# pam_exec verifier for QGIS_DESKTOP_AUTH_MODE=greeter.
 #
 # Called by pam_exec with:
 #   - PAM_USER env var set to the target username
