@@ -7,6 +7,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [3.0.0] — 2026-08-16
+
+The two published channels are named for what they track, and every build gains
+an immovable version pin. One breaking change, and it is the tag most people
+type without thinking.
+
 ### Changed — BREAKING
 
 **`:latest` now tracks the current QGIS release, not the LTR.** 2.0.0 published
@@ -557,7 +565,8 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v2.0.0
 [1.4.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.2.0...v1.3.0
