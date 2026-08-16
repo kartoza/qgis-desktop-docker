@@ -7,6 +7,60 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.0.0] — 2026-08-16
+
+A fourth authentication pathway that puts Keycloak (or any OIDC provider) in
+front of the desktop, everything the Giswater QGIS plugin needs to actually run
+— including the two EPA hydraulic solvers, built from source — a terminal
+lockdown, and the environment-variable rename that makes the major bump.
+
+### Changed — BREAKING
+
+**The default image is now QGIS LTR (3.44.9), not the current release
+(4.0.1).** The LTR line only takes bug fixes, which is what belongs in front of
+users; the current release is still published, as a second image, for testing
+against what becomes the next LTR. `ghcr.io/kartoza/qgis-desktop-docker:latest`
+therefore moves from QGIS 4.0.1 to 3.44.9 — pin `:qgis-latest` to stay on the
+current release. See [QGIS version](README.md#qgis-version).
+
+**Every variable that is this project's own behaviour moved from the `KASM_`
+prefix to `QGIS_DESKTOP_`.** The old prefix implied KasmVNC provided features it
+has nothing to do with: the nftables egress filter, the LightDM greeter, single
+sign-on, the terminal lockdown. `KASM_` now means one thing — a setting that
+maps straight onto a KasmVNC flag.
+
+| Old (≤ 1.4.0) | New (2.0.0) |
+|---------------|-------------|
+| `KASM_AUTH_MODE` | `QGIS_DESKTOP_AUTH_MODE` |
+| `KASM_AUTH=0` | `QGIS_DESKTOP_AUTH_MODE=none` |
+| `KASM_USERS` | `QGIS_DESKTOP_USERS` |
+| `KASM_USERS_FILE` | `QGIS_DESKTOP_USERS_FILE` |
+| `KASM_EGRESS_LOCKDOWN` | `QGIS_DESKTOP_EGRESS_LOCKDOWN` |
+| `KASM_EGRESS_ALLOW` | `QGIS_DESKTOP_EGRESS_ALLOW` |
+| `KASM_BIND_INTERFACE` | `QGIS_DESKTOP_BIND_INTERFACE` |
+| `KASM_OIDC_*` | `QGIS_DESKTOP_OIDC_*` |
+| *(mount)* `/etc/kasmvnc/users` | `/etc/qgis-desktop/users` |
+
+**Unchanged**, because they are genuinely KasmVNC settings:
+`KASM_ALLOW_CLIPBOARD_IN` / `_OUT`, `KASM_ALLOW_PRIMARY_SELECTION`,
+`KASM_CLIPBOARD_IN_MAX` / `_OUT_MAX`, `KASM_CLIPBOARD_DELAY_MS`,
+`KASM_CLIPBOARD_MIME_TYPES`, `KASM_WATERMARK_TEXT`, `KASM_DLP_LOG` — and all
+the `VNC_*` session variables.
+
+- **The container refuses to start if it sees an old name**, listing each one
+  with its replacement, rather than ignoring it. A deployment that was locked
+  down under the old names would otherwise come up with no egress allowlist and
+  the default password. The same applies to a credentials file left at
+  `/etc/kasmvnc/users`.
+- Migration, including a one-line `sed`, is in
+  [Configuration → Migrating from 1.x](docs/configuration/index.md#migrating-from-1x).
+- Internals moved with them: the nftables table is now `inet
+  qgis_desktop_egress`, runtime state lives under `/run/qgis-desktop/`, and the
+  in-container helpers are `qgis-desktop-oidc-config`,
+  `qgis-desktop-oidc-proxy` and `qgis-desktop-disable-terminal`.
+
 ### Added
 
 - **Six more worked scenarios, each with a compose file and a `nix run`
@@ -61,73 +115,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   prefix survives a delivery that empties it. `baseline/` is deliberately not
   created — it is set up once when a deployment is designed, not in reaction to
   a request. `QGIS_DESKTOP_PERSIST_CREATE_DEPLOY=0` opts out.
-
-### Changed
-
-- **The locally built image is now `kartoza:qgis-ltr` / `kartoza:qgis-latest`**
-  (was `nix-xfce-kasm:*`). The old name described how the image is built rather
-  than what it is, and said nothing about whose it is. `nix run .#build-docker`
-  still tags the LTR build `:latest`. The published name is unchanged:
-  `ghcr.io/kartoza/qgis-desktop-docker`.
-
-### Fixed
-
-- The docs site now builds and deploys on every merge to `main`, rather than
-  only when files under `docs/` changed.
-
-## [2.0.0] — 2026-08-15
-
-A fourth authentication pathway that puts Keycloak (or any OIDC provider) in
-front of the desktop, everything the Giswater QGIS plugin needs to actually run
-— including the two EPA hydraulic solvers, built from source — a terminal
-lockdown, and the environment-variable rename that makes the major bump.
-
-### Changed — BREAKING
-
-**The default image is now QGIS LTR (3.44.9), not the current release
-(4.0.1).** The LTR line only takes bug fixes, which is what belongs in front of
-users; the current release is still published, as a second image, for testing
-against what becomes the next LTR. `ghcr.io/kartoza/qgis-desktop-docker:latest`
-therefore moves from QGIS 4.0.1 to 3.44.9 — pin `:qgis-latest` to stay on the
-current release. See [QGIS version](README.md#qgis-version).
-
-**Every variable that is this project's own behaviour moved from the `KASM_`
-prefix to `QGIS_DESKTOP_`.** The old prefix implied KasmVNC provided features it
-has nothing to do with: the nftables egress filter, the LightDM greeter, single
-sign-on, the terminal lockdown. `KASM_` now means one thing — a setting that
-maps straight onto a KasmVNC flag.
-
-| Old (≤ 1.4.0) | New (2.0.0) |
-|---------------|-------------|
-| `KASM_AUTH_MODE` | `QGIS_DESKTOP_AUTH_MODE` |
-| `KASM_AUTH=0` | `QGIS_DESKTOP_AUTH_MODE=none` |
-| `KASM_USERS` | `QGIS_DESKTOP_USERS` |
-| `KASM_USERS_FILE` | `QGIS_DESKTOP_USERS_FILE` |
-| `KASM_EGRESS_LOCKDOWN` | `QGIS_DESKTOP_EGRESS_LOCKDOWN` |
-| `KASM_EGRESS_ALLOW` | `QGIS_DESKTOP_EGRESS_ALLOW` |
-| `KASM_BIND_INTERFACE` | `QGIS_DESKTOP_BIND_INTERFACE` |
-| `KASM_OIDC_*` | `QGIS_DESKTOP_OIDC_*` |
-| *(mount)* `/etc/kasmvnc/users` | `/etc/qgis-desktop/users` |
-
-**Unchanged**, because they are genuinely KasmVNC settings:
-`KASM_ALLOW_CLIPBOARD_IN` / `_OUT`, `KASM_ALLOW_PRIMARY_SELECTION`,
-`KASM_CLIPBOARD_IN_MAX` / `_OUT_MAX`, `KASM_CLIPBOARD_DELAY_MS`,
-`KASM_CLIPBOARD_MIME_TYPES`, `KASM_WATERMARK_TEXT`, `KASM_DLP_LOG` — and all
-the `VNC_*` session variables.
-
-- **The container refuses to start if it sees an old name**, listing each one
-  with its replacement, rather than ignoring it. A deployment that was locked
-  down under the old names would otherwise come up with no egress allowlist and
-  the default password. The same applies to a credentials file left at
-  `/etc/kasmvnc/users`.
-- Migration, including a one-line `sed`, is in
-  [Configuration → Migrating from 1.x](docs/configuration/index.md#migrating-from-1x).
-- Internals moved with them: the nftables table is now `inet
-  qgis_desktop_egress`, runtime state lives under `/run/qgis-desktop/`, and the
-  in-container helpers are `qgis-desktop-oidc-config`,
-  `qgis-desktop-oidc-proxy` and `qgis-desktop-disable-terminal`.
-
-### Added
 
 #### Authentication — `QGIS_DESKTOP_AUTH_MODE=oidc`
 - `oidc` (alias `keycloak`) fronts the desktop with
@@ -286,6 +273,12 @@ the `VNC_*` session variables.
 
 ### Fixed
 
+- `make` targets named the pre-rename image (`nix-xfce-kasm`) and hand-copied
+  the flake's test list, which had fallen a script behind. Every target now
+  delegates to the matching `nix run .#...` app, so the flake is the single
+  source of truth for what is built, what it is called, and which tests run.
+- The docs site now builds and deploys on every merge to `main`, rather than
+  only when files under `docs/` changed.
 - **The documentation landing page never used the Kartoza brand pack.** The
   stylesheet shipped the hero, call-to-action buttons and card grid all along —
   `docs/index.md` simply did not use them, and the two motif images were named
@@ -324,6 +317,12 @@ Keycloak, and both affect every release since the egress lockdown landed in
   than a per-host warning.
 
 ### Changed
+
+- **The locally built image is now `kartoza:qgis-ltr` / `kartoza:qgis-latest`**
+  (was `nix-xfce-kasm:*`). The old name described how the image is built rather
+  than what it is, and said nothing about whose it is. `nix run .#build-docker`
+  still tags the LTR build `:latest`. The published name is unchanged:
+  `ghcr.io/kartoza/qgis-desktop-docker`.
 - `KASM_BIND_INTERFACE` (default `0.0.0.0`) is honoured by both KasmVNC
   launchers. The entrypoint sets it to `127.0.0.1` in `oidc` mode.
 - The authentication mode is now resolved *before* the egress filter is
