@@ -1,29 +1,37 @@
-.PHONY: help build-docker run stop summary test clean
+.PHONY: help build-docker build-docker-qgis-latest run run-detached \
+        run-persistent stop test summary compose-up compose-down clean
 
-IMAGE_NAME := nix-xfce-kasm
+# The flake is the single source of truth for what gets built, what it is
+# called, and which tests exist. Targets delegate to a `nix run` app rather
+# than restating the recipe: an earlier copy of this file drifted out of sync
+# with the flake — it still said `nix-xfce-kasm` long after the image was
+# renamed to `kartoza`, and its test list had fallen a script behind — which
+# is exactly what delegating prevents.
+IMAGE_NAME := kartoza
 IMAGE_TAG := latest
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-26s\033[0m %s\n", $$1, $$2}'
 
-build-docker: ## Build the Docker image using Nix
-	@echo "Building Docker image..."
-	nix build .#docker -o result
-	nix store cat $$(nix build .#docker --print-out-paths) | docker load
-	@echo ""
-	@echo "Image built: $(IMAGE_NAME):$(IMAGE_TAG)"
-	@docker images $(IMAGE_NAME):$(IMAGE_TAG) --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+build-docker: ## Build the QGIS LTR image (kartoza:qgis-ltr, also tagged :latest)
+	nix run .#build-docker
 
-run: ## Run the QGIS Desktop container
-	docker run --rm -p 8443:8443 --name qgis-desktop $(IMAGE_NAME):$(IMAGE_TAG)
+build-docker-qgis-latest: ## Build the current-QGIS image (kartoza:qgis-latest)
+	nix run .#build-docker-qgis-latest
+
+run: ## Run the QGIS Desktop container (Ctrl-C to stop)
+	nix run .#run
 
 run-detached: ## Run the QGIS Desktop container in background
-	docker run --rm -d -p 8443:8443 --name qgis-desktop $(IMAGE_NAME):$(IMAGE_TAG)
+	docker rm -f qgis-desktop 2>/dev/null || true
+	docker run --rm -d -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+		$(IMAGE_NAME):$(IMAGE_TAG)
 	@echo "Open http://localhost:8443"
 
-run-persistent: ## Run with persistent home directory
-	docker run --rm -d -p 8443:8443 --name qgis-desktop \
+run-persistent: ## Run with a persistent home directory
+	docker rm -f qgis-desktop 2>/dev/null || true
+	docker run --rm -d -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
 		-v qgis-home:/home/user \
 		$(IMAGE_NAME):$(IMAGE_TAG)
 	@echo "Open http://localhost:8443"
@@ -32,16 +40,10 @@ stop: ## Stop the running container
 	docker stop qgis-desktop 2>/dev/null || true
 
 test: ## Run the test suite (no Docker required)
-	bash scripts/test-oidc-config.sh
-	bash scripts/test-terminal-lockdown.sh
-	bash scripts/test-renamed-variables.sh
-	bash scripts/test-persist.sh
-	bash scripts/test-docs-glyphs.sh
-	bash scripts/test-autostart.sh
-	bash scripts/test-docs-diagrams.sh
+	nix run .#test
 
 summary: ## Generate build summary
-	bash build-summary.sh $(IMAGE_NAME):$(IMAGE_TAG) build-summary.md
+	nix run .#summary
 
 compose-up: ## Start with docker-compose
 	docker compose up -d
