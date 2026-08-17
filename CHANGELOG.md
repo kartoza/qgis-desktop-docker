@@ -9,6 +9,53 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Nothing yet.
 
+## [3.0.0] — 2026-08-16
+
+The two published channels are named for what they track, and every build gains
+an immovable version pin. One breaking change, and it is the tag most people
+type without thinking.
+
+### Changed — BREAKING
+
+**`:latest` now tracks the current QGIS release, not the LTR.** 2.0.0 published
+the LTR as both `:qgis-ltr` and `:latest`, on the reasoning that "latest" in
+Docker means "the one you should be using". It does not — it means the newest
+build, and overriding that convention surprised everyone who read the tag list.
+The two channels are now named for exactly what they track:
+
+| Tag | QGIS | Was |
+|-----|------|-----|
+| `:ltr` | 3.44.9, the long-term release | `:qgis-ltr` *and* `:latest` |
+| `:latest` | 4.0.1, the current release | `:qgis-latest` |
+
+**If you pull `:latest` you will move from QGIS 3.44.9 to 4.0.1.** Switch to
+`:ltr` to stay on the line you were on. `:qgis-ltr` and `:qgis-latest` are no
+longer published.
+
+### Added
+
+- **Every build is also published under its exact QGIS version** — `:3.44.9`,
+  `:4.0.1`. Both channel tags move as QGIS ships, so a deployment that must not
+  move now has something immovable to pin, rather than having to choose between
+  a drifting channel and a release tag that says nothing about which QGIS is
+  inside. `:<release>-ltr` and `:<release>-latest` pin a channel to a release.
+- **Locally built images now say what they are**: `kartoza:qgis-desktop-ltr`
+  and `kartoza:qgis-desktop-latest`, plus `kartoza:qgis-desktop-3.44.9` /
+  `kartoza:qgis-desktop-4.0.1`. The repository half of a locally built name is
+  just `kartoza`, so a bare `kartoza:ltr` in `docker images` said who built it
+  but not what was in it. Published images keep the plain `:ltr` / `:latest` —
+  the GHCR repository is already `qgis-desktop-docker`.
+- `nix run .#build-docker-latest` — was `build-docker-qgis-latest`. The flake
+  package `docker-qgis-latest` is likewise now `docker-latest`.
+
+### Changed
+
+- The `run-*` targets, the `Makefile`, and all ten example compose files now
+  reference `kartoza:qgis-desktop-ltr`, so the demos keep running the supported
+  build rather than following the current-release line.
+- The QGIS package outputs `qgis-ltr` and `qgis-latest` are unchanged — they
+  name QGIS itself, not an image tag.
+
 ## [2.0.0] — 2026-08-16
 
 A fourth authentication pathway that puts Keycloak (or any OIDC provider) in
@@ -518,7 +565,8 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v2.0.0
 [1.4.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.2.0...v1.3.0

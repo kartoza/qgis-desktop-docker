@@ -17,7 +17,7 @@
 # Setup walkthrough: docs/scenarios/keycloak-byo.md
 services:
   qgis-desktop:
-    image: ghcr.io/kartoza/qgis-desktop-docker:latest
+    image: ghcr.io/kartoza/qgis-desktop-docker:ltr
     container_name: qgis-desktop
     ports:
       # The proxy's port, and ONLY the proxy's port. Publishing the desktop's

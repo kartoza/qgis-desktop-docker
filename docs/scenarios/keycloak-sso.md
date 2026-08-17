@@ -93,7 +93,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_OIDC_COOKIE_SECRET_FILE=/run/secrets/cookie \
   -v /etc/qgis-desktop/client-secret:/run/secrets/oidc:ro \
   -v /etc/qgis-desktop/cookie-secret:/run/secrets/cookie:ro \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Every variable is documented under

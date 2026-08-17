@@ -35,12 +35,12 @@ the only difference.
     ---
 
     The long-term release: bug fixes only, so a project that opens today opens
-    the same way next month. This is the one to put in front of users, and what
-    `:latest` points at.
+    the same way next month. This is the one to put in front of users. Pin
+    `:3.44.9` if even a new LTR would be unwelcome.
 
     ```bash
     docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-      ghcr.io/kartoza/qgis-desktop-docker:qgis-ltr
+      ghcr.io/kartoza/qgis-desktop-docker:ltr
     ```
 
 -   :material-flask-outline:{ .lg .middle } __QGIS 4.0.1__
@@ -53,7 +53,7 @@ the only difference.
 
     ```bash
     docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
-      ghcr.io/kartoza/qgis-desktop-docker:qgis-latest
+      ghcr.io/kartoza/qgis-desktop-docker:latest
     ```
 
 </div>

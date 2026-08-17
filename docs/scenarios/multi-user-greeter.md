@@ -37,7 +37,7 @@ bob     → UID 1002, /home/bob
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_AUTH_MODE=greeter \
   -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Or from a source checkout:

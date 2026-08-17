@@ -107,7 +107,7 @@ sections:
 ```yaml
 services:
   qgis-desktop:
-    image: kartoza:latest        # locally built (see §6)
+    image: kartoza:qgis-desktop-ltr        # locally built (see §6)
     cap_add: [NET_ADMIN]               # required for nftables setup
     environment:
       - QGIS_DESKTOP_USERS=bob:password123     # single-user auth

@@ -13,7 +13,7 @@
 # the greeter exists at all.
 services:
   qgis-desktop:
-    image: kartoza:latest
+    image: kartoza:qgis-desktop-ltr
     container_name: qgis-desktop-greeter
     ports:
       - "8443:8443"

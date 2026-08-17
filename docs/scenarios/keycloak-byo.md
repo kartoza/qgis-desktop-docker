@@ -264,7 +264,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_OIDC_CLIENT_SECRET \
   -e QGIS_DESKTOP_OIDC_REDIRECT_URL \
   -e QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 `NET_ADMIN` is what lets the container add your identity provider's host to the

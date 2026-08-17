@@ -1,4 +1,4 @@
-.PHONY: help build-docker build-docker-qgis-latest run run-detached \
+.PHONY: help build-docker build-docker-latest run run-detached \
         run-persistent stop test summary compose-up compose-down clean
 
 # The flake is the single source of truth for what gets built, what it is
@@ -7,18 +7,20 @@
 # with the flake — it still said `nix-xfce-kasm` long after the image was
 # renamed to `kartoza`, and its test list had fallen a script behind — which
 # is exactly what delegating prevents.
+# :ltr, not :latest — the run targets are meant to give you the supported
+# build. :latest tracks the current QGIS release, which is the test vehicle.
 IMAGE_NAME := kartoza
-IMAGE_TAG := latest
+IMAGE_TAG := qgis-desktop-ltr
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-26s\033[0m %s\n", $$1, $$2}'
 
-build-docker: ## Build the QGIS LTR image (kartoza:qgis-ltr, also tagged :latest)
+build-docker: ## Build the QGIS LTR image (kartoza:qgis-desktop-ltr)
 	nix run .#build-docker
 
-build-docker-qgis-latest: ## Build the current-QGIS image (kartoza:qgis-latest)
-	nix run .#build-docker-qgis-latest
+build-docker-latest: ## Build the current-QGIS image (kartoza:qgis-desktop-latest)
+	nix run .#build-docker-latest
 
 run: ## Run the QGIS Desktop container (Ctrl-C to stop)
 	nix run .#run

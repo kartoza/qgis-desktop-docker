@@ -24,12 +24,12 @@ nix build .#docker -o result
 nix store cat "$(nix build .#docker --print-out-paths)" | docker load
 ```
 
-The image is loaded as `kartoza:qgis-ltr`, and tagged `:latest` as well —
-that is the tag every `nix run .#run-*` target and both compose files expect.
-Run it:
+The image is loaded as `kartoza:qgis-desktop-ltr`, and tagged with its exact
+QGIS version (`kartoza:qgis-desktop-3.44.9`) as well. `:qgis-desktop-ltr` is
+the tag every `nix run .#run-*` target and every compose file expects. Run it:
 
 ```bash
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:latest
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-desktop-ltr
 ```
 
 ## Choosing the QGIS channel
@@ -39,21 +39,29 @@ difference between them.
 
 | Target | QGIS | Image tag |
 |--------|------|-----------|
-| `nix run .#build-docker` *(default)* | Long-term release | `kartoza:qgis-ltr`, also tagged `:latest` |
-| `nix run .#build-docker-qgis-latest` | Current release | `kartoza:qgis-latest` |
+| `nix run .#build-docker` *(default)* | Long-term release | `kartoza:qgis-desktop-ltr`, also `kartoza:qgis-desktop-3.44.9` |
+| `nix run .#build-docker-latest` | Current release | `kartoza:qgis-desktop-latest`, also `kartoza:qgis-desktop-4.0.1` |
+
+Both channel tags move as QGIS ships. The version tag never does, so that is
+what a deployment pins when it must not move underneath you.
+
+Locally built images spell out what they hold, because the repository half of
+the name is just `kartoza`. Published images do not need to — the GHCR
+repository is already `qgis-desktop-docker`, so those are plain `:ltr` and
+`:latest`.
 
 **Why LTR is the default.** The LTR line only takes bug fixes, so a project
 that opens today opens the same way next month. That is what you want in front
 of users.
 
 **Why the other one exists.** QGIS's current release becomes the next LTR. The
-`qgis-latest` image lets you open your real projects, plugins and data against
-it now — while a regression can still be reported and fixed upstream, rather
-than on the day the LTR ships.
+`:latest` image lets you open your real projects, plugins and data against it
+now — while a regression can still be reported and fixed upstream, rather than
+on the day the LTR ships.
 
 ```bash
-nix run .#build-docker-qgis-latest
-docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-latest
+nix run .#build-docker-latest
+docker run --rm -p 8443:8443 --cap-add=NET_ADMIN kartoza:qgis-desktop-latest
 ```
 
 Both images accept exactly the same environment variables, so a compose file
@@ -62,7 +70,7 @@ can be pointed at either by changing the tag alone.
 Which QGIS is in a given image, without starting it:
 
 ```bash
-docker image inspect kartoza:latest \
+docker image inspect kartoza:qgis-desktop-ltr \
   --format '{{index .Config.Labels "com.kartoza.qgis.channel"}} {{index .Config.Labels "com.kartoza.qgis.version"}}'
 ```
 

@@ -50,7 +50,7 @@ Block copy/paste both directions, watermark the desktop:
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e KASM_WATERMARK_TEXT='${USER} %H:%M' \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Allow paste in but block copy out, with a 4 KB cap and plain-text only:
@@ -60,7 +60,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e KASM_ALLOW_CLIPBOARD_IN=1 \
   -e KASM_CLIPBOARD_IN_MAX=4096 \
   -e KASM_CLIPBOARD_MIME_TYPES=text/plain \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 Fully permissive (matches the KasmVNC upstream default posture):
@@ -70,7 +70,7 @@ docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e KASM_ALLOW_CLIPBOARD_IN=1 \
   -e KASM_ALLOW_CLIPBOARD_OUT=1 \
   -e KASM_ALLOW_PRIMARY_SELECTION=1 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 ## Terminal access
@@ -83,7 +83,7 @@ use a mapping application and nothing else:
 ```bash
 docker run --rm -p 8443:8443 --cap-add=NET_ADMIN \
   -e QGIS_DESKTOP_ALLOW_TERMINAL=0 \
-  ghcr.io/kartoza/qgis-desktop-docker:latest
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
 ```
 
 At boot, while it is still root, the entrypoint:
