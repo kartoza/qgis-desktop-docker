@@ -9,7 +9,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Nothing yet.
 
-## [3.0.0] — 2026-08-16
+## [3.0.0] — 2026-08-17
 
 The two published channels are named for what they track, and every build gains
 an immovable version pin. One breaking change, and it is the tag most people
