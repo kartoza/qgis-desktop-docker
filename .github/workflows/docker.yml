@@ -96,9 +96,23 @@ jobs:
           GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           VERSION="${{ github.event.release.tag_name }}"
           QGIS_VERSION="${{ steps.build.outputs.qgis_version }}"
-          # :latest follows the current QGIS line; :<qgis-version> and
-          # :<release>-latest are the immovable pins.
-          for tag in "latest" "${QGIS_VERSION}" "${VERSION}-latest"; do
+
+          # :<release>-latest is an immovable pin — always published,
+          # whatever branch the release was cut from.
+          tags=("${VERSION}-latest")
+
+          # :latest and :<qgis-version> are the moving current-release line.
+          # Only a release cut from main is allowed to move them, so a
+          # release tagged off a feature branch (e.g. v3.1.0.gis-water) can
+          # still publish an immutable, pin-able image without disturbing
+          # what :latest points at.
+          if [ "${{ github.event.release.target_commitish }}" = "main" ]; then
+            tags+=("latest" "${QGIS_VERSION}")
+          else
+            echo "Release target_commitish is '${{ github.event.release.target_commitish }}', not 'main' — skipping :latest and :${QGIS_VERSION}"
+          fi
+
+          for tag in "${tags[@]}"; do
             docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-latest "${GHCR_IMAGE}:${tag}"
             docker push "${GHCR_IMAGE}:${tag}"
           done
@@ -354,13 +368,26 @@ jobs:
           VERSION="${{ steps.version.outputs.tag }}"
           QGIS_VERSION="${{ steps.load.outputs.qgis_version }}"
 
-          # :ltr follows the LTR line; :<qgis-version> and :<release>-ltr are
-          # the immovable pins. The bare :<release> tag stays on the LTR — it
-          # is the supported artefact, and existing pins point at it.
+          # :<release>-ltr and the bare :<release> tag are immovable pins —
+          # always published, whatever branch the release was cut from. The
+          # bare tag stays on the LTR build; existing pins point at it.
+          tags=("${VERSION}-ltr" "${VERSION}")
+
+          # :ltr and :<qgis-version> are the moving LTR line. Only a release
+          # cut from main is allowed to move them, so a release tagged off a
+          # feature branch (e.g. v3.1.0.gis-water) can still publish an
+          # immutable, pin-able image without disturbing what :ltr points at.
           #
-          # Deliberately no :latest here. That tag belongs to the current QGIS
-          # release and is pushed by the build-qgis-latest job.
-          for tag in "ltr" "${QGIS_VERSION}" "${VERSION}-ltr" "${VERSION}"; do
+          # Deliberately no :latest here regardless of branch — that tag
+          # belongs to the current QGIS release and is pushed by the
+          # build-qgis-latest job.
+          if [ "${{ github.event.release.target_commitish }}" = "main" ]; then
+            tags+=("ltr" "${QGIS_VERSION}")
+          else
+            echo "Release target_commitish is '${{ github.event.release.target_commitish }}', not 'main' — skipping :ltr and :${QGIS_VERSION}"
+          fi
+
+          for tag in "${tags[@]}"; do
             docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-ltr "${GHCR_IMAGE}:${tag}"
             docker push "${GHCR_IMAGE}:${tag}"
           done
