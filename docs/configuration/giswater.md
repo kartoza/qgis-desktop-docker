@@ -124,6 +124,13 @@ That service resolves through `~/.pg_service.conf`
 projects open and work immediately when this image runs as that stack's
 `qgis-desktop` service, no manual connection setup needed.
 
+A matching **saved PostgreSQL connection named "Giswater"** (Browser panel
+/ Data Source Manager → PostgreSQL), pointing at `service=qwc_giswaterdb`
+with no host/database/username/password of its own, is baked into the
+default profile's `QGIS3.ini` the same way the plugin flag is. It resolves
+through the same `pg_service.conf`, so browsing the database directly
+(outside the two demo projects) needs no manual connection setup either.
+
 Running the image any other way (standalone, or as production QCD), the
 baked default is a **fallback only, expected to be overwritten**:
 

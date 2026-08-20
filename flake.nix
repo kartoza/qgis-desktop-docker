@@ -509,6 +509,28 @@
             cat >> ./home/user/.local/share/QGIS/QGIS3/profiles/default/QGIS/QGIS3.ini <<'INIEOF'
 [PythonPlugins]
 giswater=true
+
+[PostgreSQL]
+connections\Giswater\allowGeometrylessTables=false
+connections\Giswater\allowRasterOverviewTables=false
+connections\Giswater\authcfg=
+connections\Giswater\database=
+connections\Giswater\dontResolveType=false
+connections\Giswater\estimatedMetadata=false
+connections\Giswater\geometryColumnsOnly=false
+connections\Giswater\host=
+connections\Giswater\metadataInDatabase=false
+connections\Giswater\password=
+connections\Giswater\port=
+connections\Giswater\projectsInDatabase=false
+connections\Giswater\publicOnly=false
+connections\Giswater\savePassword=false
+connections\Giswater\saveUsername=false
+connections\Giswater\service=qwc_giswaterdb
+connections\Giswater\session_role=
+connections\Giswater\sslmode=SslPrefer
+connections\Giswater\username=
+connections\selected=Giswater
 INIEOF
 
             # Default pg_service.conf + PGSERVICEFILE (see Env below), so

@@ -27,6 +27,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **`mousepad` (GUI) and `nano` (terminal)** text editors, previously
   absent entirely. `mousepad` is reachable from the applications menu like
   any other installed app; no panel launcher was added.
+- **A saved PostgreSQL connection named "Giswater"**, pointing at
+  `service=qwc_giswaterdb`, baked into the default profile's `QGIS3.ini`
+  alongside the plugin flag, no manual connection setup needed to browse
+  the database directly.
 
 ## [3.0.0] — 2026-08-17
 
