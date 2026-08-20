@@ -34,6 +34,27 @@
           ps.matplotlib
         ];
 
+        # The plugin itself, baked into the default profile and pre-enabled
+        # so it's installed with no Plugin Manager step. Pinned to a full
+        # commit (not a branch) with submodules resolved via git's own
+        # gitlinks, which satisfies flake purity without needing a separate
+        # NAR hash.
+        #
+        # This is the commit for tag v4.16.1, the latest tagged plugin
+        # release, not main (development). Verified directly: v4.9.2, the
+        # officially-branded "stable" release, does NOT work with the
+        # current giswater-cli tooling (its dbmodel predates the manifest
+        # architecture the CLI requires); v4.16.1 does, confirmed with a
+        # real `gw schema main create` + `gw project create` run against a
+        # live DB. To move to a newer release: `git ls-remote --tags
+        # https://github.com/giswater/plugin.git`, pick the new tag, then
+        # `git rev-parse <tag>^{}` for its commit.
+        giswaterPlugin = builtins.fetchGit {
+          url = "https://github.com/giswater/plugin.git";
+          rev = "491d2035ff4864afed4085259c8fc2b15ed0564e";
+          submodules = true;
+        };
+
         epaSolvers = [ epanet swmm ];
         epaPath = pkgs.lib.makeBinPath epaSolvers;
         epaLibPath = pkgs.lib.makeLibraryPath epaSolvers;
@@ -373,6 +394,7 @@
             gnused
             findutils
             which
+            nano # terminal text editor — no GUI/terminal editor shipped before this
 
             # KasmVNC
             kasmvnc
@@ -386,6 +408,7 @@
             xfce4-settings
             xfconf
             thunar
+            mousepad # GUI text editor, XFCE's own, matches the rest of this list
 
             # X11 essentials
             xkbcomp
@@ -471,6 +494,49 @@
 
             # Custom panel config (single top panel with working launchers)
             cp ${./config/xfce4/panel/default.xml} ./home/user/.config/xfce4/panel/default.xml
+
+            # Giswater plugin, pre-installed and enabled in the default QGIS
+            # profile (see giswaterPlugin above for the pinned source). A
+            # fresh named volume over /home/user inherits this on first run
+            # (Docker copies existing image content into an empty named
+            # volume); a bind mount does not, since it replaces the
+            # mountpoint entirely. Callers using a bind mount need to seed
+            # it themselves.
+            mkdir -p ./home/user/.local/share/QGIS/QGIS3/profiles/default/python/plugins
+            cp -r ${giswaterPlugin} ./home/user/.local/share/QGIS/QGIS3/profiles/default/python/plugins/giswater
+            chmod -R u+w ./home/user/.local/share/QGIS/QGIS3/profiles/default/python/plugins/giswater
+            mkdir -p ./home/user/.local/share/QGIS/QGIS3/profiles/default/QGIS
+            cat >> ./home/user/.local/share/QGIS/QGIS3/profiles/default/QGIS/QGIS3.ini <<'INIEOF'
+[PythonPlugins]
+giswater=true
+INIEOF
+
+            # Default pg_service.conf + PGSERVICEFILE (see Env below), so
+            # the demo projects just below resolve their service='...'
+            # datasources out of the box. This is a local-dev default only,
+            # production (QCD) overwrites the file per EndUser with real
+            # credentials; see resources/pg_service.conf for why that swap
+            # is safe.
+            cp ${./resources/pg_service.conf} ./home/user/.pg_service.conf
+            chmod u+w ./home/user/.pg_service.conf
+
+            # Demo projects (wsex, udex), pre-generated from a real
+            # giswater-suite bootstrap run and already rewritten to use
+            # service='qwc_giswaterdb' — no embedded host/user/password, so
+            # they carry no credentials regardless of which pg_service.conf
+            # ends up in front of them. The *_attachments.zip siblings are
+            # QGIS's own sidecar files for plain-XML .qgs projects — each
+            # holds a project-scoped default style database (referenced
+            # from inside the .qgs as projectStyleId="attachment:///...",
+            # QGIS's own attachment:/// URI scheme), generated automatically
+            # when the project was saved, not something this repo produces.
+            # Without it present, QGIS can't resolve that one reference.
+            mkdir -p ./home/user/Desktop/giswater-projects
+            cp ${./resources/demo-projects/wsex.qgs} ./home/user/Desktop/giswater-projects/wsex.qgs
+            cp ${./resources/demo-projects/udex.qgs} ./home/user/Desktop/giswater-projects/udex.qgs
+            cp ${./resources/demo-projects/wsex_attachments.zip} ./home/user/Desktop/giswater-projects/wsex_attachments.zip
+            cp ${./resources/demo-projects/udex_attachments.zip} ./home/user/Desktop/giswater-projects/udex_attachments.zip
+            chmod u+w ./home/user/Desktop/giswater-projects/*.qgs ./home/user/Desktop/giswater-projects/*.zip
 
             # Wallpaper config (system-wide default so xfconfd picks it up)
             cp ${./config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml} ./etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
@@ -739,6 +805,12 @@ DBUSEOF
               "VNC_PORT=8443"
               "VNC_RESOLUTION=1280x720"
               "VNC_COL_DEPTH=24"
+              # Explicit, rather than relying on libpq's $HOME/.pg_service.conf
+              # fallback resolving correctly through however this Nix-wrapped
+              # QGIS binary's session actually gets launched. See
+              # resources/pg_service.conf for the baked-in default this
+              # points at.
+              "PGSERVICEFILE=/home/user/.pg_service.conf"
               # Which QGIS this image was built from. Read-only: changing it
               # does not change the QGIS inside — pick the image tag instead.
               "QGIS_DESKTOP_QGIS_CHANNEL=${channel.channel}"

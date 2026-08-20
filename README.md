@@ -17,7 +17,7 @@ A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) 
 - **LTR or latest QGIS** -- the long-term release by default, the current release as a second image so you can test against the next LTR before it lands
 - **Persistent home directories** -- the user's projects, plugins and QGIS profile restored from object storage at start and saved back on an interval, so a deleted container costs nothing
 - **Four ways to log in** -- no auth, HTTP Basic Auth, an in-desktop LightDM greeter, or Keycloak/OIDC single sign-on
-- **Giswater-ready** -- the EPANET and SWMM solvers, the Python packages the plugin imports, and the wiring that makes Giswater find them on Linux
+- **Giswater-ready** -- the [Giswater](https://www.giswater.org/) plugin itself is pre-installed and enabled, alongside the EPANET and SWMM solvers, the Python packages it imports, and the wiring that makes it find them on Linux
 - **SBOM & CVE scanning** -- every build produces a Software Bill of Materials and vulnerability scan
 
 ## Quick Start
@@ -351,10 +351,11 @@ hangs and times out.
 
 ## Giswater
 
-QGIS in this image is equipped for the
-[Giswater](https://www.giswater.org/) plugin: the Python packages it imports
-(`jsonschema`, `psutil`, `pyproj`, `matplotlib`, `debugpy`) are inside QGIS's
-own interpreter, and both EPA hydraulic solvers are built from source and on
+The [Giswater](https://www.giswater.org/) plugin is pre-installed and
+enabled in the default profile, nothing to install. QGIS in this image is
+also equipped for it: the Python packages it imports (`jsonschema`,
+`psutil`, `pyproj`, `matplotlib`, `debugpy`) are inside QGIS's own
+interpreter, and both EPA hydraulic solvers are built from source and on
 `PATH`:
 
 | Solver | Commands | Giswater project type |
@@ -373,9 +374,11 @@ epa install     # point the Giswater plugin(s) at the native solvers
 epa test        # run a real model through both solvers
 ```
 
-Install the plugin itself from the QGIS plugin manager — remember to allow
-`plugins.qgis.org` and your PostGIS host through the egress lockdown. Full
-details in [docs/configuration/giswater.md](docs/configuration/giswater.md).
+Only reaches a fresh `/home/user` on a **named volume**. A bind mount
+replaces the mountpoint instead of inheriting the image's content, see the
+warning in [docs/configuration/giswater.md](docs/configuration/giswater.md).
+Either way, remember to allow your PostGIS host through the egress
+lockdown so the plugin can actually reach it.
 
 ## Endpoints
 

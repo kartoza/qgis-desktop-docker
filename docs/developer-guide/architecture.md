@@ -245,7 +245,8 @@ it knows.
 `startxfce4` brings up `xfwm4`, `xfce4-panel`, `xfdesktop`, and
 `xfsettingsd`. QGIS is on the panel and in the applications menu. Thunar
 and `xfce4-terminal` are available for file management and shell access
-inside the session.
+inside the session, and `mousepad` (GUI, via the applications menu) and
+`nano` (terminal) cover plain text editing.
 
 ## Why root first, then drop (or keep as root, for greeter)?
 

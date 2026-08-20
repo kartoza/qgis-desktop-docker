@@ -6,7 +6,7 @@ image.
 
 ## Prerequisites
 
-- [Nix](https://nixos.org/download) with flakes enabled.
+- Nix with flakes enabled. See [Installing Nix](nix.md) if you don't have it yet.
 - Docker (to load the resulting image).
 
 ## With Nix
