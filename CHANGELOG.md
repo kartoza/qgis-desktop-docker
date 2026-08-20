@@ -19,11 +19,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   mechanism), are now baked into `~/Desktop/giswater-projects/`, real
   projects generated from a live `giswater-suite` bootstrap run, using
   `service='qwc_giswaterdb'` datasources only, no embedded credentials.
-- **A default `pg_service.conf`** is now baked into
-  `~/.pg_service.conf`, with `PGSERVICEFILE` set to match, so the demo
-  projects resolve out of the box against `giswater-suite`'s own local dev
-  stack. Fallback only, meant to be overwritten by a real per-deployment
-  file, see `docs/configuration/giswater.md#demo-projects`.
+  No `pg_service.conf` is baked into the image — resolving that service
+  needs one supplied by the deployment (a mounted `~/.pg_service.conf`, or
+  the entrypoint's `PG_SERVICE_CONF`), see
+  `docs/configuration/giswater.md#demo-projects`.
 - **`mousepad` (GUI) and `nano` (terminal)** text editors, previously
   absent entirely. `mousepad` is reachable from the applications menu like
   any other installed app; no panel launcher was added.

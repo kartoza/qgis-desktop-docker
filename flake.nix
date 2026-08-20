@@ -532,16 +532,6 @@ connections\Giswater\sslmode=SslPrefer
 connections\Giswater\username=
 connections\selected=Giswater
 INIEOF
-
-            # Default pg_service.conf + PGSERVICEFILE (see Env below), so
-            # the demo projects just below resolve their service='...'
-            # datasources out of the box. This is a local-dev default only,
-            # production (QCD) overwrites the file per EndUser with real
-            # credentials; see resources/pg_service.conf for why that swap
-            # is safe.
-            cp ${./resources/pg_service.conf} ./home/user/.pg_service.conf
-            chmod u+w ./home/user/.pg_service.conf
-
             # Demo projects (wsex, udex), pre-generated from a real
             # giswater-suite bootstrap run and already rewritten to use
             # service='qwc_giswaterdb' — no embedded host/user/password, so
@@ -827,12 +817,6 @@ DBUSEOF
               "VNC_PORT=8443"
               "VNC_RESOLUTION=1280x720"
               "VNC_COL_DEPTH=24"
-              # Explicit, rather than relying on libpq's $HOME/.pg_service.conf
-              # fallback resolving correctly through however this Nix-wrapped
-              # QGIS binary's session actually gets launched. See
-              # resources/pg_service.conf for the baked-in default this
-              # points at.
-              "PGSERVICEFILE=/home/user/.pg_service.conf"
               # Which QGIS this image was built from. Read-only: changing it
               # does not change the QGIS inside — pick the image tag instead.
               "QGIS_DESKTOP_QGIS_CHANNEL=${channel.channel}"
