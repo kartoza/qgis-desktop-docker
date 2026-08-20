@@ -399,6 +399,28 @@ mkdir -p /tmp/runtime-user
 chown 1000:1000 /tmp/runtime-user
 chmod 700 /tmp/runtime-user
 
+# PostgreSQL service file (pg_service.conf). QGIS/libpq use this to resolve
+# named connections (`service=foo` in a DB URI) without embedding host/user/
+# password in project files. If PG_SERVICE_CONF is set, its contents are
+# written to the target user's ~/.pg_service.conf, creating or overwriting
+# it. Mode 0600 since the file commonly holds credentials.
+write_pg_service_conf() {
+  local home="$1" uid="$2" gid="$3"
+  [ -z "${PG_SERVICE_CONF:-}" ] && return 0
+  mkdir -p "${home}"
+  # Accept literal backslash-n as a line separator too, not just real
+  # newlines. docker-compose `environment:` lists, `.env` files and a plain
+  # `-e KEY=value` flag often can't carry an embedded newline, so `\n` is
+  # the escape people reach for — without this, libpq's ini parser sees the
+  # whole file as one line and silently fails to find host/port/dbname. A
+  # value that already has real newlines is untouched.
+  local content="${PG_SERVICE_CONF//\\n/$'\n'}"
+  printf '%s\n' "${content}" > "${home}/.pg_service.conf"
+  chown "${uid}:${gid}" "${home}/.pg_service.conf"
+  chmod 0600 "${home}/.pg_service.conf"
+  echo "pg_service.conf: written to ${home}/.pg_service.conf"
+}
+
 # --- Home persistence -------------------------------------------------------
 # The home directory is a local filesystem; object storage holds the durable
 # copy. Restore it BEFORE the desktop starts — this is the only moment root
@@ -418,6 +440,10 @@ if [ "$(to_bool "${QGIS_DESKTOP_PERSIST}")" = "1" ]; then
     echo "      with a local-only home. Nothing will be saved." >&2
   fi
 fi
+
+# Written after any restore above, so an operator-supplied PG_SERVICE_CONF
+# always wins over whatever a previous session happened to push to the bucket.
+write_pg_service_conf /home/user 1000 1000
 
 # Hands the container over to the desktop.
 #
@@ -619,6 +645,11 @@ if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
     hash="$(openssl passwd -6 "${p}")"
     sed -i "/^${u}:/d" /etc/shadow
     printf '%s:%s:1::::::\n' "${u}" "${hash}" >> /etc/shadow
+
+    u_uid="$(getent passwd "${u}" | cut -d: -f3)"
+    u_gid="$(getent passwd "${u}" | cut -d: -f4)"
+    u_home="$(getent passwd "${u}" | cut -d: -f6)"
+    write_pg_service_conf "${u_home}" "${u_uid}" "${u_gid}"
 
     user_count=$((user_count + 1))
     [ -z "${first_user}" ] && first_user="${u}"
