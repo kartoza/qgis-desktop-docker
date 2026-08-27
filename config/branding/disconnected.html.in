@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Session ended — @BRAND_NAME@</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="./assets/brand-logo.svg" type="image/svg+xml">
+<style>
+  /* Lato is served from this directory rather than Google Fonts: the container
+     runs under an egress allowlist, and this page is also reached when the
+     desktop behind it is gone. Nothing here may depend on the network. */
+  @font-face {
+    font-family: 'Lato';
+    src: url('./assets/brand-body.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Lato';
+    src: url('./assets/brand-body-bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  :root {
+    --accent: @COLOR_ACCENT@;
+    --accent-hover: @COLOR_ACCENT_HOVER@;
+    --secondary: @COLOR_SECONDARY@;
+    --muted: @COLOR_MUTED@;
+    --surface: @COLOR_SURFACE@;
+    --surface-raised: @COLOR_SURFACE_RAISED@;
+    --text: @COLOR_TEXT@;
+    --text-muted: @COLOR_TEXT_MUTED@;
+    --font: '@FONT_FAMILY@', 'Open Sans', 'Segoe UI', Tahoma, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--font);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+  }
+
+  main {
+    background: var(--surface-raised);
+    border-radius: 14px;
+    border-top: 4px solid var(--accent);
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.09);
+    max-width: 26rem;
+    width: 100%;
+    padding: 2.5rem 2rem 2rem;
+    text-align: center;
+  }
+
+  .logo { width: 76px; height: 76px; margin-bottom: 1.25rem; }
+
+  h1 {
+    font-size: 1.375rem;
+    font-weight: 700;
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.01em;
+  }
+
+  p { font-size: 0.9375rem; line-height: 1.55; color: var(--text-muted); margin: 0 0 1.75rem; }
+
+  .actions { display: flex; flex-direction: column; gap: 0.625rem; }
+
+  .btn {
+    display: block;
+    padding: 0.7rem 1.25rem;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .btn-primary { background: var(--accent); color: #2B2B2B; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: transparent; color: var(--text); border-color: var(--muted); }
+  .btn-secondary:hover { border-color: var(--secondary); }
+
+  /* Focus must stay visible for keyboard users — WCAG 2.2 AA. */
+  .btn:focus-visible { outline: 3px solid var(--secondary); outline-offset: 2px; }
+
+  footer { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--text-muted); }
+  footer a { color: var(--text-muted); }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #232425;
+      --surface-raised: #2E2F30;
+      --text: #F2F2F0;
+      --text-muted: #B4B5B5;
+    }
+    body { background: var(--surface); }
+    .btn-primary { color: #232425; }
+  }
+</style>
+</head>
+<body>
+  <main>
+    <img class="logo" src="./assets/brand-logo.svg" alt="@BRAND_NAME@">
+    <h1>Your session has ended</h1>
+    <p>
+      The connection to your desktop closed. Reconnecting will take you
+      straight back in if your sign-in is still valid.
+    </p>
+    <div class="actions">
+      <a class="btn btn-primary" href="/">Reconnect</a>
+      <!-- This page is a real document in the user's browser, so unlike the
+           desktop itself it CAN clear the single sign-on cookie. In modes
+           without a proxy the path simply 404s, which is why it is worded as
+           a secondary action. -->
+      <a class="btn btn-secondary" href="/oauth2/sign_out">Sign out completely</a>
+    </div>
+  </main>
+  <footer>
+    <a href="@BRAND_URL@">@BRAND_NAME@</a>
+  </footer>
+</body>
+</html>

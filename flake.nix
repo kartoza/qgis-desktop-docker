@@ -140,6 +140,33 @@
           text = builtins.readFile ./config/autostart/autostart.sh;
         };
 
+        # --- Branding (the KasmVNC web root) ------------------------------
+        # Renders a branded copy of KasmVNC's www tree at build time. Every
+        # brand value comes from config/branding/tokens.json — correcting that
+        # one file re-themes everything below it.
+        brandWwwScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-brand-www";
+          runtimeInputs = with pkgs; [ jq coreutils gnused gnugrep ];
+          text = builtins.readFile ./config/branding/brand-www.sh;
+        };
+
+        # The branded web root itself. Kept deliberately narrow: the entry
+        # pages' title and favicon, and a replacement disconnected.html. The
+        # Vite bundle and the content-hashed stylesheets are left alone, so a
+        # KasmVNC bump does not turn into a debugging session — and the script
+        # asserts every substitution, so a bump that DOES move the markup fails
+        # this build instead of silently shipping Kasm's branding.
+        brandedWww = pkgs.runCommand "kasmvnc-www-branded" { } ''
+          ${brandWwwScript}/bin/qgis-desktop-brand-www \
+            --source ${kasmvnc}/share/kasmvnc/www \
+            --tokens ${./config/branding/tokens.json} \
+            --template ${./config/branding/disconnected.html.in} \
+            --logo ${./resources/brand/geohosting.svg} \
+            --font-regular ${pkgs.lato}/share/fonts/lato/Lato-Regular.ttf \
+            --font-bold ${pkgs.lato}/share/fonts/lato/Lato-Bold.ttf \
+            --out $out
+        '';
+
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -478,6 +505,16 @@
             # Deploy wallpaper
             mkdir -p ./usr/share
             cp ${./resources/wallpaper.png} ./usr/share/wallpaper.png
+
+            # Branded KasmVNC web root. Copied rather than symlinked: LightDM
+            # scrubs the environment before spawning the X server, so the
+            # greeter path can only find this at a fixed path, and a symlink
+            # into the store would dangle unless the store path were also in
+            # `contents` — where its files would splat at the image root.
+            # See config/branding/.
+            mkdir -p ./usr/share/qgis-desktop
+            cp -r ${brandedWww} ./usr/share/qgis-desktop/www
+            chmod -R a+rX ./usr/share/qgis-desktop/www
             chmod 1777 ./tmp
 
             # Create /usr/bin symlinks for hardcoded paths
@@ -957,6 +994,12 @@ DBUSEOF
       in {
         packages = {
           kasmvnc = kasmvnc;
+
+          # The branded KasmVNC web root, on its own. This is the fast way to
+          # review a branding change: `nix build .#branded-www` takes seconds
+          # and the result is plain static files you can open in a browser,
+          # with no multi-gigabyte image build in the way.
+          branded-www = brandedWww;
 
           # QGIS LTR is the default everywhere: it is the build you put in
           # front of users.
@@ -1525,6 +1568,20 @@ DBUSEOF
             }}/bin/test-autostart";
           };
 
+
+          # Unit tests for the branding overlay. Mostly about failing loudly
+          # when a KasmVNC bump moves the markup we key on.
+          test-branding = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-branding";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-branding.sh
+              '';
+            }}/bin/test-branding";
+          };
           # Guards the PDF build: any character pdflatex cannot set fails here,
           # in a second, instead of ten minutes into `docs-pdf`.
           test-docs-glyphs = {
@@ -1597,6 +1654,8 @@ DBUSEOF
                 echo ""
                 bash ${self}/scripts/test-autostart.sh || rc=1
                 echo ""
+                bash ${self}/scripts/test-branding.sh || rc=1
+                echo ""
                 bash ${self}/scripts/test-docs-diagrams.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-check-oidc.sh || rc=1
@@ -1609,6 +1668,36 @@ DBUSEOF
             bash build-summary.sh kartoza:qgis-desktop-ltr build-summary.md
           '';
 
+          # Review a branding change without building a container image. The
+          # branded web root is static files, so serving them locally shows
+          # exactly what a user's browser will get — in seconds rather than the
+          # tens of minutes an image build costs.
+          preview-branding = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "preview-branding";
+              runtimeInputs = with pkgs; [ python3 coreutils ];
+              text = ''
+                ADDR="''${1:-127.0.0.1:8100}"
+                HOST="''${ADDR%%:*}"
+                PORT="''${ADDR##*:}"
+
+                echo "Branded web root: ${brandedWww}"
+                echo ""
+                echo "  Session-ended page:  http://$ADDR/disconnected.html"
+                echo "  Entry page:          http://$ADDR/index.html"
+                echo ""
+                echo "The session-ended page is the one that is fully branded."
+                echo "The entry page has no desktop behind it here, so it will sit"
+                echo "at 'connecting' — its branded parts are the tab title and the"
+                echo "favicon. Ctrl-C to stop."
+                echo ""
+
+                exec python3 -m http.server "$PORT" \
+                  --bind "$HOST" --directory ${brandedWww}
+              '';
+            }}/bin/preview-branding";
+          };
           # --- Documentation apps -----------------------------------------
           # Local preview at http://127.0.0.1:8000.
           # `site_url` points at GitHub Pages, and mkdocs serve honours its path
@@ -1741,6 +1830,7 @@ DBUSEOF
               "$DOCS_DIR/configuration/environment.md"
               "$DOCS_DIR/configuration/permissions.md"
               "$DOCS_DIR/configuration/authentication.md"
+              "$DOCS_DIR/configuration/branding.md"
               "$DOCS_DIR/configuration/egress-lockdown.md"
               "$DOCS_DIR/configuration/giswater.md"
               "$DOCS_DIR/configuration/persistence.md"
