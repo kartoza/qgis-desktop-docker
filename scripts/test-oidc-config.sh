@@ -256,6 +256,72 @@ run_proxy "${BASE_ENV[@]}" \
   QGIS_DESKTOP_OIDC_TLS_CERT_FILE="$WORK/tls.crt"
 assert_fails "half-configured TLS is rejected"
 
+# --- Signing out ------------------------------------------------------------
+# Left unset, sign-out stays a proxy-only affair: no redirect allowlist, no
+# call to the identity provider. oauth2-proxy then sends the browser to "/",
+# which restarts the OIDC flow.
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback
+assert_not_contains "$OUTPUT" "--whitelist-domain" "no redirect allowlist by default"
+assert_not_contains "$OUTPUT" "--backend-logout-url" "no provider logout by default"
+
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT=https://portal.example.com/goodbye
+assert_contains "$OUTPUT" "--whitelist-domain=portal.example.com" \
+  "the sign-out redirect host is added to the allowlist"
+
+# The host has to survive userinfo, a port, a path and a query string —
+# --whitelist-domain matches on host[:port] and nothing else.
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  'QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT=https://someone@portal.example.com:8443/bye?a=1#f'
+assert_contains "$OUTPUT" "--whitelist-domain=portal.example.com:8443" \
+  "the sign-out host is parsed out of a full URL"
+
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT=portal.example.com
+assert_fails "a schemeless sign-out redirect is rejected"
+
+# 'auto' builds Keycloak's RP-initiated logout endpoint from the issuer.
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=auto
+assert_contains "$OUTPUT" \
+  "--backend-logout-url=https://idp.example.com/realms/qgis/protocol/openid-connect/logout?id_token_hint={id_token}" \
+  "BACKEND_LOGOUT_URL=auto derives Keycloak's logout endpoint"
+
+# ...but only for Keycloak, because the path is Keycloak's own. Every other
+# provider has to be told, or we would emit a 404 and silently leave the
+# provider session alive.
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_PROVIDER=oidc \
+  QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=auto
+assert_fails "BACKEND_LOGOUT_URL=auto is refused for a generic provider"
+assert_contains "$OUTPUT" "end_session_endpoint" "and points at the discovery document"
+
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_PROVIDER=oidc \
+  'QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=https://idp.example.com/end-session?id_token_hint={id_token}'
+assert_contains "$OUTPUT" "--backend-logout-url=https://idp.example.com/end-session?id_token_hint={id_token}" \
+  "an explicit backend logout url is passed through"
+
+# No {id_token} means most providers will reject the logout, leaving the SSO
+# session alive — a warning, not an error, because a provider may not need it.
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=https://idp.example.com/end-session
+assert_ok "a backend logout url without {id_token} still starts"
+assert_contains "$OUTPUT" "no '{id_token}' placeholder" "but warns about the missing hint"
+
+run_proxy "${BASE_ENV[@]}" \
+  QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
+  QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=mailto:admin@example.com
+assert_fails "a non-http backend logout url is rejected"
+
 # --- Escape hatch -----------------------------------------------------------
 run_proxy "${BASE_ENV[@]}" \
   QGIS_DESKTOP_OIDC_REDIRECT_URL=https://gis.example.com/oauth2/callback \
@@ -293,7 +359,9 @@ else
     QGIS_DESKTOP_OIDC_ALLOWED_ROLES=qgis-user \
     QGIS_DESKTOP_OIDC_EMAIL_DOMAINS=example.com \
     QGIS_DESKTOP_OIDC_TLS_CERT_FILE="$WORK/tls.crt" \
-    QGIS_DESKTOP_OIDC_TLS_KEY_FILE="$WORK/tls.key"
+    QGIS_DESKTOP_OIDC_TLS_KEY_FILE="$WORK/tls.key" \
+    QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT=https://portal.example.com/goodbye \
+    QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=auto
 
   UNKNOWN=""
   while IFS= read -r arg; do
