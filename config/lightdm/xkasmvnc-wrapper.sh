@@ -141,6 +141,16 @@ if [ ! -d "${WWW_DIR}" ]; then
   exit 1
 fi
 
+# Same branded web root as start-desktop.sh. LightDM scrubs the environment
+# before spawning us, so QGIS_DESKTOP_BRANDING never survives to here — the
+# fixed path is the only channel, which is exactly why the image copies the
+# files in rather than symlinking them into the nix store.
+QGIS_DESKTOP_BRANDED_WWW="${QGIS_DESKTOP_BRANDED_WWW:-/usr/share/qgis-desktop/www}"
+if [ "$(to_bool "${QGIS_DESKTOP_BRANDING:-1}")" = "1" ] &&
+   [ -f "${QGIS_DESKTOP_BRANDED_WWW}/index.html" ]; then
+  WWW_DIR="${QGIS_DESKTOP_BRANDED_WWW}"
+fi
+
 # Lightdm strips most env vars when spawning children, so XKB_BASE_DIR
 # (set as an image env var) doesn't survive. Fall back to a fixed path
 # symlinked into the image via fakeRootCommands.

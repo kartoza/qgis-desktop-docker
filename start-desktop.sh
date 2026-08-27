@@ -230,6 +230,19 @@ chmod +x "$HOME/.vnc/xstartup"
 KASMVNC_DIR="$(dirname "$(command -v Xkasmvnc)")/.."
 WWW_DIR="${KASMVNC_DIR}/share/kasmvnc/www"
 
+# Prefer the branded web root the image ships at a fixed path. It is a plain
+# directory of static files (see config/branding/), and falling back to
+# KasmVNC's own tree keeps this script runnable outside the image — and gives
+# QGIS_DESKTOP_BRANDING=0 something to fall back TO.
+QGIS_DESKTOP_BRANDED_WWW="${QGIS_DESKTOP_BRANDED_WWW:-/usr/share/qgis-desktop/www}"
+if [ "$(to_bool "${QGIS_DESKTOP_BRANDING:-1}")" = "1" ] &&
+   [ -f "${QGIS_DESKTOP_BRANDED_WWW}/index.html" ]; then
+  WWW_DIR="${QGIS_DESKTOP_BRANDED_WWW}"
+  echo "Branding:   ${WWW_DIR}"
+else
+  echo "Branding:   off (serving KasmVNC's own web root)"
+fi
+
 # Assemble Kasm DLP flag list. These map directly to KasmVNC's yaml keys
 # under data_loss_prevention.* (see kasmvncserver perl wrapper source).
 KASM_DLP_ARGS=(
