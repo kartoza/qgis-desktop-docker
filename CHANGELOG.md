@@ -7,7 +7,32 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **The KasmVNC web interface is branded.** The browser tab, the favicon and the
+  page users land on when their session ends now carry your brand rather than
+  KasmVNC's. Every value lives in `config/branding/tokens.json`; correcting that
+  one file re-themes everything.
+
+  The session-ended page also gained a **Sign out completely** link. It is the
+  only branded surface that can offer one: it is a real document in the user's
+  browser, so unlike the desktop — which is pixels inside a page — it can clear
+  the single sign-on cookie.
+
+  The control bar and in-session UI are deliberately untouched. They are a Vite
+  bundle with content-hashed filenames that move on every KasmVNC release, and
+  patching them would make each version bump a debugging session. What the
+  overlay *does* touch, it asserts: a KasmVNC release that renames the markup
+  fails the build instead of silently shipping Kasm branding.
+
+  Review a change with `nix run .#preview-branding` — seconds, no image build.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_BRANDING` | `1` | `0` serves KasmVNC's own web root. |
+  | `QGIS_DESKTOP_BRANDED_WWW` | `/usr/share/qgis-desktop/www` | Where the branded root lives; bind-mount over it to override without rebuilding. |
+
+
 
 ## [3.0.0] — 2026-08-17
 
