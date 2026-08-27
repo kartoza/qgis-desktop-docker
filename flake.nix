@@ -1575,7 +1575,7 @@ DBUSEOF
             type = "app";
             program = "${pkgs.writeShellApplication {
               name = "test-branding";
-              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils ];
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils shellcheck ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 exec bash ${self}/scripts/test-branding.sh
@@ -1638,6 +1638,9 @@ DBUSEOF
                 # test-check-oidc.sh serves a fake OIDC provider from python3
                 # and talks to it with curl/jq — no network, no Docker.
                 curl jq python3
+                # test-branding.sh lints brand-www.sh the same way
+                # writeShellApplication does at build time.
+                shellcheck
               ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}

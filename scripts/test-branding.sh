@@ -272,6 +272,22 @@ else
     "every derived value needs its provenance stated, or nobody knows what still needs confirming"
 fi
 
+
+# --- shellcheck -------------------------------------------------------------
+# brand-www.sh is packaged with writeShellApplication, which runs shellcheck at
+# BUILD time and treats even info-level findings as fatal. Without this test the
+# first sign of a problem is a failed `nix build`, which is a slow and confusing
+# way to learn that a regex looked like a command substitution.
+if command -v shellcheck >/dev/null 2>&1; then
+  if SC_OUT="$(shellcheck -s bash "$BRAND" 2>&1)"; then
+    ok "brand-www.sh is shellcheck-clean (writeShellApplication requires it)"
+  else
+    no "brand-www.sh is shellcheck-clean (writeShellApplication requires it)" \
+      "$(printf '%s' "$SC_OUT" | head -5)"
+  fi
+else
+  echo "  — shellcheck not on PATH; skipping the build-time lint check"
+fi
 echo ""
 echo "─────────────────────────────────────────"
 printf '  %d passed, %d failed\n' "$PASS" "$FAIL"

@@ -98,7 +98,7 @@ done
 # can read is worth more than one you have to trust.
 printf '%s' "${BRAND_NAME}" | grep -qE '^[A-Za-z0-9 ._-]+$' ||
   die "brand.name = '${BRAND_NAME}' must be letters, digits, spaces, dot, underscore or hyphen."
-printf '%s' "${BRAND_URL}" | grep -qE '^https?://[A-Za-z0-9._~:/?#@!$()*+,;=%-]+$' ||
+printf '%s' "${BRAND_URL}" | grep -qE '^https?://[A-Za-z0-9._~:/?#@%+=-]+$' ||
   die "brand.url = '${BRAND_URL}' must be an http(s) URL with no shell- or sed-significant characters."
 echo "Branding the KasmVNC web root as '${BRAND_NAME}'"
 
