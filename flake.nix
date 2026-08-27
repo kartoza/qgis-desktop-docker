@@ -140,6 +140,16 @@
           text = builtins.readFile ./config/autostart/autostart.sh;
         };
 
+        # --- Session supervisor -------------------------------------------
+        # Wraps the XFCE session in the basic/none paths so that logging out
+        # of XFCE restarts the desktop instead of stranding the browser on a
+        # bare X root window. LightDM already does this in greeter mode.
+        sessionSupervisorScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-session";
+          runtimeInputs = with pkgs; [ coreutils ];
+          text = builtins.readFile ./config/session/session-supervisor.sh;
+        };
+
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -200,6 +210,7 @@
           ] ++ [
             epaTool # `epa install` wires Giswater up to the native solvers
             autostartScript # honours QGIS_DESKTOP_AUTOSTART_QGIS
+            sessionSupervisorScript # relaunches XFCE when the user logs out
           ];
           text = builtins.readFile ./start-desktop.sh;
         };
@@ -436,6 +447,11 @@
 
             # Autostart QGIS with the session (QGIS_DESKTOP_AUTOSTART_QGIS=1).
             autostartScript
+
+            # Session supervisor: relaunches XFCE when the user logs out, so
+            # log-out is a desktop reset rather than a dead end
+            # (QGIS_DESKTOP_SESSION_RESTART=1, the default).
+            sessionSupervisorScript
 
             # Home persistence (QGIS_DESKTOP_PERSIST=1). rclone arrives through
             # the wrapper; it is not on the desktop user's PATH.
@@ -1525,6 +1541,20 @@ DBUSEOF
             }}/bin/test-autostart";
           };
 
+          # Unit tests for the session supervisor: logging out of XFCE has to
+          # bring the desktop back, not strand the browser on a bare X display.
+          test-session-restart = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-session-restart";
+              runtimeInputs = with pkgs; [ bash coreutils ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-session-restart.sh
+              '';
+            }}/bin/test-session-restart";
+          };
+
           # Guards the PDF build: any character pdflatex cannot set fails here,
           # in a second, instead of ten minutes into `docs-pdf`.
           test-docs-glyphs = {
@@ -1596,6 +1626,8 @@ DBUSEOF
                 bash ${self}/scripts/test-docs-glyphs.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-autostart.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-session-restart.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-docs-diagrams.sh || rc=1
                 echo ""

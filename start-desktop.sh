@@ -324,9 +324,15 @@ if command -v qgis-desktop-autostart >/dev/null 2>&1; then
   qgis-desktop-autostart || true
 fi
 
-# Start the desktop session
+# Start the desktop session under a supervisor that relaunches it when it
+# exits. Without that, XFCE's "Log Out" — and any XFCE crash — left the browser
+# attached to a bare X root window with no panel, no menu and no way back, and
+# only a container restart recovered it. See
+# config/session/session-supervisor.sh. LightDM does this job itself in greeter
+# mode, so that path never reaches here.
 echo "Starting XFCE desktop..."
-"$HOME/.vnc/xstartup" &
+QGIS_DESKTOP_SESSION_GUARD_PID="${XKASMVNC_PID}" \
+  qgis-desktop-session "$HOME/.vnc/xstartup" &
 DE_PID=$!
 export DE_PID
 
