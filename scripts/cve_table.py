@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse Grype CVE scan JSON output into a markdown table."""
+"""Parse Grype CVE scan JSON output into a deduplicated markdown table."""
 import json
 import sys
 
@@ -49,11 +49,23 @@ def main():
         print(IMPACT_ASSESSMENT)
         return
 
+    # Deduplicate by CVE ID + package name + version
+    seen = set()
     rows = []
     for match in matches:
         vuln = match.get("vulnerability", {})
         cve_id = vuln.get("id", "unknown")
         severity = vuln.get("severity", "Unknown")
+
+        artifact = match.get("artifact", {})
+        pkg_name = artifact.get("name", "unknown")
+        pkg_version = artifact.get("version", "unknown")
+
+        dedup_key = f"{cve_id}:{pkg_name}:{pkg_version}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
         description = vuln.get("description", "")[:120]
         if len(vuln.get("description", "")) > 120:
             description += "..."
@@ -64,10 +76,6 @@ def main():
             if "metrics" in score and "baseScore" in score["metrics"]:
                 cvss = str(score["metrics"]["baseScore"])
                 break
-
-        artifact = match.get("artifact", {})
-        pkg_name = artifact.get("name", "unknown")
-        pkg_version = artifact.get("version", "unknown")
 
         fixed_in = "-"
         fix = vuln.get("fix", {})
@@ -102,7 +110,7 @@ def main():
             emoji = SEVERITY_EMOJI.get(sev, "")
             summary_parts.append(f"{emoji} {counts[sev]} {sev}")
 
-    print(f"**{len(rows)} CVEs found:** {', '.join(summary_parts)}\n")
+    print(f"**{len(rows)} unique CVEs found:** {', '.join(summary_parts)}\n")
     print("<details>")
     print(f"<summary>CVE Details ({len(rows)} vulnerabilities)</summary>\n")
     print("| Severity | CVSS | CVE | Package | Version | Fixed In | Description |")

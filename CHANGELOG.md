@@ -7,6 +7,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **The CVE table in PR comments and release bodies no longer double-counts.**
+  Grype reports one match per path a vulnerable package is reachable by, and a
+  nix closure reaches the same package many ways — so a scan that found four
+  matches of two real problems said "4 CVEs found". Findings are now keyed on
+  CVE + package + version, which collapses the duplicates while keeping the
+  same CVE against a different package, or a different version of the same one,
+  as the separate findings they are. The count is labelled "unique CVEs".
+
+
 ### Added
 
 - **The KasmVNC web interface is branded.** The browser tab, the favicon, the

@@ -57,6 +57,7 @@ qgis-desktop-docker/
 │   ├── test-oidc-config.sh     # Unit tests for the OIDC plumbing
 │   ├── test-terminal-lockdown.sh # Unit tests for QGIS_DESKTOP_ALLOW_TERMINAL=0
 │   ├── sbom_table.py           # SBOM JSON to markdown table
+│   ├── test-cve-table.sh       # Unit tests for the CVE table
 │   └── cve_table.py            # Grype CVE JSON to markdown table
 │
 ├── examples/
