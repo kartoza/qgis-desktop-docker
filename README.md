@@ -211,6 +211,7 @@ Full details, including the Kubernetes shape, in
 | `QGIS_DESKTOP_PERSIST` | `0` | `1` restores and saves `/home/user` against object storage. See [Home persistence](docs/configuration/persistence.md). |
 | `QGIS_DESKTOP_AUTOSTART_QGIS` | `0` | `1` starts QGIS with the desktop session |
 | `QGIS_DESKTOP_AUTOSTART_QGIS_ARGS` | *(none)* | Arguments for that launch, e.g. `--project /home/user/projects/site.qgs` |
+| `QGIS_DESKTOP_BRANDING` | `1` | `0` serves KasmVNC's own web root instead of the branded one. See [Branding](docs/configuration/branding.md). |
 | `QGIS_DESKTOP_QGIS_CHANNEL` | *(baked in)* | `ltr` or `latest` — which image you are running. Read-only; pick the image tag instead. |
 | `QGIS_DESKTOP_QGIS_VERSION` | *(baked in)* | The QGIS version inside the image. Read-only. |
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution (resizable in browser) |

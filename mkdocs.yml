@@ -163,6 +163,7 @@ nav:
     - Environment: configuration/environment.md
     - Permissions: configuration/permissions.md
     - Authentication: configuration/authentication.md
+    - Branding: configuration/branding.md
     - Egress Lockdown: configuration/egress-lockdown.md
     - Giswater: configuration/giswater.md
     - Home Persistence: configuration/persistence.md
