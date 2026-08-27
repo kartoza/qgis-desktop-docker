@@ -211,6 +211,7 @@ Full details, including the Kubernetes shape, in
 | `QGIS_DESKTOP_PERSIST` | `0` | `1` restores and saves `/home/user` against object storage. See [Home persistence](docs/configuration/persistence.md). |
 | `QGIS_DESKTOP_AUTOSTART_QGIS` | `0` | `1` starts QGIS with the desktop session |
 | `QGIS_DESKTOP_AUTOSTART_QGIS_ARGS` | *(none)* | Arguments for that launch, e.g. `--project /home/user/projects/site.qgs` |
+| `QGIS_DESKTOP_SESSION_RESTART` | `1` | Relaunch the desktop session when it exits, so XFCE's **Log Out** resets the desktop rather than leaving a bare X display. See [Logging out](docs/configuration/authentication.md#logging-out-new-in-310). |
 | `QGIS_DESKTOP_QGIS_CHANNEL` | *(baked in)* | `ltr` or `latest` — which image you are running. Read-only; pick the image tag instead. |
 | `QGIS_DESKTOP_QGIS_VERSION` | *(baked in)* | The QGIS version inside the image. Read-only. |
 | `VNC_RESOLUTION` | `1280x720` | Initial desktop resolution (resizable in browser) |
@@ -694,6 +695,16 @@ Notes:
   X session, so failures and logouts return to a proper login form.
 - **`oidc` composes.** `QGIS_DESKTOP_OIDC_INNER_MODE=greeter` requires single sign-on
   at the edge *and* gives each user their own Linux session inside.
+- **Logging out is not a dead end.** XFCE's **Log Out** restarts the desktop
+  session, giving a clean XFCE (and a clean QGIS, with
+  `QGIS_DESKTOP_AUTOSTART_QGIS=1`) on the same browser tab — unsaved work is
+  discarded, so save first. `greeter` mode returns to LightDM instead.
+- **Signing out of SSO is a browser navigation**, not something the desktop can
+  do: the session is a cookie in the user's browser. Send them to
+  `/oauth2/sign_out`, and set `QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=auto` so the
+  identity provider's session ends too — otherwise the next visit sails straight
+  back in without a login form. See
+  [Logging out](docs/configuration/authentication.md#logging-out-new-in-310).
 - **Privileges.** `basic`, `none` and `oidc` run the desktop as UID 1000 after
   the root entrypoint drops privileges — the OIDC proxy runs unprivileged too.
   `greeter` keeps LightDM running as root inside the container so it can spawn

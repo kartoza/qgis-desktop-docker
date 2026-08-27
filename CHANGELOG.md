@@ -9,6 +9,74 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Nothing yet.
 
+## [3.1.0] — 2026-08-27
+
+Logging out stops being a dead end. Before this release, picking **Log Out**
+from the XFCE menu ended the session and left the browser attached to a bare X
+root window — no panel, no menu, nothing to click — and only a container restart
+brought it back. An XFCE crash did the same thing. Both are now survivable, and
+signing out of single sign-on is properly documented and properly wired.
+
+### Added
+
+- **The desktop session is supervised.** `qgis-desktop-session` wraps XFCE in
+  the `basic`, `none` and `oidc` paths and relaunches it when it exits, so
+  **Log Out** means "give me a clean desktop" — a fresh XFCE, a fresh QGIS if
+  `QGIS_DESKTOP_AUTOSTART_QGIS=1`, on the same browser tab, in a few seconds.
+  A crash-loop guard stops a session that fails instantly from spinning: five
+  restarts inside sixty seconds and the supervisor gives up with a message
+  rather than burning CPU until someone notices.
+
+  `greeter` mode is unchanged — LightDM already ends the session and re-shows
+  its login form, which is the better behaviour when the container holds real
+  per-user accounts.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_SESSION_RESTART` | `1` | Relaunch the session when it exits. `0` restores the old run-once behaviour. |
+  | `QGIS_DESKTOP_SESSION_RESTART_MAX` | `5` | Restarts tolerated inside the window before giving up. |
+  | `QGIS_DESKTOP_SESSION_RESTART_WINDOW` | `60` | Width of that window, in seconds. |
+  | `QGIS_DESKTOP_SESSION_RESTART_DELAY` | `1` | Seconds between restarts. |
+  | `QGIS_DESKTOP_SESSION_RESET_STATE` | `1` | Clear `~/.cache/sessions` between runs. |
+
+- **`QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL` ends the session at the identity
+  provider.** `/oauth2/sign_out` only ever dropped oauth2-proxy's own cookie,
+  which is half a logout: the provider still had a live SSO session, so the next
+  visit completed the authorization-code flow without ever showing a login form
+  and the user was straight back in. Set this and oauth2-proxy calls the
+  provider's RP-initiated logout endpoint server-side during sign-out, passing
+  the user's `id_token` as the hint. `auto` derives Keycloak's endpoint from the
+  issuer; any other provider takes the `end_session_endpoint` from its discovery
+  document, with `{id_token}` where the hint belongs.
+
+- **`QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT` sends users somewhere after signing
+  out.** Setting it adds that host to oauth2-proxy's redirect allowlist, which
+  is what makes `/oauth2/sign_out?rd=<url>` actually honour the destination
+  instead of silently falling back to `/`. Left unset, sign-out returns to `/`,
+  which restarts the OIDC flow and puts the provider's login page back on
+  screen — usually what you want.
+
+### Changed
+
+- **Logging out of XFCE now discards unsaved work.** It used to strand the
+  session; it now replaces it. Nothing prompts to save, because XFCE has already
+  torn the session down by the time the supervisor sees it. Set
+  `QGIS_DESKTOP_SESSION_RESTART=0` for the old behaviour.
+- **The saved-session cache is cleared between runs.** Under `oidc` and `basic`
+  the next person to open the container's URL may genuinely be a different
+  person, and handing them the previous session's open windows is a privacy
+  leak, not a convenience. `QGIS_DESKTOP_SESSION_RESET_STATE=0` keeps it.
+
+### Documentation
+
+- A new **Logging out** section in
+  [Authentication](https://kartoza.github.io/qgis-desktop-docker/configuration/authentication/)
+  covering both halves — ending the desktop session and ending the SSO session —
+  and stating plainly why the second cannot be done from inside the container:
+  the proxy session is a cookie in the user's browser, and the desktop is only
+  pixels inside that page.
+
+
 ## [3.0.0] — 2026-08-17
 
 The two published channels are named for what they track, and every build gains
@@ -565,7 +633,8 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v2.0.0
 [1.4.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...v1.4.0

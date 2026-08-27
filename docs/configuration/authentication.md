@@ -188,6 +188,8 @@ that is wrong rather than leaving you to infer it from a redirect loop.
 | `QGIS_DESKTOP_OIDC_LISTEN_PORT` | *(`VNC_PORT`)* | Port the proxy listens on. Defaults to the published port; only set this if the proxy must listen somewhere other than where `VNC_PORT` points. |
 | `QGIS_DESKTOP_OIDC_COOKIE_SECURE` | *(from redirect URL)* | `1` marks session cookies Secure. Defaults on for an `https://` redirect URL, off otherwise. |
 | `QGIS_DESKTOP_OIDC_COOKIE_EXPIRE` | `8h` | Session lifetime. |
+| `QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT` | *(none)* | Where the browser lands after `/oauth2/sign_out`. Its host is added to the redirect allowlist so `?rd=` to it is honoured. Unset, sign-out returns to `/`, which re-prompts at the IdP. |
+| `QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL` | *(none)* | URL oauth2-proxy calls server-side on sign-out to end the session at the IdP, with `{id_token}` substituted. `auto` derives Keycloak's endpoint from the issuer. |
 | `QGIS_DESKTOP_OIDC_TLS_CERT_FILE` | *(none)* | Serve HTTPS directly instead of plain HTTP. Requires the key below; setting one without the other is refused. |
 | `QGIS_DESKTOP_OIDC_TLS_KEY_FILE` | *(none)* | Private key for the certificate above. |
 | `QGIS_DESKTOP_OIDC_REVERSE_PROXY` | `0` | Set to `1` only when a trusted proxy in front sets `X-Forwarded-*`. Enabling it without one lets clients spoof their address. |
@@ -225,6 +227,101 @@ that is wrong rather than leaving you to infer it from a redirect loop.
 - **Image size.** oauth2-proxy plus a CA bundle add roughly 30 MB uncompressed.
 - **DNS is resolved once.** The egress allowlist pins the IdP's addresses at
   startup. If your provider's IPs rotate, add its CIDR to `QGIS_DESKTOP_EGRESS_ALLOW`.
+
+## Logging out (new in 3.1.0)
+
+XFCE's panel carries the standard action buttons, so **Log Out** is one click
+away in every mode. What it should *do* differs by mode, and the answer has two
+independent halves: ending the desktop session, and ending the SSO session.
+
+### Ending the desktop session
+
+Logging out of XFCE no longer leaves you stranded. The session runs under a
+supervisor (`qgis-desktop-session`) that relaunches it when it exits, so **Log
+Out** means "give me a clean desktop" — a fresh XFCE, a fresh QGIS if
+`QGIS_DESKTOP_AUTOSTART_QGIS=1`, on the same browser tab, in a few seconds. The
+same supervisor covers an XFCE crash, which used to be equally terminal.
+
+!!! warning "Log out discards unsaved work"
+
+    The restarted session is a new one. Save your QGIS project first — nothing
+    prompts you, because XFCE has already torn the session down by the time the
+    supervisor sees it.
+
+The supervisor also clears XFCE's saved-session cache between runs. That is
+deliberate: under `oidc` or `basic`, the next person to open the container's URL
+may genuinely be a different person, and they should not be handed the previous
+session's open windows.
+
+`greeter` mode does not use the supervisor — LightDM already ends the session
+and shows its login form again, which is the better behaviour when the container
+holds real per-user accounts.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QGIS_DESKTOP_SESSION_RESTART` | `1` | Relaunch the desktop session when it exits. `0` restores the pre-3.1.0 behaviour, where logging out left a bare X display. |
+| `QGIS_DESKTOP_SESSION_RESTART_MAX` | `5` | Restarts tolerated inside the window below before the supervisor gives up. Stops a session that fails instantly from spinning forever. |
+| `QGIS_DESKTOP_SESSION_RESTART_WINDOW` | `60` | Width of that window, in seconds. A session that runs longer than this is not a crash loop, so the tally resets. |
+| `QGIS_DESKTOP_SESSION_RESTART_DELAY` | `1` | Seconds to pause between restarts. |
+| `QGIS_DESKTOP_SESSION_RESET_STATE` | `1` | Clear `~/.cache/sessions` between runs so a restarted session does not restore the previous user's windows. |
+
+### Ending the SSO session
+
+This one cannot be done from inside the container, and it is worth being precise
+about why: the proxy session is a cookie in the **user's browser**, and the
+desktop is pixels inside that page. No process in the container can reach it.
+Signing out of SSO is always a browser navigation to:
+
+```
+https://gis.example.com/oauth2/sign_out
+```
+
+oauth2-proxy drops its session cookie and sends the browser to `/`. Because
+`--skip-provider-button` is set, that immediately restarts the authorization-code
+flow — so the user lands back on the identity provider's login page, which is
+usually exactly what "log out" should mean.
+
+On its own, that is only half a logout. The **identity provider** still has a
+live SSO session, so the flow completes without ever showing a login form and
+the user is straight back in. To close that gap:
+
+```bash
+QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL=auto
+```
+
+oauth2-proxy then calls the provider's RP-initiated logout endpoint server-side
+during sign-out, passing the user's `id_token` as the hint. Nothing is bounced
+through the browser, so no post-logout redirect URI has to be registered on the
+client. `auto` derives Keycloak's endpoint from the issuer; for any other
+provider, take `end_session_endpoint` from
+`<issuer>/.well-known/openid-configuration` and give it in full, with
+`{id_token}` where the hint belongs:
+
+```bash
+QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL='https://idp.example.com/oidc/logout?id_token_hint={id_token}'
+```
+
+To land users somewhere other than the login page — a portal, an intranet page —
+set the destination and use it as the `rd` parameter:
+
+```bash
+QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT=https://portal.example.com/goodbye
+```
+
+```
+https://gis.example.com/oauth2/sign_out?rd=https://portal.example.com/goodbye
+```
+
+Setting the variable is what makes the redirect work: oauth2-proxy refuses to
+honour `?rd=` for a host it was not told to trust, and silently falls back to
+`/` otherwise. The container adds that host to the allowlist for you.
+
+!!! note "Signing out does not stop the container"
+
+    The desktop keeps running behind the proxy, and the next authenticated user
+    attaches to it. For a session that really ends when the user leaves, give
+    each user their own container — see
+    [The Disposable Desktop](../scenarios/disposable-pod.md).
 
 ## Examples
 

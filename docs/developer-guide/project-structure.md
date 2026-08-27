@@ -27,6 +27,9 @@ qgis-desktop-docker/
 │   │   ├── oidc-config.sh      # Root: validates config, writes 0400 secrets file
 │   │   └── oidc-proxy.sh       # Unprivileged: builds flags, execs oauth2-proxy
 │   │
+│   ├── session/                # Desktop session lifecycle (basic/none/oidc)
+│   │   └── session-supervisor.sh # Relaunches XFCE on log-out, with a crash-loop guard
+│   │
 │   └── lockdown/               # QGIS_DESKTOP_ALLOW_TERMINAL=0
 │       └── disable-terminal.sh # Root: deletes terminals, strips launcher/menu
 │
@@ -51,6 +54,7 @@ qgis-desktop-docker/
 │   ├── epa.sh                  # Wires the Giswater plugin to the native solvers
 │   ├── test-oidc-config.sh     # Unit tests for the OIDC plumbing
 │   ├── test-terminal-lockdown.sh # Unit tests for QGIS_DESKTOP_ALLOW_TERMINAL=0
+│   ├── test-session-restart.sh # Unit tests for the session supervisor
 │   ├── sbom_table.py           # SBOM JSON to markdown table
 │   └── cve_table.py            # Grype CVE JSON to markdown table
 │
