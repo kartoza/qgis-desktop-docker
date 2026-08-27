@@ -9,9 +9,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-- **The KasmVNC web interface is branded.** The browser tab, the favicon and the
-  page users land on when their session ends now carry your brand rather than
-  KasmVNC's. Every value lives in `config/branding/tokens.json`; correcting that
+- **The KasmVNC web interface is branded.** The browser tab, the favicon, the
+  control bar, and the page users land on when their session ends now carry your
+  brand rather than KasmVNC's. Every value lives in `config/branding/tokens.json`; correcting that
   one file re-themes everything.
 
   The session-ended page also gained a **Sign out completely** link. It is the
@@ -19,11 +19,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   browser, so unlike the desktop — which is pixels inside a page — it can clear
   the single sign-on cookie.
 
-  The control bar and in-session UI are deliberately untouched. They are a Vite
-  bundle with content-hashed filenames that move on every KasmVNC release, and
-  patching them would make each version bump a debugging session. What the
-  overlay *does* touch, it asserts: a KasmVNC release that renames the markup
-  fails the build instead of silently shipping Kasm branding.
+  The control bar down the left of the screen is branded too — its header held
+  Kasm's logo and a link to kasmweb.com — as are the connection-error message and
+  the keyboard-shortcuts toggle. All of it lives in the entry page's own HTML,
+  which is what makes it safe to rewrite. The Vite bundle and hashed stylesheets
+  are left byte-identical, and a KasmVNC release that renames the markup we key
+  on fails the build instead of silently shipping Kasm branding.
 
   Review a change with `nix run .#preview-branding` — seconds, no image build.
 

@@ -10,27 +10,41 @@ not, and how to change it.
 
 | Surface | What changes |
 |---------|--------------|
-| Entry page (`index.html`, `vnc.html`) | The `<title>`, so the browser tab reads your brand rather than "KasmVNC". |
-| Favicon | The thirteen stock Kasm PNGs are replaced by a single SVG. |
-| Session-ended page (`disconnected.html`) | Rendered wholesale from a template: your colours, your logo, your typeface — plus a **Sign out completely** link. |
+| Browser tab | The `<title>`, so it reads your brand rather than "KasmVNC". |
+| Favicon | The thirteen stock Kasm PNGs collapse to a single SVG. |
+| Control bar | The panel down the left of the screen. Its header carried Kasm's logo as an inline `data:` URI, linked to kasmweb.com; both become yours. |
+| Connection-error message | Said "KasmVNC encountered an error:" — the string a user is most likely to read, because they only see it when something has already gone wrong. |
+| Keyboard-shortcuts toggle | "Enable KasmVNC Keyboard Shortcuts" in the settings panel. |
+| Session-ended page | Rendered wholesale from a template: your colours, logo and typeface, plus a **Sign out completely** link. |
 
-That last one is worth dwelling on. The session-ended page is the only branded
-surface that is a *real document in the user's browser*, which means it is the
-only one that can clear the single sign-on cookie. The desktop cannot: it is
-pixels inside a page, with no way to navigate the page containing it. So the
-sign-out affordance lives here, and nowhere else.
+All of the above lives in the entry page's own **HTML**, which is what makes it
+safe to rewrite.
+
+The session-ended page is worth dwelling on. It is the only branded surface that
+is a *real document in the user's browser*, which means it is the only one that
+can clear the single sign-on cookie. The desktop cannot: it is pixels inside a
+page, with no way to navigate the page containing it. So the sign-out affordance
+lives there, and nowhere else. KasmVNC redirects to it on disconnect, so it is
+genuinely on the path users take.
 
 ## What is not branded, on purpose
 
-The KasmVNC control bar and the in-session UI are **left alone**. They are a
-Vite bundle (`assets/ui-*.js`) with content-hashed filenames that change on
-every KasmVNC release. Patching them would turn each version bump into a
-debugging session, in exchange for a toolbar most users glance at twice.
+Two things are left alone.
+
+**The Vite bundle** (`assets/ui-*.js`) and the content-hashed stylesheets are
+byte-identical to upstream, and a test asserts it. Their filenames change on
+every KasmVNC release; patching them would turn each version bump into a
+debugging session.
+
+**The Settings → Documentation link** still points at KasmVNC's own docs,
+because those docs genuinely describe these very controls — an outbound link
+that helps beats one of ours that 404s. Set `brand.docsUrl` in the tokens file
+to redirect it at your own help.
 
 The overlay asserts every substitution it makes. If a future KasmVNC renames the
 markup we key on, **the build fails** with a message naming what moved — rather
 than silently producing an image that still says KasmVNC while everyone assumes
-otherwise.
+otherwise. Nine of the tests exist only to prove that.
 
 ## Changing the brand
 
@@ -38,7 +52,10 @@ Every value lives in one file, `config/branding/tokens.json`:
 
 ```json
 {
-  "brand": { "name": "GeoSpatialHosting", "url": "https://geospatialhosting.com" },
+  "brand": {
+    "name": "GeoSpatialHosting",
+    "url": "https://geospatialhosting.com"
+  },
   "color": {
     "accent": "#ECB44B",
     "accentHover": "#D9A23A",

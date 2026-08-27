@@ -68,6 +68,9 @@ tok() {
 
 BRAND_NAME="$(tok '.brand.name')"
 BRAND_URL="$(tok '.brand.url')"
+# Optional — jq prints nothing for a missing key, and unset means "leave
+# upstream's link alone", so this one does not go through tok().
+BRAND_DOCS_URL="$(jq -r '.brand.docsUrl // empty' "${TOKENS}")"
 FONT_FAMILY="$(tok '.font.family')"
 COLOR_ACCENT="$(tok '.color.accent')"
 COLOR_ACCENT_HOVER="$(tok '.color.accentHover')"
@@ -88,6 +91,15 @@ for name in ACCENT ACCENT_HOVER SECONDARY MUTED SURFACE SURFACE_RAISED TEXT TEXT
   esac
 done
 
+
+# BRAND_NAME and BRAND_URL are interpolated into sed replacement text below, so
+# they must not carry sed's metacharacters. An allowlist rather than escaping:
+# a brand name has no business containing & or | or a backslash, and a rule you
+# can read is worth more than one you have to trust.
+printf '%s' "${BRAND_NAME}" | grep -qE '^[A-Za-z0-9 ._-]+$' ||
+  die "brand.name = '${BRAND_NAME}' must be letters, digits, spaces, dot, underscore or hyphen."
+printf '%s' "${BRAND_URL}" | grep -qE '^https?://[A-Za-z0-9._~:/?#@!$()*+,;=%-]+$' ||
+  die "brand.url = '${BRAND_URL}' must be an http(s) URL with no shell- or sed-significant characters."
 echo "Branding the KasmVNC web root as '${BRAND_NAME}'"
 
 # --- Copy the upstream tree ---------------------------------------------
@@ -126,7 +138,46 @@ for page in index.html vnc.html; do
   sed -i "s|</title>|</title><link rel=\"icon\" href=\"./assets/brand-logo.svg\" type=\"image/svg+xml\">|" "${path}"
 
   patched_pages=$((patched_pages + 1))
-  echo "  ${page}: title + favicon"
+
+  # --- The control bar and the strings users actually read ----------------
+  # Everything below lives in the entry page's own markup, NOT in the hashed
+  # Vite bundle — which is why it is safe to touch. The control bar down the
+  # left of the screen is built from this HTML: its header is an <h1> holding
+  # Kasm's logo as an inline data: URI, wrapped in a link to kasmweb.com.
+  #
+  # There is exactly one <h1> in the document, so the bounded replacement below
+  # cannot run away across the (single-line) file.
+  grep -q '<h1 class="noVNC_logo">' "${path}" ||
+    die "${page} no longer has the noVNC_logo header — KasmVNC changed its markup and this script needs updating."
+  sed -i "s|<h1 class=\"noVNC_logo\">.*</h1>|<h1 class=\"noVNC_logo\"><a href=\"${BRAND_URL}\" target=\"_blank\" rel=\"noopener\" title=\"${BRAND_NAME}\"><img src=\"./assets/brand-logo.svg\" alt=\"${BRAND_NAME}\" style=\"height:2.5em\"></a></h1>|" "${path}"
+
+  if grep -q 'kasmweb.com/kasmvnc"' "${path}"; then
+    die "${page} still links to kasmweb.com from the control-bar logo after substitution."
+  fi
+
+  # Two more strings a user reads: the error box that appears whenever the
+  # connection drops, and the keyboard-shortcuts toggle in the settings panel.
+  # Both said "KasmVNC" in front of our users.
+  for pair in \
+    "KasmVNC encountered an error::${BRAND_NAME} encountered an error:" \
+    "Enable KasmVNC Keyboard Shortcuts:Enable ${BRAND_NAME} Keyboard Shortcuts"
+  do
+    needle="${pair%%:*}"
+    # Rebuild the replacement from the remainder so a ':' inside it survives.
+    replacement="${pair#*:}"
+    grep -qF "${needle}" "${path}" ||
+      die "${page} no longer contains '${needle}' — KasmVNC changed its wording and this script needs updating."
+    sed -i "s|${needle}|${replacement}|g" "${path}"
+  done
+
+  # Optional: point the Settings > Documentation link at your own help. Left
+  # alone when brand.docsUrl is unset, because upstream's link goes to real
+  # KasmVNC documentation for these very controls — a dead link of our own
+  # would be worse than an honest outbound one.
+  if [ -n "${BRAND_DOCS_URL}" ]; then
+    sed -i "s|https://www.kasmweb.com/kasmvnc/docs/latest/index.html|${BRAND_DOCS_URL}|g" "${path}"
+  fi
+  echo "  ${page}: title, favicon, control bar, error text"
 done
 
 [ "${patched_pages}" -gt 0 ] ||

@@ -51,7 +51,7 @@ make_www() {
   mkdir -p "$dir/assets"
   for page in index.html vnc.html; do
     cat > "$dir/$page" <<'PAGE'
-<!DOCTYPE html><html lang="en"><head><title>KasmVNC</title><meta charset="utf-8"><link rel="icon" sizes="16x16" type="image/png" href="./assets/368_kasm_logo_only_16x16-BfyYpHuV.png"><link rel="icon" sizes="32x32" type="image/png" href="./assets/368_kasm_logo_only_32x32-ig-uDAV_.png"><link rel="apple-touch-icon" href="./assets/368_kasm_logo_only_192x192-5ckMOqv_.png"></head><body><div id="app"></div></body></html>
+<!DOCTYPE html><html lang="en"><head><title>KasmVNC</title><meta charset="utf-8"><link rel="icon" sizes="16x16" type="image/png" href="./assets/368_kasm_logo_only_16x16-BfyYpHuV.png"><link rel="icon" sizes="32x32" type="image/png" href="./assets/368_kasm_logo_only_32x32-ig-uDAV_.png"><link rel="apple-touch-icon" href="./assets/368_kasm_logo_only_192x192-5ckMOqv_.png"></head><body><div id="noVNC_fallback_error"><div>KasmVNC encountered an error:</div></div><div id="noVNC_control_bar"><h1 class="noVNC_logo"><a href="https://www.kasmweb.com/kasmvnc" target="_blank" alt="KasmVNC Learn More" title="KasmVNC Learn More"><img src="data:image/svg+xml,%3csvg/%3e"></a></h1><label>Enable KasmVNC Keyboard Shortcuts</label><a href="https://www.kasmweb.com/kasmvnc/docs/latest/index.html">Documentation</a></div></body></html>
 PAGE
   done
   echo '<html><body>Session Disconnected</body></html>' > "$dir/disconnected.html"
@@ -141,6 +141,79 @@ else
   ok "the stock Kasm disconnected page is replaced"
 fi
 
+
+# --- The control bar --------------------------------------------------------
+# The panel down the left of the screen is built from this markup, not from the
+# Vite bundle — which is the only reason it is safe to touch.
+for page in index.html vnc.html; do
+  if grep -q "<img src=\"./assets/brand-logo.svg\" alt=\"${BRAND_NAME}\"" "$WORK/out/$page" 2>/dev/null; then
+    ok "$page control bar shows the brand logo"
+  else
+    no "$page control bar shows the brand logo"
+  fi
+  if grep -q 'kasmweb.com/kasmvnc"' "$WORK/out/$page" 2>/dev/null; then
+    no "$page control-bar logo no longer links to kasmweb" "the link survived"
+  else
+    ok "$page control-bar logo no longer links to kasmweb"
+  fi
+  if grep -qE '(alt|title)="[^"]*Kasm' "$WORK/out/$page" 2>/dev/null; then
+    no "$page has no Kasm left in alt/title attributes"
+  else
+    ok "$page has no Kasm left in alt/title attributes"
+  fi
+done
+
+# The error box is what a user sees whenever the connection drops, so it is the
+# string most likely to be read by someone already having a bad time.
+if grep -q "${BRAND_NAME} encountered an error:" "$WORK/out/index.html" 2>/dev/null; then
+  ok "the connection-error message carries the brand"
+else
+  no "the connection-error message carries the brand"
+fi
+if grep -q "Enable ${BRAND_NAME} Keyboard Shortcuts" "$WORK/out/index.html" 2>/dev/null; then
+  ok "the keyboard-shortcuts toggle carries the brand"
+else
+  no "the keyboard-shortcuts toggle carries the brand"
+fi
+
+# --- The documentation link -------------------------------------------------
+# Unset, it stays pointing at upstream: those are real docs for these very
+# controls, and a dead link of our own would be worse than an honest outbound.
+if grep -q 'kasmweb.com/kasmvnc/docs' "$WORK/out/index.html" 2>/dev/null; then
+  ok "the Documentation link is left alone when brand.docsUrl is unset"
+else
+  no "the Documentation link is left alone when brand.docsUrl is unset"
+fi
+
+make_www "$WORK/src-docs"
+jq '.brand.docsUrl = "https://example.com/help"' "$TOKENS" > "$WORK/docs.json"
+TOKENS_OVERRIDE="$WORK/docs.json" run_brand "$WORK/src-docs" "$WORK/out-docs"
+if grep -q 'https://example.com/help' "$WORK/out-docs/index.html" 2>/dev/null; then
+  ok "brand.docsUrl redirects the Documentation link"
+else
+  no "brand.docsUrl redirects the Documentation link"
+fi
+
+# --- More ways for upstream to move -----------------------------------------
+make_www "$WORK/src-nologo"
+sed -i 's|<h1 class="noVNC_logo">|<h1 class="kasm_logo">|' "$WORK/src-nologo/index.html"
+run_brand "$WORK/src-nologo" "$WORK/out-nologo"
+if [ "$STATUS" -ne 0 ]; then ok "a renamed control-bar header fails the build"; else no "a renamed control-bar header fails the build"; fi
+
+make_www "$WORK/src-noerr"
+sed -i 's|KasmVNC encountered an error:|Something went wrong:|' "$WORK/src-noerr/index.html"
+run_brand "$WORK/src-noerr" "$WORK/out-noerr"
+if [ "$STATUS" -ne 0 ]; then ok "reworded error text fails the build"; else no "reworded error text fails the build"; fi
+
+# --- Brand values are interpolated into sed, so they are validated ----------
+make_www "$WORK/src-inject"
+jq '.brand.name = "Ac|me & Co"' "$TOKENS" > "$WORK/inject.json"
+TOKENS_OVERRIDE="$WORK/inject.json" run_brand "$WORK/src-inject" "$WORK/out-inject"
+if [ "$STATUS" -ne 0 ]; then ok "a brand name with sed metacharacters is rejected"; else no "a brand name with sed metacharacters is rejected"; fi
+
+jq '.brand.url = "javascript:alert(1)"' "$TOKENS" > "$WORK/badurl.json"
+TOKENS_OVERRIDE="$WORK/badurl.json" run_brand "$WORK/src-inject" "$WORK/out-badurl"
+if [ "$STATUS" -ne 0 ]; then ok "a non-http brand url is rejected"; else no "a non-http brand url is rejected"; fi
 # --- Failing loudly when upstream moves -------------------------------------
 # Each of these is a KasmVNC release changing something we key on. A silent
 # pass here would mean shipping Kasm's branding while believing otherwise.
