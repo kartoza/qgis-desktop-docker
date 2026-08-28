@@ -58,6 +58,23 @@ container, and `xfdesktop` simply draws over it while a session runs.
 | `QGIS_DESKTOP_WALLPAPER` | `/usr/share/wallpaper.png` | The image painted on the root window and used by the greeter. Bind-mount over it to change the wallpaper without rebuilding. |
 | `QGIS_DESKTOP_ROOT_COLOR` | `#0D161C` | Solid colour painted first, and the fallback if the image cannot be drawn. |
 
+### What applies in which mode
+
+The branding is served by both desktop paths, so it is the same everywhere. The
+log-out handling deliberately is not.
+
+| | `basic` / `none` | `oidc` | `greeter` |
+|---|---|---|---|
+| Branded web UI | yes | yes | yes |
+| Branded wallpaper | yes | yes | yes, as the greeter background |
+| Session restarts on log out | yes | yes (inner mode `none`) | **no — LightDM re-shows its login form instead**, which is the better behaviour where real per-user accounts exist |
+| Root window painted | yes | yes | not needed: the greeter fills the screen itself |
+
+`bash claude.sh verify` exercises `basic`, `none` and `greeter` against a built
+image and asserts exactly that table. `oidc` needs a live identity provider, so
+it stays a manual check via `nix run .#run-keycloak-demo` — its desktop path is
+whichever inner mode is configured, and both of those are already covered.
+
 ## What is not branded, on purpose
 
 Two things are left alone.
