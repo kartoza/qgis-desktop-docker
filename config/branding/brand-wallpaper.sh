@@ -52,6 +52,9 @@ tok() {
 }
 
 BRAND_NAME="$(tok '.brand.name')"
+# The URL without its scheme or trailing slash: what you would read aloud, not
+# what you would paste into a terminal.
+BRAND_HOST="$(printf '%s' "$(tok '.brand.url')" | sed -e 's|^https\?://||' -e 's|/$||')"
 TAGLINE="$(jq -r '.brand.tagline // ""' "${TOKENS}")"
 FONT_FAMILY="$(tok '.font.family')"
 ACCENT="$(tok '.color.accent')"
@@ -99,6 +102,7 @@ sed \
   -e "s|@GLOW@|${GLOW}|g" \
   -e "s|@WORDMARK@|${WORDMARK}|g" \
   -e "s|@TAGLINE_FILL@|${TAGLINE_FILL}|g" \
+  -e "s|@BRAND_HOST@|$(xml_escape "${BRAND_HOST}")|g" \
   -e "s|@LOGO@|$(basename "${LOGO}")|g" \
   "${TEMPLATE}" > "${SVG}"
 

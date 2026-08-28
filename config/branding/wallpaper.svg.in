@@ -41,4 +41,8 @@
         font-family="@FONT_FAMILY@, 'Open Sans', sans-serif"
         font-size="25" font-weight="400" letter-spacing="0.4"
         fill="@TAGLINE_FILL@">@TAGLINE@</text>
+  <text x="130" y="916"
+        font-family="@FONT_FAMILY@, 'Open Sans', sans-serif"
+        font-size="23" font-weight="700" letter-spacing="0.6"
+        fill="@ACCENT@">@BRAND_HOST@</text>
 </svg>

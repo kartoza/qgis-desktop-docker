@@ -28,6 +28,14 @@ LABEL="${QGIS_DESKTOP_MANAGE_LABEL:-Manage my desktops}"
 URL_REJECTED=0
 MARKER='<!--QGIS_DESKTOP_MANAGE_LINK-->'
 
+# Written at build time from tokens.json. Falling back to a literal would mean
+# two places to update, which is how the old value went stale.
+ACCENT="$(cat "${QGIS_DESKTOP_BRANDED_WWW:-/usr/share/qgis-desktop/www}/assets/brand-accent.txt" 2>/dev/null)"
+case "${ACCENT}" in
+  '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) : ;;
+  *) ACCENT="#DF9E2F" ;;
+esac
+
 log() { printf '[manage-link] %s\n' "$*"; }
 warn() { printf '[manage-link] WARN: %s\n' "$*" >&2; }
 
@@ -120,7 +128,7 @@ log "session-ended page updated"
 # whose contents change between releases, and inline styling cannot go stale.
 BAR_MARKER='<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->'
 if [ -n "${URL}" ]; then
-  BAR_BLOCK="<a href=\"${SAFE_URL}\" target=\"_blank\" rel=\"noopener\" title=\"${SAFE_LABEL}\" style=\"display:block;margin:6px 8px 10px;padding:7px 10px;border-radius:6px;background:#ECB44B;color:#2B2B2B;font:700 12px/1.2 sans-serif;text-align:center;text-decoration:none\">${SAFE_LABEL}</a>"
+  BAR_BLOCK="<a href=\"${SAFE_URL}\" target=\"_blank\" rel=\"noopener\" title=\"${SAFE_LABEL}\" style=\"display:block;margin:6px 8px 10px;padding:7px 10px;border-radius:6px;background:${ACCENT};color:#2B2B2B;font:700 12px/1.2 sans-serif;text-align:center;text-decoration:none\">${SAFE_LABEL}</a>"
 else
   BAR_BLOCK=""
 fi

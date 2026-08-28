@@ -19,6 +19,7 @@ BRAND="$PROJECT_ROOT/config/branding/brand-www.sh"
 TOKENS="$PROJECT_ROOT/config/branding/tokens.json"
 TEMPLATE="$PROJECT_ROOT/config/branding/disconnected.html.in"
 LOGO="$PROJECT_ROOT/resources/brand/geohosting.svg"
+REDIRECT_JS="$PROJECT_ROOT/config/branding/disconnect-redirect.js"
 
 PASS=0
 FAIL=0
@@ -56,7 +57,7 @@ make_www() {
 PAGE
   done
   echo '<html><body>Session Disconnected</body></html>' > "$dir/disconnected.html"
-  echo 'console.log(1)' > "$dir/assets/ui-D357AMxM.js"
+  printf 'classList.add("noVNC_connected");classList.add("noVNC_disconnected");\n' > "$dir/assets/ui-D357AMxM.js"
   echo '.a{color:red}' > "$dir/assets/screen-D7_1SmlI.css"
   printf 'kasm-splash\n' > "$dir/assets/splash-D03O8R4K.jpg"
 }
@@ -69,7 +70,7 @@ run_brand() {
       --source "$src" \
       --tokens "${TOKENS_OVERRIDE:-$TOKENS}" \
       --template "$TEMPLATE" \
-      --logo "$LOGO" --splash "$WORK/splash.jpg" \
+      --logo "$LOGO" --splash "$WORK/splash.jpg" --redirect-js "$REDIRECT_JS" \
       --font-regular "$WORK/regular.ttf" \
       --font-bold "$WORK/bold.ttf" \
       --out "$out" "$@" 2>&1
@@ -267,17 +268,64 @@ if [ "$STATUS" -ne 0 ]; then ok "an unknown argument is rejected"; else no "an u
 
 # --- The shipped tokens file ------------------------------------------------
 if jq -e . "$TOKENS" >/dev/null 2>&1; then ok "the shipped tokens file is valid JSON"; else no "the shipped tokens file is valid JSON"; fi
-if jq -e '._provenance.assumed | length > 0' "$TOKENS" >/dev/null 2>&1; then
-  ok "the tokens file records which values are assumed"
+# Every colour must say where it came from. These were guesses read off the live
+# site until the official palette was supplied; recording which are which is the
+# only way anyone can tell what still needs confirming.
+if jq -e '._provenance.official | length > 0' "$TOKENS" >/dev/null 2>&1; then
+  ok "the tokens file records which values are official"
 else
-  no "the tokens file records which values are assumed" \
-    "every derived value needs its provenance stated, or nobody knows what still needs confirming"
+  no "the tokens file records which values are official"
+fi
+if jq -e '._provenance | has("derived")' "$TOKENS" >/dev/null 2>&1; then
+  ok "…and which were derived rather than supplied"
+else
+  no "…and which were derived rather than supplied"
+fi
+if [ "$(jq -r .color.accent "$TOKENS")" = "#DF9E2F" ]; then
+  ok "the accent is the official highlight1, not the value read off the site"
+else
+  no "the accent is the official highlight1" "got $(jq -r .color.accent "$TOKENS")"
+fi
+if [ "$(cat "$WORK/out/assets/brand-accent.txt" 2>/dev/null)" = "$(jq -r .color.accent "$TOKENS")" ]; then
+  ok "the accent is published for the runtime link to read"
+else
+  no "the accent is published for the runtime link to read" \
+    "the control-bar button would keep a stale colour hardcoded"
 fi
 
 
 
 
 
+
+# --- The disconnect redirect ------------------------------------------------
+# KasmVNC only navigates to disconnected.html on an idle timeout. Without this,
+# logging out shows a small status bar and the session-ended page — including
+# the billing reminder — is never seen.
+for page in index.html vnc.html; do
+  if grep -q 'assets/brand-disconnect.js' "$WORK/out/$page" 2>/dev/null; then
+    ok "$page loads the disconnect redirect"
+  else
+    no "$page loads the disconnect redirect"
+  fi
+done
+if [ -f "$WORK/out/assets/brand-disconnect.js" ]; then
+  ok "the redirect script is installed"
+else
+  no "the redirect script is installed"
+fi
+
+# It keys on two class names in the bundle. A rename must fail the build, not
+# quietly restore the behaviour we just fixed.
+make_www "$WORK/src-noclass"
+sed -i 's|noVNC_disconnected|noVNC_gone|' "$WORK/src-noclass/assets/ui-D357AMxM.js"
+run_brand "$WORK/src-noclass" "$WORK/out-noclass"
+if [ "$STATUS" -ne 0 ]; then ok "a renamed disconnect class fails the build"; else no "a renamed disconnect class fails the build"; fi
+
+make_www "$WORK/src-twoui"
+cp "$WORK/src-twoui/assets/ui-D357AMxM.js" "$WORK/src-twoui/assets/ui-OTHER.js"
+run_brand "$WORK/src-twoui" "$WORK/out-twoui"
+if [ "$STATUS" -ne 0 ]; then ok "two ui bundles fail the build"; else no "two ui bundles fail the build"; fi
 # --- The pre-connection splash ----------------------------------------------
 # The first thing a user sees, and it was Kasm's blue geometry.
 if grep -q 'brand-splash' "$WORK/out/assets/splash-D03O8R4K.jpg" 2>/dev/null; then

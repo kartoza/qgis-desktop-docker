@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-SOURCE="" TOKENS="" TEMPLATE="" LOGO="" SPLASH="" FONT_REGULAR="" FONT_BOLD="" OUT=""
+SOURCE="" TOKENS="" TEMPLATE="" LOGO="" SPLASH="" REDIRECT_JS="" FONT_REGULAR="" FONT_BOLD="" OUT=""
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -36,6 +36,7 @@ while [ $# -gt 0 ]; do
     --template) TEMPLATE="${2:-}"; shift 2 ;;
     --logo) LOGO="${2:-}"; shift 2 ;;
     --splash) SPLASH="${2:-}"; shift 2 ;;
+    --redirect-js) REDIRECT_JS="${2:-}"; shift 2 ;;
     --font-regular) FONT_REGULAR="${2:-}"; shift 2 ;;
     --font-bold) FONT_BOLD="${2:-}"; shift 2 ;;
     --out) OUT="${2:-}"; shift 2 ;;
@@ -45,7 +46,7 @@ done
 
 for pair in \
   "SOURCE:--source" "TOKENS:--tokens" "TEMPLATE:--template" \
-  "LOGO:--logo" "SPLASH:--splash" "FONT_REGULAR:--font-regular" "FONT_BOLD:--font-bold" "OUT:--out"
+  "LOGO:--logo" "SPLASH:--splash" "REDIRECT_JS:--redirect-js" "FONT_REGULAR:--font-regular" "FONT_BOLD:--font-bold" "OUT:--out"
 do
   var="${pair%%:*}"
   flag="${pair#*:}"
@@ -53,7 +54,7 @@ do
 done
 
 [ -d "${SOURCE}" ] || die "--source ${SOURCE} is not a directory."
-for f in "${TOKENS}" "${TEMPLATE}" "${LOGO}" "${SPLASH}" "${FONT_REGULAR}" "${FONT_BOLD}"; do
+for f in "${TOKENS}" "${TEMPLATE}" "${LOGO}" "${SPLASH}" "${REDIRECT_JS}" "${FONT_REGULAR}" "${FONT_BOLD}"; do
   [ -r "${f}" ] || die "${f} is not readable."
 done
 
@@ -108,6 +109,12 @@ mkdir -p "${OUT}"
 cp -r "${SOURCE}/." "${OUT}/"
 chmod -R u+w "${OUT}"
 
+# The control-bar link is injected at runtime, long after tokens.json is out of
+# reach, so publish the one value that markup needs. Keeps the tokens file the
+# single source of truth instead of a second hardcoded copy going stale.
+printf '%s\n' "${COLOR_ACCENT}" > "${OUT}/assets/brand-accent.txt"
+chmod 0444 "${OUT}/assets/brand-accent.txt"
+
 install -m 0444 "${LOGO}" "${OUT}/assets/brand-logo.svg"
 install -m 0444 "${FONT_REGULAR}" "${OUT}/assets/brand-body.ttf"
 install -m 0444 "${FONT_BOLD}" "${OUT}/assets/brand-body-bold.ttf"
@@ -116,6 +123,13 @@ install -m 0444 "${FONT_BOLD}" "${OUT}/assets/brand-body-bold.ttf"
 # vnc.html is byte-identical to index.html upstream, but both are served, so
 # both are patched. A future release that drops one is not an error; a release
 # that drops both is.
+# The bundle name carries a content hash, so find it by shape and insist on one.
+ui_count="$(find "${OUT}/assets" -maxdepth 1 -name 'ui-*.js' | wc -l)"
+[ "${ui_count}" -eq 1 ] ||
+  die "expected exactly one assets/ui-*.js, found ${ui_count} — KasmVNC changed its asset layout."
+UI_BUNDLE="$(basename "$(find "${OUT}/assets" -maxdepth 1 -name 'ui-*.js')")"
+install -m 0444 "${REDIRECT_JS}" "${OUT}/assets/brand-disconnect.js"
+
 patched_pages=0
 for page in index.html vnc.html; do
   path="${OUT}/${page}"
@@ -137,6 +151,17 @@ for page in index.html vnc.html; do
   fi
 
   sed -i "s|</title>|</title><link rel=\"icon\" href=\"./assets/brand-logo.svg\" type=\"image/svg+xml\">|" "${path}"
+
+  # KasmVNC only navigates to disconnected.html on an idle timeout; an ordinary
+  # disconnect shows a status bar. Without this the session-ended page — and
+  # the billing reminder on it — is never seen by anyone who logs out.
+  grep -qF 'noVNC_disconnected' "${OUT}/assets/${UI_BUNDLE}" ||
+    die "the bundle no longer sets the noVNC_disconnected class — the disconnect redirect needs updating."
+  grep -qF 'noVNC_connected' "${OUT}/assets/${UI_BUNDLE}" ||
+    die "the bundle no longer sets the noVNC_connected class — the disconnect redirect needs updating."
+  sed -i "s|</body>|<script src=\"./assets/brand-disconnect.js\"></script></body>|" "${path}"
+  grep -q 'brand-disconnect.js' "${path}" ||
+    die "${page} has no </body> to attach the disconnect redirect to."
 
   # A slot in the control bar for the deployment's management link. Same reason
   # as on the session-ended page: the URL belongs to the deployment, not the

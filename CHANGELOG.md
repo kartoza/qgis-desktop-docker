@@ -7,6 +7,36 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **Logging out really does show the session-ended page now.** The previous
+  attempt ended the display server on log out, on the assumption that a dropped
+  connection would send the browser to `disconnected.html`. It does not:
+  KasmVNC navigates there **only** on an idle-session timeout, and shows a small
+  status bar for every other disconnect. The page existed and nothing ever
+  showed it. A small script injected into the entry pages now watches the
+  connection-state class the bundle sets on `<html>` and navigates when a
+  session that had connected goes away. Both class names are asserted at build
+  time, so a KasmVNC rename fails the build rather than quietly restoring the
+  old behaviour.
+
+- **Arial-authored QGIS projects lay out correctly.** QGIS logged a missing
+  Arial and substituted a font with different metrics, which shifts every label
+  on a map. Liberation Sans is metric-compatible and was already in the image,
+  but `makeFontsConf` does not include fontconfig's own `conf.d`, so the stock
+  metric-alias rules never applied. The desktop's font config now carries them
+  for Arial, Helvetica, Times New Roman and Courier New. Arial itself is
+  Monotype's and is not redistributable, so it is not shipped.
+
+### Changed
+
+- **The official brand palette replaces the values derived from the live site.**
+  Accent `#DF9E2F`, blue `#569FC6`, grey `#8A8B8B`, ink `#1B1F23`, mist
+  `#F4F6F8`. The derived guesses were close but wrong. The wallpaper wordmark is
+  now brand grey with `geospatialhosting.com` beneath it in the accent, and the
+  runtime control-bar button reads its colour from the tokens file instead of a
+  second hardcoded copy.
+
 ### Changed
 
 - **Logging out now lands on the session-ended page instead of silently

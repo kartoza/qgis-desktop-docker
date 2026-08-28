@@ -181,6 +181,7 @@
             --template ${./config/branding/disconnected.html.in} \
             --logo ${./resources/brand/geohosting.svg} \
             --splash ${brandedSplash} \
+            --redirect-js ${./config/branding/disconnect-redirect.js} \
             --font-regular ${pkgs.lato}/share/fonts/lato/Lato-Regular.ttf \
             --font-bold ${pkgs.lato}/share/fonts/lato/Lato-Bold.ttf \
             --out $out
@@ -1016,13 +1017,29 @@ DBUSEOF
         # come up complaining that Open Sans and friends are missing.
         # Building our own config with makeFontsConf points fontconfig
         # at exactly the font packages listed in dockerImage.contents.
-        desktopFontsConf = pkgs.makeFontsConf {
+        # The font directories the desktop can see. Liberation is what makes
+        # Arial-authored QGIS projects lay out correctly — see the alias file.
+        desktopFontDirs = pkgs.makeFontsConf {
           fontDirectories = [
             pkgs.dejavu_fonts
             pkgs.liberation_ttf
             pkgs.open-sans
+            pkgs.lato
           ];
         };
+
+        # makeFontsConf does not include fontconfig's own conf.d, so its
+        # 30-metric-aliases rules never applied and Arial resolved to nothing.
+        # Wrap the generated config and add the aliases alongside it.
+        desktopFontsConf = pkgs.runCommand "qgis-desktop-fonts.conf" { } ''
+          {
+            head -n -1 ${desktopFontDirs}
+            cat ${./config/fonts/60-metric-aliases.conf} \
+              | grep -v '^<?xml' | grep -v '^<!DOCTYPE' \
+              | sed -e 's|^<fontconfig>||' -e 's|^</fontconfig>||'
+            echo '</fontconfig>'
+          } > $out
+        '';
 
         # Renders docs/**/diagrams/*.d2 to SVG. Separate from the mkdocs apps
         # because the PDF build needs it too, and because a diagram change
