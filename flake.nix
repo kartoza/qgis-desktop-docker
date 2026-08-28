@@ -177,6 +177,29 @@
             --out $out
         '';
 
+
+        # The desktop wallpaper, rendered from an SVG at build time. Used in
+        # three places: the XFCE desktop, the LightDM greeter background in
+        # greeter mode, and the X root window that shows for a few seconds
+        # while a session restarts.
+        brandWallpaperScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-brand-wallpaper";
+          runtimeInputs = with pkgs; [ jq coreutils gnused gnugrep librsvg ];
+          text = builtins.readFile ./config/branding/brand-wallpaper.sh;
+        };
+
+        # rsvg needs fontconfig to resolve the wordmark's typeface, or it
+        # silently falls back to whatever it can find — which is how you ship a
+        # wallpaper set in the wrong font without noticing.
+        wallpaperFontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.lato ]; };
+
+        brandedWallpaper = pkgs.runCommand "qgis-desktop-wallpaper.png" { } ''
+          export FONTCONFIG_FILE=${wallpaperFontsConf}
+          ${brandWallpaperScript}/bin/qgis-desktop-brand-wallpaper \
+            --template ${./config/branding/wallpaper.svg.in} \
+            --tokens ${./config/branding/tokens.json} \
+            --out $out
+        '';
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -233,6 +256,8 @@
             procps
             gnugrep
             xkbcomp
+            feh              # paints the wallpaper onto the X root window
+            xorg.xsetroot    # ...with a solid brand colour as the fallback
             xrdb
           ] ++ [
             epaTool # `epa install` wires Giswater up to the native solvers
@@ -427,6 +452,8 @@
 
             # X11 essentials
             xkbcomp
+            feh              # paints the wallpaper onto the X root window
+            xorg.xsetroot    # ...with a solid brand colour as the fallback
             xkeyboard_config
             xrdb
 
@@ -520,7 +547,7 @@
 
             # Deploy wallpaper
             mkdir -p ./usr/share
-            cp ${./resources/wallpaper.png} ./usr/share/wallpaper.png
+            cp ${brandedWallpaper} ./usr/share/wallpaper.png
 
             # Branded KasmVNC web root. Copied rather than symlinked: LightDM
             # scrubs the environment before spawning the X server, so the
@@ -1016,6 +1043,10 @@ DBUSEOF
           # and the result is plain static files you can open in a browser,
           # with no multi-gigabyte image build in the way.
           branded-www = brandedWww;
+
+          # The wallpaper on its own: `nix build .#branded-wallpaper` renders it
+          # in a second so a design change can be looked at without an image build.
+          branded-wallpaper = brandedWallpaper;
 
           # QGIS LTR is the default everywhere: it is the build you put in
           # front of users.
@@ -1605,7 +1636,7 @@ DBUSEOF
             type = "app";
             program = "${pkgs.writeShellApplication {
               name = "test-branding";
-              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils shellcheck ];
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils shellcheck librsvg ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 exec bash ${self}/scripts/test-branding.sh
@@ -1680,6 +1711,8 @@ DBUSEOF
               runtimeInputs = with pkgs; [
                 bash coreutils gnused gnugrep gawk findutils diffutils
                 oauth2-proxy rclone d2
+                # test-branding.sh renders the wallpaper SVG.
+                librsvg
                 # test-check-oidc.sh serves a fake OIDC provider from python3
                 # and talks to it with curl/jq — no network, no Docker.
                 curl jq python3

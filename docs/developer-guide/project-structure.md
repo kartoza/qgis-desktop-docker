@@ -31,6 +31,8 @@ qgis-desktop-docker/
 │   │   ├── tokens.json         # THE brand values — one file re-themes everything
 │   │   ├── disconnected.html.in # Session-ended page template
 │   │   └── brand-www.sh        # Build-time overlay; asserts every substitution
+│   │   ├── wallpaper.svg.in    # Desktop / greeter / root-window wallpaper
+│   │   └── brand-wallpaper.sh  # Renders that SVG to PNG at build time
 │   │
 │   ├── session/                # Desktop session lifecycle (basic/none/oidc)
 │   │   └── session-supervisor.sh # Relaunches XFCE on log-out, with a crash-loop guard

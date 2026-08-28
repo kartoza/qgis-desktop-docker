@@ -322,6 +322,30 @@ if [ ! -e "/tmp/.X11-unix/X${DISPLAY_NUM}" ]; then
   exit 1
 fi
 
+
+# Paint the root window ourselves, once, as soon as X is up.
+#
+# xfdesktop draws the wallpaper, but it dies with the session — so between XFCE
+# exiting on Log Out and the supervisor bringing it back, the user was left
+# looking at the bare X root window for several seconds. That is the flat blue
+# people were seeing, and it looked like a fault rather than a restart.
+#
+# The root window outlives every session restart, so painting it here covers
+# the gap for the whole life of the container. xfdesktop simply draws over it
+# while a session is running.
+paint_root_window() {
+  # Solid brand colour first: instant, and it is the fallback if the image
+  # cannot be drawn for any reason.
+  if command -v xsetroot >/dev/null 2>&1; then
+    xsetroot -solid "${QGIS_DESKTOP_ROOT_COLOR:-#0D161C}" 2>/dev/null || true
+  fi
+  # Then the wallpaper itself, so the gap shows the brand rather than a flat
+  # colour. Optional — a missing feh is not worth failing a boot over.
+  if command -v feh >/dev/null 2>&1 && [ -r "${QGIS_DESKTOP_WALLPAPER:-/usr/share/wallpaper.png}" ]; then
+    feh --no-fehbg --bg-fill "${QGIS_DESKTOP_WALLPAPER:-/usr/share/wallpaper.png}" 2>/dev/null || true
+  fi
+}
+paint_root_window
 # Point the Giswater plugin at the natively built EPA solvers, if it is
 # installed in this home directory. Giswater shells out to Windows binaries it
 # ships inside its own plugin folder; `epa install` replaces them with symlinks

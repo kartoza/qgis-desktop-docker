@@ -27,6 +27,33 @@ page, with no way to navigate the page containing it. So the sign-out affordance
 lives there, and nowhere else. KasmVNC redirects to it on disconnect, so it is
 genuinely on the path users take.
 
+## The wallpaper, and the gap on log-out
+
+The desktop wallpaper is rendered from `config/branding/wallpaper.svg.in` at
+build time, with its colours coming from the same tokens file. Edit the SVG or
+the tokens and rebuild; `nix build .#branded-wallpaper` renders it in about a
+second so you can look at a change without an image build.
+
+It shows up in three places, which is why it is worth getting right:
+
+- the XFCE desktop;
+- the LightDM greeter background in `greeter` mode;
+- the X root window.
+
+That last one is the fix for a real complaint. `xfdesktop` draws the wallpaper,
+but it dies with the session — so between XFCE exiting on **Log Out** and the
+supervisor restarting it, users were left looking at the bare X root window for
+several seconds. Flat blue, no explanation, easily mistaken for a fault.
+`start-desktop.sh` now paints the root window once, as soon as X is up: a solid
+brand colour first, then the wallpaper over it. The root window outlives every
+session restart, so painting it once covers the gap for the life of the
+container, and `xfdesktop` simply draws over it while a session runs.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QGIS_DESKTOP_WALLPAPER` | `/usr/share/wallpaper.png` | The image painted on the root window and used by the greeter. Bind-mount over it to change the wallpaper without rebuilding. |
+| `QGIS_DESKTOP_ROOT_COLOR` | `#0D161C` | Solid colour painted first, and the fallback if the image cannot be drawn. |
+
 ## What is not branded, on purpose
 
 Two things are left alone.

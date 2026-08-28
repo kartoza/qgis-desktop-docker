@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <!-- Wallpaper template. Rendered to PNG at build time by brand-wallpaper.sh,
+       with its placeholders substituted from config/branding/tokens.json.
+
+       Composition note: the desktop's icons live top-left and QGIS covers the
+       middle, so the artwork is weighted to the lower right and kept low in
+       contrast. A wallpaper that competes with a map is a wallpaper that gets
+       replaced. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="@BG_TOP@"/>
+      <stop offset="1" stop-color="@BG_BOTTOM@"/>
+    </linearGradient>
+
+    <radialGradient id="glow" cx="0.72" cy="0.62" r="0.55">
+      <stop offset="0" stop-color="@GLOW@" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="@GLOW@" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- One isometric layer of the mark: a flat parallelogram slab seen from
+         above, matching the geometry of the GeoSpatialHosting logo. -->
+    <g id="slab">
+      <path d="M 0,-52 L 300,48 L 0,148 L -300,48 Z"/>
+    </g>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#glow)"/>
+
+  <!-- The mark's three layers, oversized and low-contrast. Grey on top, then
+       blue, then amber, exactly as the logo stacks them. -->
+  <g transform="translate(1370 520) scale(1.75)" opacity="0.5">
+    <use href="#slab" y="-150" fill="@MUTED@" opacity="0.40"/>
+    <use href="#slab" y="10"   fill="@SECONDARY@" opacity="0.55"/>
+    <use href="#slab" y="170"  fill="@ACCENT@" opacity="0.65"/>
+
+    <!-- Node dots, the detail that makes it read as layers of data rather
+         than as three shapes. -->
+    <circle cx="60"  cy="-138" r="7" fill="#FFFFFF" opacity="0.55"/>
+    <circle cx="-90" cy="22"   r="7" fill="#FFFFFF" opacity="0.55"/>
+    <circle cx="60"  cy="182"  r="7" fill="#FFFFFF" opacity="0.55"/>
+  </g>
+
+  <!-- A second, much fainter stack far left, so the composition has somewhere
+       to travel to without cluttering the icon area. -->
+  <g transform="translate(330 600) scale(0.85)" opacity="0.11">
+    <use href="#slab" y="-110" fill="@MUTED@"/>
+    <use href="#slab" y="10"   fill="@SECONDARY@"/>
+    <use href="#slab" y="130"  fill="@ACCENT@"/>
+  </g>
+
+  <text x="96" y="1004"
+        font-family="@FONT_FAMILY@, 'Open Sans', sans-serif"
+        font-size="34" font-weight="700" letter-spacing="0.5"
+        fill="@WORDMARK@" opacity="0.82">@BRAND_NAME@</text>
+  <text x="96" y="1040"
+        font-family="@FONT_FAMILY@, 'Open Sans', sans-serif"
+        font-size="19" font-weight="400" letter-spacing="2.2"
+        fill="@WORDMARK@" opacity="0.42">@TAGLINE@</text>
+</svg>

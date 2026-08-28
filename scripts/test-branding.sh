@@ -273,6 +273,46 @@ else
 fi
 
 
+
+# --- The wallpaper ----------------------------------------------------------
+# It is used in three places (XFCE desktop, LightDM greeter background, and the
+# X root window during a session restart), so a broken render is visible in all
+# of them.
+if command -v rsvg-convert >/dev/null 2>&1; then
+  WALLPAPER="$PROJECT_ROOT/config/branding/brand-wallpaper.sh"
+  WP_TEMPLATE="$PROJECT_ROOT/config/branding/wallpaper.svg.in"
+
+  run_wallpaper() {
+    OUTPUT="$(bash "$WALLPAPER" --template "${2:-$WP_TEMPLATE}" \
+      --tokens "${1:-$TOKENS}" --out "$WORK/wp.png" 2>&1)"
+    STATUS=$?
+  }
+
+  rm -f "$WORK/wp.png"
+  run_wallpaper
+  if [ "$STATUS" -eq 0 ]; then ok "the wallpaper renders"; else no "the wallpaper renders" "$OUTPUT"; fi
+  if [ -s "$WORK/wp.png" ]; then ok "…and the PNG is not empty"; else no "…and the PNG is not empty"; fi
+  # A PNG, not an SVG someone renamed.
+  if head -c 8 "$WORK/wp.png" 2>/dev/null | grep -q 'PNG'; then
+    ok "…and is a real PNG"
+  else
+    no "…and is a real PNG"
+  fi
+
+  run_wallpaper "$WORK/wp-bad.json"
+  if [ "$STATUS" -ne 0 ]; then ok "a malformed wallpaper colour is rejected"; else no "a malformed wallpaper colour is rejected"; fi
+
+  jq 'del(.wallpaper)' "$TOKENS" > "$WORK/wp-none.json"
+  run_wallpaper "$WORK/wp-none.json"
+  if [ "$STATUS" -ne 0 ]; then ok "a missing wallpaper block is rejected"; else no "a missing wallpaper block is rejected"; fi
+
+  # An unknown placeholder in the template must fail the build, not ship.
+  sed 's|@WORDMARK@|@NOT_A_TOKEN@|' "$WP_TEMPLATE" > "$WORK/wp-tmpl.svg"
+  run_wallpaper "$TOKENS" "$WORK/wp-tmpl.svg"
+  if [ "$STATUS" -ne 0 ]; then ok "an unknown template placeholder fails the render"; else no "an unknown template placeholder fails the render"; fi
+else
+  echo "  — rsvg-convert not on PATH; skipping the wallpaper checks"
+fi
 # --- shellcheck -------------------------------------------------------------
 # brand-www.sh is packaged with writeShellApplication, which runs shellcheck at
 # BUILD time and treats even info-level findings as fatal. Without this test the

@@ -7,6 +7,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **A branded wallpaper, and no more blue flash on log-out.** The desktop
+  wallpaper is rendered from `config/branding/wallpaper.svg.in` at build time
+  using the same tokens file as the rest of the branding, and carries the
+  layered motif from the GeoSpatialHosting mark.
+
+  It also fixes something people noticed: `xfdesktop` draws the wallpaper but
+  dies with the session, so between XFCE exiting on **Log Out** and the
+  supervisor restarting it there were several seconds of bare X root window —
+  flat blue, no explanation, easily read as a fault. `start-desktop.sh` now
+  paints the root window once as soon as X is up, so the gap shows the brand
+  instead. The same image is the LightDM greeter background in `greeter` mode.
+
+  `nix build .#branded-wallpaper` renders it in about a second, so a design
+  change can be reviewed without an image build.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_WALLPAPER` | `/usr/share/wallpaper.png` | Bind-mount over it to change the wallpaper without rebuilding. |
+  | `QGIS_DESKTOP_ROOT_COLOR` | `#0D161C` | Painted first, and the fallback if the image cannot be drawn. |
+
 ### Fixed
 
 - **The image builds again.** `config/session/session-supervisor.sh` tripped
