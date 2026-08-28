@@ -41,7 +41,48 @@
           # and tolerate either being absent so a nixpkgs rename fails loudly at
           # the callsite rather than silently doing nothing here.
           (if prev ? hdf4 then { hdf4 = dropCompilerRef prev.hdf4; } else { })
-          // (if prev ? hdf then { hdf = dropCompilerRef prev.hdf; } else { });
+          // (if prev ? hdf then { hdf = dropCompilerRef prev.hdf; } else { })
+          //
+          # One dependency drags in most of a second desktop environment.
+          # xfce4-settings pulls xapp (Linux Mint's cross-desktop library),
+          # which pulls mate-panel and libmateweather, which pull marco (MATE's
+          # window manager), which pulls zenity, which pulls GTK4 and
+          # libadwaita — alongside the GTK3 that XFCE actually uses. Roughly
+          # 90 MB of a desktop we do not run.
+          #
+          # Dropped from buildInputs rather than disabled by flag: xfce4-settings
+          # uses xapp only for optional cross-desktop integration, and if a
+          # future version needs it the build will say so rather than producing
+          # something subtly broken.
+          (if prev ? xfce4-settings then {
+            xfce4-settings = prev.xfce4-settings.overrideAttrs (old: {
+              buildInputs = builtins.filter
+                (p: !(prev.lib.hasPrefix "xapp" (p.pname or p.name or "")))
+                (old.buildInputs or [ ]);
+            });
+          } else { })
+          //
+          # debugpy vendors pydevd's "attach to a running process" helper, which
+          # injects code into a live process using gdb — and that single
+          # directory is the only reason a 16 MB debugger is in the image.
+          #
+          # Removing the directory rather than just scrubbing the path takes the
+          # capability away too. Injecting code into other processes is not
+          # something a subscriber on a shared desktop should be able to do, and
+          # debugpy's actual job — being a debug adapter — does not use it.
+          {
+            pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+              (_pyfinal: pyprev: {
+                debugpy = pyprev.debugpy.overrideAttrs (old: {
+                  postInstall = (old.postInstall or "") + ''
+                    find "$out" -type d -name pydevd_attach_to_process \
+                      -prune -exec rm -rf {} +
+                  '';
+                });
+              })
+            ];
+          }
+          ;
 
         pkgs = import nixpkgs {
           inherit system;
