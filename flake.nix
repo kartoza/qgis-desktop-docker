@@ -220,6 +220,21 @@
             --logo ${./resources/brand/geohosting.svg} \
             --out $out
         '';
+        # --- rclone, trimmed to the backends we can actually use -----------
+        # Upstream compiles in ~70 storage backends. Every one drags its client
+        # library along, which is how a QGIS desktop ended up with ProtonMail,
+        # Dropbox, Mega and Yandex in its SBOM. None of it was reachable:
+        # config/persist/persist.sh accepts s3 or local and rejects anything
+        # else. The replacement registry keeps exactly those two.
+        #
+        # Not a feature change — the s3 backend covers every S3-compatible
+        # provider, because the provider is a config key rather than a backend.
+        rcloneMinimal = pkgs.rclone.overrideAttrs (old: {
+          postPatch = (old.postPatch or "") + ''
+            cp ${./nix/rclone-backends-all.go} backend/all/all.go
+          '';
+        });
+
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -227,7 +242,7 @@
         persistScript = pkgs.writeShellApplication {
           name = "qgis-desktop-persist";
           runtimeInputs = with pkgs; [
-            rclone
+            rcloneMinimal   # s3 + local only; see the override above
             coreutils # timeout, numfmt, date, chown, id, cp
             gnused
             hostname
