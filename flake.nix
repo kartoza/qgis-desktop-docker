@@ -150,6 +150,14 @@
           text = builtins.readFile ./config/session/session-supervisor.sh;
         };
 
+
+        # The splash is a JPEG in KasmVNC's asset tree, so the wallpaper is
+        # re-encoded rather than re-rendered — one artwork, two containers for
+        # it, and no chance of the two drifting apart.
+        brandedSplash = pkgs.runCommand "qgis-desktop-splash.jpg"
+          { nativeBuildInputs = [ pkgs.imagemagick ]; } ''
+            magick ${brandedWallpaper} -quality 88 "$out"
+          '';
         # --- Branding (the KasmVNC web root) ------------------------------
         # Renders a branded copy of KasmVNC's www tree at build time. Every
         # brand value comes from config/branding/tokens.json — correcting that
@@ -172,6 +180,7 @@
             --tokens ${./config/branding/tokens.json} \
             --template ${./config/branding/disconnected.html.in} \
             --logo ${./resources/brand/geohosting.svg} \
+            --splash ${brandedSplash} \
             --font-regular ${pkgs.lato}/share/fonts/lato/Lato-Regular.ttf \
             --font-bold ${pkgs.lato}/share/fonts/lato/Lato-Bold.ttf \
             --out $out

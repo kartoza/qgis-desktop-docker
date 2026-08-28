@@ -82,6 +82,13 @@ esac
 QGIS_DESKTOP_USERS_FILE="${QGIS_DESKTOP_USERS_FILE:-/etc/qgis-desktop/users}"
 QGIS_DESKTOP_USERS="${QGIS_DESKTOP_USERS:-}"
 
+# Written by the session supervisor when the user logs out cleanly, and read
+# after Xkasmvnc exits. Exported so the supervisor and this script agree on the
+# path even if it is overridden.
+QGIS_DESKTOP_LOGOUT_FLAG="${QGIS_DESKTOP_LOGOUT_FLAG:-/tmp/qgis-desktop-logout}"
+export QGIS_DESKTOP_LOGOUT_FLAG
+rm -f "${QGIS_DESKTOP_LOGOUT_FLAG}"
+
 export DISPLAY
 
 # Normalise 1/yes/true/on to "1", anything else to "0".
@@ -385,5 +392,26 @@ fi
 echo "============================================"
 echo ""
 
-# Wait for Xkasmvnc to exit
+# Wait for Xkasmvnc to exit.
+#
+# It exits for one of two reasons. Either the container is going down, in which
+# case so are we — or the session supervisor ended it deliberately on a clean
+# log out, to drop the browser onto the session-ended page. In that second case
+# come straight back up, so the page's Reconnect button lands on a working
+# desktop rather than a refused connection.
 wait $XKASMVNC_PID
+XKASMVNC_STATUS=$?
+
+if [ -e "${QGIS_DESKTOP_LOGOUT_FLAG}" ]; then
+  rm -f "${QGIS_DESKTOP_LOGOUT_FLAG}"
+  echo ""
+  echo "Log out: display server ended so the session-ended page is shown."
+  echo "Bringing the desktop back up for the Reconnect button."
+  echo ""
+  # Re-exec rather than loop: everything this script does at startup is
+  # idempotent, and starting over is the same code path a fresh boot takes —
+  # which is one behaviour to reason about instead of two.
+  exec "$0" "$@"
+fi
+
+exit "${XKASMVNC_STATUS}"

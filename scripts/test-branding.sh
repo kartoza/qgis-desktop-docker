@@ -42,6 +42,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 printf 'regular\n' > "$WORK/regular.ttf"
 printf 'bold\n' > "$WORK/bold.ttf"
+printf 'brand-splash\n' > "$WORK/splash.jpg"
 
 # A miniature stand-in for KasmVNC's web root, carrying exactly the markup the
 # script keys on.
@@ -57,6 +58,7 @@ PAGE
   echo '<html><body>Session Disconnected</body></html>' > "$dir/disconnected.html"
   echo 'console.log(1)' > "$dir/assets/ui-D357AMxM.js"
   echo '.a{color:red}' > "$dir/assets/screen-D7_1SmlI.css"
+  printf 'kasm-splash\n' > "$dir/assets/splash-D03O8R4K.jpg"
 }
 
 run_brand() {
@@ -67,7 +69,7 @@ run_brand() {
       --source "$src" \
       --tokens "${TOKENS_OVERRIDE:-$TOKENS}" \
       --template "$TEMPLATE" \
-      --logo "$LOGO" \
+      --logo "$LOGO" --splash "$WORK/splash.jpg" \
       --font-regular "$WORK/regular.ttf" \
       --font-bold "$WORK/bold.ttf" \
       --out "$out" "$@" 2>&1
@@ -275,6 +277,26 @@ fi
 
 
 
+
+# --- The pre-connection splash ----------------------------------------------
+# The first thing a user sees, and it was Kasm's blue geometry.
+if grep -q 'brand-splash' "$WORK/out/assets/splash-D03O8R4K.jpg" 2>/dev/null; then
+  ok "the Kasm splash is replaced with ours"
+else
+  no "the Kasm splash is replaced with ours"
+fi
+
+# The filename carries a content hash, so a KasmVNC bump renames it. Silently
+# skipping would leave Kasm's artwork on screen while everyone assumed otherwise.
+make_www "$WORK/src-nosplash"
+rm -f "$WORK/src-nosplash/assets/splash-D03O8R4K.jpg"
+run_brand "$WORK/src-nosplash" "$WORK/out-nosplash"
+if [ "$STATUS" -ne 0 ]; then ok "a missing splash asset fails the build"; else no "a missing splash asset fails the build"; fi
+
+make_www "$WORK/src-twosplash"
+cp "$WORK/src-twosplash/assets/splash-D03O8R4K.jpg" "$WORK/src-twosplash/assets/splash-OTHER.jpg"
+run_brand "$WORK/src-twosplash" "$WORK/out-twosplash"
+if [ "$STATUS" -ne 0 ]; then ok "two splash candidates fail the build"; else no "two splash candidates fail the build"; fi
 # --- The runtime management link --------------------------------------------
 # The URL belongs to the deployment, not the image, so it is filled in at
 # container start. These check the two-file arrangement that makes that

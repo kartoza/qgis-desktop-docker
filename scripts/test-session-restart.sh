@@ -116,13 +116,13 @@ assert_equals "$STATUS" "3" "propagates the last status after giving up"
 # --- The X server guard -----------------------------------------------------
 # A dead guard pid means the X server has gone; respawning sessions into
 # nothing would just burn CPU until the container is killed.
-make_session 0
+make_session 1  # a crash, not a log out: the guard is about crash-restarts
 DEAD_PID="$(bash -c 'echo $$')" # a pid that has already exited
 run_supervisor QGIS_DESKTOP_SESSION_GUARD_PID="$DEAD_PID" QGIS_DESKTOP_SESSION_RESTART_DELAY=0
 assert_equals "$RUNS" "1" "stops when the guard pid is gone"
 assert_contains "$OUTPUT" "is gone" "and says why"
 
-make_session 0
+make_session 1  # a crash, not a log out: the guard is about crash-restarts
 sleep 30 &
 LIVE_PID=$!
 run_supervisor QGIS_DESKTOP_SESSION_GUARD_PID="$LIVE_PID" \
@@ -131,6 +131,58 @@ kill "$LIVE_PID" 2>/dev/null
 wait "$LIVE_PID" 2>/dev/null
 assert_equals "$RUNS" "3" "keeps restarting while the guard pid is alive"
 
+
+# --- Logging out is not the same as crashing --------------------------------
+# A crash should be papered over by restarting under the same X server. A log
+# out must be visible: restarting silently means the browser never disconnects,
+# so the user never sees the session-ended page and never gets the chance to
+# sign out or to be reminded the machine is still billing.
+make_session 0
+sleep 30 &
+LIVE_PID=$!
+rm -f "$WORK/logout-flag"
+run_supervisor QGIS_DESKTOP_SESSION_GUARD_PID="$LIVE_PID" \
+  QGIS_DESKTOP_LOGOUT_FLAG="$WORK/logout-flag" \
+  QGIS_DESKTOP_SESSION_RESTART_DELAY=0
+assert_equals "$RUNS" "1" "a clean log out does not silently restart the session"
+assert_contains "$OUTPUT" "clean log out" "and says what it is doing"
+if [ -e "$WORK/logout-flag" ]; then
+  ok "…and leaves the flag start-desktop reads to come back up"
+else
+  no "…and leaves the flag start-desktop reads to come back up"
+fi
+if kill -0 "$LIVE_PID" 2>/dev/null; then
+  no "…and signals the display server to end" "the guard pid is still alive"
+else
+  ok "…and signals the display server to end"
+fi
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
+
+# A crash under a live guard must still restart in place — no disconnect.
+make_session 1
+sleep 30 &
+LIVE_PID=$!
+rm -f "$WORK/logout-flag"
+run_supervisor QGIS_DESKTOP_SESSION_GUARD_PID="$LIVE_PID" \
+  QGIS_DESKTOP_LOGOUT_FLAG="$WORK/logout-flag" \
+  QGIS_DESKTOP_SESSION_RESTART_MAX=2 QGIS_DESKTOP_SESSION_RESTART_DELAY=0
+assert_equals "$RUNS" "3" "a crash still restarts in place"
+if [ -e "$WORK/logout-flag" ]; then
+  no "a crash does not raise the log-out flag" "the browser would be disconnected for a crash"
+else
+  ok "a crash does not raise the log-out flag"
+fi
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
+
+# The old behaviour is still reachable for anyone who preferred it.
+make_session 0
+sleep 30 &
+LIVE_PID=$!
+run_supervisor QGIS_DESKTOP_SESSION_GUARD_PID="$LIVE_PID" \
+  QGIS_DESKTOP_LOGOUT_DISCONNECT=0 \
+  QGIS_DESKTOP_SESSION_RESTART_MAX=2 QGIS_DESKTOP_SESSION_RESTART_DELAY=0
+assert_equals "$RUNS" "3" "QGIS_DESKTOP_LOGOUT_DISCONNECT=0 restarts in place instead"
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
 # --- Saved-session reset ----------------------------------------------------
 # Log out must not hand the next person the previous session's windows.
 make_session 0

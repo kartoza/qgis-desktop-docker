@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-SOURCE="" TOKENS="" TEMPLATE="" LOGO="" FONT_REGULAR="" FONT_BOLD="" OUT=""
+SOURCE="" TOKENS="" TEMPLATE="" LOGO="" SPLASH="" FONT_REGULAR="" FONT_BOLD="" OUT=""
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -35,6 +35,7 @@ while [ $# -gt 0 ]; do
     --tokens) TOKENS="${2:-}"; shift 2 ;;
     --template) TEMPLATE="${2:-}"; shift 2 ;;
     --logo) LOGO="${2:-}"; shift 2 ;;
+    --splash) SPLASH="${2:-}"; shift 2 ;;
     --font-regular) FONT_REGULAR="${2:-}"; shift 2 ;;
     --font-bold) FONT_BOLD="${2:-}"; shift 2 ;;
     --out) OUT="${2:-}"; shift 2 ;;
@@ -44,7 +45,7 @@ done
 
 for pair in \
   "SOURCE:--source" "TOKENS:--tokens" "TEMPLATE:--template" \
-  "LOGO:--logo" "FONT_REGULAR:--font-regular" "FONT_BOLD:--font-bold" "OUT:--out"
+  "LOGO:--logo" "SPLASH:--splash" "FONT_REGULAR:--font-regular" "FONT_BOLD:--font-bold" "OUT:--out"
 do
   var="${pair%%:*}"
   flag="${pair#*:}"
@@ -52,7 +53,7 @@ do
 done
 
 [ -d "${SOURCE}" ] || die "--source ${SOURCE} is not a directory."
-for f in "${TOKENS}" "${TEMPLATE}" "${LOGO}" "${FONT_REGULAR}" "${FONT_BOLD}"; do
+for f in "${TOKENS}" "${TEMPLATE}" "${LOGO}" "${SPLASH}" "${FONT_REGULAR}" "${FONT_BOLD}"; do
   [ -r "${f}" ] || die "${f} is not readable."
 done
 
@@ -193,6 +194,24 @@ done
 
 [ "${patched_pages}" -gt 0 ] ||
   die "neither index.html nor vnc.html was found in ${SOURCE}."
+
+# --- The pre-connection splash ----------------------------------------------
+# The background KasmVNC shows before the desktop connects, and after it
+# disconnects. It was Kasm's blue geometry, which is the first thing a user
+# sees — so it is worth replacing even though it is a hashed asset.
+#
+# The filename carries a content hash and will change on a KasmVNC bump, so
+# find it by shape rather than by name, and insist on exactly one: zero means
+# they renamed it, more than one means the assumption is wrong. Either way the
+# build should stop rather than quietly leave Kasm's artwork in place.
+splash_count="$(find "${OUT}/assets" -maxdepth 1 -name 'splash-*.jpg' | wc -l)"
+if [ "${splash_count}" -ne 1 ]; then
+  die "expected exactly one assets/splash-*.jpg, found ${splash_count} — KasmVNC changed its asset layout and this script needs updating."
+fi
+splash_path="$(find "${OUT}/assets" -maxdepth 1 -name 'splash-*.jpg')"
+cp "${SPLASH}" "${splash_path}"
+chmod 0444 "${splash_path}"
+echo "  $(basename "${splash_path}"): replaced with the brand splash"
 
 # --- The disconnected page ----------------------------------------------
 [ -f "${OUT}/disconnected.html" ] ||

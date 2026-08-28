@@ -7,6 +7,29 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Logging out now lands on the session-ended page instead of silently
+  restarting.** The supervisor added in this release restarted XFCE under the
+  same X server, which meant the browser never disconnected — so the user was
+  bounced straight into a fresh desktop, never saw the page, and never got the
+  chance to sign out or the reminder that the machine is still billing.
+
+  A clean log out now ends the display server, which drops the browser onto the
+  session-ended page; the desktop comes straight back up behind it so
+  **Reconnect** lands on a working session. A *crash* is still papered over by
+  restarting in place, because that is the case where invisibility is the right
+  answer. `QGIS_DESKTOP_LOGOUT_DISCONNECT=0` restores the restart-in-place
+  behaviour for both.
+
+### Added
+
+- **The pre-connection splash is branded.** The screen KasmVNC shows before the
+  desktop connects was Kasm's blue geometry — the first thing a user sees. It is
+  now the brand wallpaper, re-encoded from the same artwork so the two cannot
+  drift apart. The asset is content-hashed, so the build fails if a KasmVNC bump
+  renames it rather than quietly leaving Kasm's artwork in place.
+
 ### Added
 
 - **A "your desktop is still running" reminder, and a link back to your control

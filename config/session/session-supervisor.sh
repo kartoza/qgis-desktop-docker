@@ -41,6 +41,13 @@ RESTART_WINDOW="${QGIS_DESKTOP_SESSION_RESTART_WINDOW:-60}"
 RESTART_DELAY="${QGIS_DESKTOP_SESSION_RESTART_DELAY:-1}"
 RESET_STATE="${QGIS_DESKTOP_SESSION_RESET_STATE:-1}"
 GUARD_PID="${QGIS_DESKTOP_SESSION_GUARD_PID:-}"
+# On a clean log out, restarting the session under the same X server means the
+# browser never disconnects, so the user never sees the session-ended page —
+# they just get bounced into a fresh desktop with no chance to sign out or to be
+# reminded that the machine is still billing. Ending the display server instead
+# drops the client, the page appears, and Reconnect brings them back.
+LOGOUT_DISCONNECT="${QGIS_DESKTOP_LOGOUT_DISCONNECT:-1}"
+LOGOUT_FLAG="${QGIS_DESKTOP_LOGOUT_FLAG:-/tmp/qgis-desktop-logout}"
 
 log() { printf '[session] %s\n' "$*"; }
 warn() { printf '[session] WARN: %s\n' "$*" >&2; }
@@ -72,6 +79,7 @@ fi
 
 RESTART="$(to_bool "${RESTART}")"
 RESET_STATE="$(to_bool "${RESET_STATE}")"
+LOGOUT_DISCONNECT="$(to_bool "${LOGOUT_DISCONNECT}")"
 RESTART_MAX="$(to_uint "${RESTART_MAX}" 5 QGIS_DESKTOP_SESSION_RESTART_MAX)"
 RESTART_WINDOW="$(to_uint "${RESTART_WINDOW}" 60 QGIS_DESKTOP_SESSION_RESTART_WINDOW)"
 RESTART_DELAY="$(to_uint "${RESTART_DELAY}" 1 QGIS_DESKTOP_SESSION_RESTART_DELAY)"
@@ -121,6 +129,17 @@ while :; do
   wait "${SESSION_PID}"
   status=$?
   SESSION_PID=""
+
+  # A clean exit is the user choosing Log Out; a non-zero one is a crash. They
+  # want opposite treatment: a crash should be papered over by restarting under
+  # the same X server, but a log out should be visible.
+  if [ "${status}" -eq 0 ] && [ "${LOGOUT_DISCONNECT}" = "1" ] && [ -n "${GUARD_PID}" ]; then
+    log "clean log out — ending the display server so the session-ended page is shown"
+    : > "${LOGOUT_FLAG}" 2>/dev/null || warn "could not write ${LOGOUT_FLAG}"
+    reset_session_state
+    kill -TERM "${GUARD_PID}" 2>/dev/null || true
+    break
+  fi
 
   [ "${RESTART}" = "1" ] || break
 
