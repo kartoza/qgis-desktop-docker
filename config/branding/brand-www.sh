@@ -137,6 +137,17 @@ for page in index.html vnc.html; do
 
   sed -i "s|</title>|</title><link rel=\"icon\" href=\"./assets/brand-logo.svg\" type=\"image/svg+xml\">|" "${path}"
 
+  # A slot in the control bar for the deployment's management link. Same reason
+  # as on the session-ended page: the URL belongs to the deployment, not the
+  # image, so the build can only leave a marker for the runtime to fill.
+  sed -i "s|</h1>|</h1><!--QGIS_DESKTOP_MANAGE_LINK_BAR-->|" "${path}"
+
+  # Ship the marked-up page as a template too, and a copy with the marker
+  # removed so the tree is valid served as-is. qgis-desktop-manage-link renders
+  # the second from the first at boot, which also makes it idempotent.
+  cp "${path}" "${path}.in"
+  sed -i 's|<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->||' "${path}"
+
   patched_pages=$((patched_pages + 1))
 
   # --- The control bar and the strings users actually read ----------------
@@ -208,6 +219,29 @@ sed \
 if grep -oE '@[A-Z_]+@' "${OUT}/disconnected.html" | head -1 | grep -q .; then
   die "disconnected.html still has unsubstituted placeholders: $(grep -oE '@[A-Z_]+@' "${OUT}/disconnected.html" | sort -u | tr '\n' ' ')"
 fi
-echo "  disconnected.html: rendered from template"
+# The page carries a marker that only the runtime knows how to fill in (the
+# management URL is a property of the deployment, not the image), so ship two
+# files: the template with the marker intact, and a rendered page that is valid
+# on its own. qgis-desktop-manage-link re-renders the second from the first at
+# container start; anything serving this tree directly still gets a working
+# page.
+cp "${OUT}/disconnected.html" "${OUT}/disconnected.html.in"
+
+DEFAULT_NOTICE='    <div class="notice">
+      <p><strong>Your desktop is still running.</strong> Closing this tab does
+      not stop it — it keeps running, and keeps costing you, until you shut it
+      down from your hosting control panel.</p>
+    </div>'
+awk -v block="${DEFAULT_NOTICE}" '
+  index($0, "<!--QGIS_DESKTOP_MANAGE_LINK-->") { print block; next }
+  { print }
+' "${OUT}/disconnected.html.in" > "${OUT}/disconnected.html"
+
+grep -q 'Your desktop is still running' "${OUT}/disconnected.html" ||
+  die "the cost reminder did not reach disconnected.html — is the marker still in the template?"
+grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "${OUT}/disconnected.html.in" ||
+  die "disconnected.html.in lost its marker; the runtime would have nothing to fill in."
+
+echo "  disconnected.html: rendered from template (+ .in for the runtime link)"
 
 echo "Branded web root written to ${OUT}"

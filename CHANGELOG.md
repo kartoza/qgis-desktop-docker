@@ -9,6 +9,29 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **A "your desktop is still running" reminder, and a link back to your control
+  panel.** A disconnected session is the moment someone assumes they are done
+  and walks away from a machine that is still billing them. The session-ended
+  page now says so — with or without a link configured, because the warning is
+  the part that protects the bill.
+
+  Set `QGIS_DESKTOP_MANAGE_URL` and the link appears twice: as a button on that
+  page, and in the control bar down the left of the screen, so it is reachable
+  while the user is still working rather than only after they disconnect.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_MANAGE_URL` | *(none)* | Your control panel. Only `http(s)` is accepted. |
+  | `QGIS_DESKTOP_MANAGE_LABEL` | `Manage my desktops` | Button text. |
+
+  The URL belongs to the deployment rather than the image, so it is filled in at
+  container start: the build ships a template plus a rendered page, and
+  `qgis-desktop-manage-link` re-renders one from the other as root at boot.
+  Rendering from a pristine template is what keeps a restart from inserting the
+  notice twice.
+
+### Added
+
 - **A branded wallpaper, and no more blue flash on log-out.** The desktop
   wallpaper is rendered from `config/branding/wallpaper.svg.in` at build time
   using the same tokens file as the rest of the branding, and carries the

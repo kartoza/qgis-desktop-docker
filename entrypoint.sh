@@ -561,6 +561,14 @@ LISTEN
   echo "OIDC proxy running as pid ${OIDC_PROXY_PID}; desktop bound to 127.0.0.1:${QGIS_DESKTOP_OIDC_UPSTREAM_PORT}"
 fi
 
+# Fill the deployment's management URL into the branded pages. Root, because the
+# web root lives under /usr/share; before the privilege drop for the same
+# reason. A no-op when branding is off or no URL is configured — it still leaves
+# the "your desktop is still running" reminder in place, which is the part that
+# matters for someone's bill.
+if command -v qgis-desktop-manage-link >/dev/null 2>&1; then
+  qgis-desktop-manage-link || echo "WARN: could not update the management link" >&2
+fi
 if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
   # Materialise users from the same credential sources basic mode uses, so
   # QGIS_DESKTOP_USERS / QGIS_DESKTOP_USERS_FILE / VNC_USER+VNC_PW all work identically.
@@ -715,7 +723,6 @@ if [ "${EFFECTIVE_AUTH_MODE}" = "greeter" ]; then
   echo "Starting LightDM..."
   run_desktop lightdm --debug
 fi
-
 # basic / none: existing behaviour. Drop root and any inheritable capabilities
 # before running the desktop. Clears NET_ADMIN so the desktop process cannot
 # alter the firewall.

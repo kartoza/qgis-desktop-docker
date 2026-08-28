@@ -75,6 +75,47 @@ image and asserts exactly that table. `oidc` needs a live identity provider, so
 it stays a manual check via `nix run .#run-keycloak-demo` — its desktop path is
 whichever inner mode is configured, and both of those are already covered.
 
+## Reminding people to shut down
+
+A disconnected session is exactly the moment someone assumes they are finished
+and walks away — from a machine that is still running, and still billing. So the
+session-ended page carries a reminder saying so, and it says it **whether or not
+a link is configured**: the warning is the part that protects someone's bill, and
+it must not depend on deployment config being filled in.
+
+When you give it a URL, the same link appears in two places — on the
+session-ended page as a button, and in the control bar down the left of the
+screen, so it is reachable while the user is still working rather than only once
+they have disconnected.
+
+```bash
+docker run ... \
+  -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
+  -e QGIS_DESKTOP_MANAGE_LABEL="Manage my desktops" \
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QGIS_DESKTOP_MANAGE_URL` | *(none)* | Where the management link points — your control panel, per deployment. Unset, the reminder still appears, without a button. |
+| `QGIS_DESKTOP_MANAGE_LABEL` | `Manage my desktops` | Button text. |
+
+Only `http://` and `https://` are accepted; anything else is refused with a
+warning in the container log and the reminder is shown without a button, rather
+than emitting a link that does not work or, worse, a `javascript:` URL.
+
+### Why this happens at container start
+
+The URL belongs to the deployment, not to the image — one image serves many
+customers, each needing a link to their own control panel — so it cannot be
+baked in at build time. The build therefore ships two files for each page it
+touches: a template carrying a marker, and a rendered page that is valid on its
+own. `qgis-desktop-manage-link` runs as root at boot and re-renders the second
+from the first.
+
+Rendering from a pristine template rather than editing in place is what makes it
+idempotent: a container restart cannot end up with the notice inserted twice.
+
 ## What is not branded, on purpose
 
 Two things are left alone.

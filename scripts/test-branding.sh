@@ -274,6 +274,105 @@ fi
 
 
 
+
+# --- The runtime management link --------------------------------------------
+# The URL belongs to the deployment, not the image, so it is filled in at
+# container start. These check the two-file arrangement that makes that
+# possible, and that it stays idempotent across restarts.
+MANAGE="$PROJECT_ROOT/config/branding/manage-link.sh"
+
+if [ -f "$WORK/out/disconnected.html.in" ]; then
+  ok "the session-ended template ships alongside the rendered page"
+else
+  no "the session-ended template ships alongside the rendered page"
+fi
+if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "$WORK/out/disconnected.html.in" 2>/dev/null; then
+  ok "the template keeps its runtime marker"
+else
+  no "the template keeps its runtime marker" "the runtime would have nothing to fill in"
+fi
+# The as-built page must be valid on its own — preview-branding serves it.
+if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "the as-built page has no leftover marker"
+else
+  ok "the as-built page has no leftover marker"
+fi
+if grep -q 'Your desktop is still running' "$WORK/out/disconnected.html" 2>/dev/null; then
+  ok "the cost reminder is present even with no URL configured"
+else
+  no "the cost reminder is present even with no URL configured" \
+    "this is the part that matters for someone's bill; it must not depend on config"
+fi
+for page in index.html vnc.html; do
+  if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->' "$WORK/out/$page.in" 2>/dev/null; then
+    ok "$page.in keeps the control-bar slot"
+  else
+    no "$page.in keeps the control-bar slot"
+  fi
+  if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->' "$WORK/out/$page" 2>/dev/null; then
+    no "$page has no leftover control-bar marker"
+  else
+    ok "$page has no leftover control-bar marker"
+  fi
+done
+
+run_manage() {
+  MANAGE_OUT="$(env QGIS_DESKTOP_BRANDED_WWW="$WORK/out" "$@" bash "$MANAGE" 2>&1)"
+  MANAGE_STATUS=$?
+}
+
+run_manage QGIS_DESKTOP_MANAGE_URL=https://example.com/dashboard
+if [ "$MANAGE_STATUS" -eq 0 ]; then ok "the runtime renderer succeeds"; else no "the runtime renderer succeeds" "$MANAGE_OUT"; fi
+if grep -q 'href="https://example.com/dashboard"' "$WORK/out/disconnected.html" 2>/dev/null; then
+  ok "the session-ended page gains the manage button"
+else
+  no "the session-ended page gains the manage button"
+fi
+if grep -q 'href="https://example.com/dashboard"' "$WORK/out/index.html" 2>/dev/null; then
+  ok "the control bar gains the manage link"
+else
+  no "the control bar gains the manage link"
+fi
+
+# A restart must not stack a second copy.
+run_manage QGIS_DESKTOP_MANAGE_URL=https://example.com/dashboard
+if [ "$(grep -c 'class="notice"' "$WORK/out/disconnected.html")" -eq 1 ]; then
+  ok "running it twice does not duplicate the notice"
+else
+  no "running it twice does not duplicate the notice" \
+    "$(grep -c 'class="notice"' "$WORK/out/disconnected.html") copies"
+fi
+
+# A hostile or malformed URL must never reach an href.
+run_manage QGIS_DESKTOP_MANAGE_URL='javascript:alert(1)'
+if grep -q 'javascript:' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "a non-http URL never reaches the page"
+else
+  ok "a non-http URL never reaches the page"
+fi
+if grep -q 'Your desktop is still running' "$WORK/out/disconnected.html" 2>/dev/null; then
+  ok "…and the reminder survives the rejection"
+else
+  no "…and the reminder survives the rejection"
+fi
+
+run_manage QGIS_DESKTOP_MANAGE_URL='https://example.com/"><script>alert(1)</script>'
+if grep -q '<script>alert' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "a URL cannot break out of its attribute"
+else
+  ok "a URL cannot break out of its attribute"
+fi
+
+run_manage
+if [ "$MANAGE_STATUS" -eq 0 ]; then ok "no URL configured is not an error"; else no "no URL configured is not an error" "$MANAGE_OUT"; fi
+if grep -q 'Manage my desktops' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "no URL means no button"
+else
+  ok "no URL means no button"
+fi
+
+MANAGE_OUT="$(env QGIS_DESKTOP_BRANDED_WWW="$WORK/nope" bash "$MANAGE" 2>&1)"; MANAGE_STATUS=$?
+if [ "$MANAGE_STATUS" -eq 0 ]; then ok "a missing web root is a no-op, not a failed boot"; else no "a missing web root is a no-op, not a failed boot"; fi
 # --- The wallpaper ----------------------------------------------------------
 # It is used in three places (XFCE desktop, LightDM greeter background, and the
 # X root window during a session restart), so a broken render is visible in all

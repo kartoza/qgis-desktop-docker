@@ -178,6 +178,15 @@
         '';
 
 
+
+        # Fills the deployment's management URL into the session-ended page at
+        # container start. Runs as root from the entrypoint: the URL is a
+        # property of the deployment, not of the image, so it cannot be baked in.
+        manageLinkScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-manage-link";
+          runtimeInputs = with pkgs; [ coreutils gnused gnugrep gawk ];
+          text = builtins.readFile ./config/branding/manage-link.sh;
+        };
         # The desktop wallpaper, rendered from an SVG at build time. Used in
         # three places: the XFCE desktop, the LightDM greeter background in
         # greeter mode, and the X root window that shows for a few seconds
@@ -416,6 +425,7 @@
             oidcProxyScript       # qgis-desktop-oidc-proxy  (uid 1000: runs oauth2-proxy)
             disableTerminalScript # qgis-desktop-disable-terminal (root: QGIS_DESKTOP_ALLOW_TERMINAL=0)
             persistScript         # qgis-desktop-persist (root: home restore/save)
+            manageLinkScript      # qgis-desktop-manage-link (root: runtime manage URL)
           ];
           text = builtins.readFile ./entrypoint.sh;
         };
@@ -507,6 +517,9 @@
             # log-out is a desktop reset rather than a dead end
             # (QGIS_DESKTOP_SESSION_RESTART=1, the default).
             sessionSupervisorScript
+
+            # Fills QGIS_DESKTOP_MANAGE_URL into the session-ended page at boot.
+            manageLinkScript
 
             # Home persistence (QGIS_DESKTOP_PERSIST=1). rclone arrives through
             # the wrapper; it is not on the desktop user's PATH.

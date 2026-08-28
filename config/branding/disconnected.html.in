@@ -94,6 +94,21 @@
   /* Focus must stay visible for keyboard users — WCAG 2.2 AA. */
   .btn:focus-visible { outline: 3px solid var(--secondary); outline-offset: 2px; }
 
+
+  /* The cost reminder. Deliberately not styled as an error: nothing has gone
+     wrong, but a disconnected session is exactly the moment someone assumes
+     they are done and walks away from a machine that is still billing. */
+  .notice {
+    margin-top: 1.5rem;
+    padding: 1rem 1rem 1.125rem;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+    text-align: left;
+  }
+  .notice p { font-size: 0.875rem; line-height: 1.5; margin: 0 0 0.875rem; color: var(--text); }
+  .notice p:last-child { margin-bottom: 0; }
+  .notice strong { font-weight: 700; }
   footer { margin-top: 1.5rem; font-size: 0.8125rem; color: var(--text-muted); }
   footer a { color: var(--text-muted); }
 
@@ -125,6 +140,10 @@
            a secondary action. -->
       <a class="btn btn-secondary" href="/oauth2/sign_out">Sign out completely</a>
     </div>
+    <!-- Replaced at container start by qgis-desktop-manage-link, which is the
+         only way a build-time artefact can carry a runtime URL. Left exactly as
+         it is when QGIS_DESKTOP_MANAGE_URL is unset. -->
+    <!--QGIS_DESKTOP_MANAGE_LINK-->
   </main>
   <footer>
     <a href="@BRAND_URL@">@BRAND_NAME@</a>
