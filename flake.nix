@@ -1612,6 +1612,21 @@ DBUSEOF
               '';
             }}/bin/test-branding";
           };
+
+          # Lints every script flake.nix packages, the same way
+          # writeShellApplication does at build time. Cheap here; a failed image
+          # build minutes in is not.
+          test-shellcheck = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-shellcheck";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep gnused shellcheck ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-shellcheck.sh
+              '';
+            }}/bin/test-shellcheck";
+          };
           # Guards the PDF build: any character pdflatex cannot set fails here,
           # in a second, instead of ten minutes into `docs-pdf`.
           test-docs-glyphs = {
@@ -1668,13 +1683,15 @@ DBUSEOF
                 # test-check-oidc.sh serves a fake OIDC provider from python3
                 # and talks to it with curl/jq — no network, no Docker.
                 curl jq python3
-                # test-branding.sh lints brand-www.sh the same way
-                # writeShellApplication does at build time.
+                # test-shellcheck.sh and test-branding.sh lint packaged scripts
+                # exactly as writeShellApplication does at build time.
                 shellcheck
               ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 rc=0
+                bash ${self}/scripts/test-shellcheck.sh || rc=1
+                echo ""
                 bash ${self}/scripts/test-oidc-config.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-terminal-lockdown.sh || rc=1

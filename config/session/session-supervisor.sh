@@ -79,6 +79,9 @@ RESTART_DELAY="$(to_uint "${RESTART_DELAY}" 1 QGIS_DESKTOP_SESSION_RESTART_DELAY
 # Forward a shutdown to the running session rather than orphaning it — the
 # container is being stopped and XFCE should get the chance to exit cleanly.
 SESSION_PID=""
+# shellcheck disable=SC2329  # invoked from the traps below, which shellcheck
+# does not trace. writeShellApplication treats even info-level findings as
+# fatal, so this directive is load-bearing: without it the image does not build.
 forward_signal() {
   RESTART=0
   [ -n "${SESSION_PID}" ] && kill "-$1" "${SESSION_PID}" 2>/dev/null

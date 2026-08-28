@@ -7,6 +7,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **The image builds again.** `config/session/session-supervisor.sh` tripped
+  shellcheck's SC2329 — a function only reachable from a `trap`, which
+  shellcheck does not trace. `writeShellApplication` runs shellcheck at build
+  time and treats even info-level findings as fatal, so the whole image build
+  failed several minutes in, with the cause buried in "Last 7 log lines".
+
+  `scripts/test-shellcheck.sh` now lints every script `flake.nix` packages, the
+  same way the build does, and runs first in the suite. It reads the script list
+  out of `flake.nix` rather than restating it, so a script added to the image is
+  covered without anyone remembering to add it. This is the second time a
+  build-time lint finding reached a build; it should be the last.
+
 ### Added
 
 - **The KasmVNC web interface is branded.** The browser tab, the favicon, the
