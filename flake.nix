@@ -1698,6 +1698,21 @@ DBUSEOF
               '';
             }}/bin/test-shellcheck";
           };
+
+          # Unit tests for the CVE table that goes into every PR comment and
+          # release body. A wrong count there is a wrong public claim about the
+          # image.
+          test-cve-table = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-cve-table";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep python3 ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-cve-table.sh
+              '';
+            }}/bin/test-cve-table";
+          };
           # Guards the PDF build: any character pdflatex cannot set fails here,
           # in a second, instead of ten minutes into `docs-pdf`.
           test-docs-glyphs = {
@@ -1779,6 +1794,8 @@ DBUSEOF
                 echo ""
                 bash ${self}/scripts/test-session-restart.sh || rc=1
                 bash ${self}/scripts/test-branding.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-cve-table.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-docs-diagrams.sh || rc=1
                 echo ""

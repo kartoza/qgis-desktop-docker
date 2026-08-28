@@ -64,6 +64,7 @@ qgis-desktop-docker/
 │   ├── test-shellcheck.sh      # Lints every packaged script, as the build does
 │   ├── test-session-restart.sh # Unit tests for the session supervisor
 │   ├── sbom_table.py           # SBOM JSON to markdown table
+│   ├── test-cve-table.sh       # Unit tests for the CVE table
 │   └── cve_table.py            # Grype CVE JSON to markdown table
 │
 ├── examples/

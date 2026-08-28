@@ -7,60 +7,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Fixed
-
-- **The branded control-bar logo no longer reverts to Kasm's after boot.** The
-  runtime template was captured before the logo was replaced, so
-  `qgis-desktop-manage-link` faithfully re-rendered the unbranded markup every
-  time the container started. The template is now captured after every
-  build-time edit, and the build asserts that both it and the served page carry
-  the brand logo — checking only the served page is what let this through.
-
-### Fixed
-
-- **Logging out really does show the session-ended page now.** The previous
-  attempt ended the display server on log out, on the assumption that a dropped
-  connection would send the browser to `disconnected.html`. It does not:
-  KasmVNC navigates there **only** on an idle-session timeout, and shows a small
-  status bar for every other disconnect. The page existed and nothing ever
-  showed it. A small script injected into the entry pages now watches the
-  connection-state class the bundle sets on `<html>` and navigates when a
-  session that had connected goes away. Both class names are asserted at build
-  time, so a KasmVNC rename fails the build rather than quietly restoring the
-  old behaviour.
-
-- **Arial-authored QGIS projects lay out correctly.** QGIS logged a missing
-  Arial and substituted a font with different metrics, which shifts every label
-  on a map. Liberation Sans is metric-compatible and was already in the image,
-  but `makeFontsConf` does not include fontconfig's own `conf.d`, so the stock
-  metric-alias rules never applied. The desktop's font config now carries them
-  for Arial, Helvetica, Times New Roman and Courier New. Arial itself is
-  Monotype's and is not redistributable, so it is not shipped.
-
-### Changed
-
-- **The official brand palette replaces the values derived from the live site.**
-  Accent `#DF9E2F`, blue `#569FC6`, grey `#8A8B8B`, ink `#1B1F23`, mist
-  `#F4F6F8`. The derived guesses were close but wrong. The wallpaper wordmark is
-  now brand grey with `geospatialhosting.com` beneath it in the accent, and the
-  runtime control-bar button reads its colour from the tokens file instead of a
-  second hardcoded copy.
-
-### Changed
-
-- **Logging out now lands on the session-ended page instead of silently
-  restarting.** The supervisor added in this release restarted XFCE under the
-  same X server, which meant the browser never disconnected — so the user was
-  bounced straight into a fresh desktop, never saw the page, and never got the
-  chance to sign out or the reminder that the machine is still billing.
-
-  A clean log out now ends the display server, which drops the browser onto the
-  session-ended page; the desktop comes straight back up behind it so
-  **Reconnect** lands on a working session. A *crash* is still papered over by
-  restarting in place, because that is the case where invisibility is the right
-  answer. `QGIS_DESKTOP_LOGOUT_DISCONNECT=0` restores the restart-in-place
-  behaviour for both.
-
 ### Added
 
 - **The pre-connection splash is branded.** The screen KasmVNC shows before the
@@ -69,7 +15,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   drift apart. The asset is content-hashed, so the build fails if a KasmVNC bump
   renames it rather than quietly leaving Kasm's artwork in place.
 
-### Added
 
 - **A "your desktop is still running" reminder, and a link back to your control
   panel.** A disconnected session is the moment someone assumes they are done
@@ -92,7 +37,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Rendering from a pristine template is what keeps a restart from inserting the
   notice twice.
 
-### Added
 
 - **A branded wallpaper, and no more blue flash on log-out.** The desktop
   wallpaper is rendered from `config/branding/wallpaper.svg.in` at build time
@@ -114,21 +58,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   | `QGIS_DESKTOP_WALLPAPER` | `/usr/share/wallpaper.png` | Bind-mount over it to change the wallpaper without rebuilding. |
   | `QGIS_DESKTOP_ROOT_COLOR` | `#0D161C` | Painted first, and the fallback if the image cannot be drawn. |
 
-### Fixed
-
-- **The image builds again.** `config/session/session-supervisor.sh` tripped
-  shellcheck's SC2329 — a function only reachable from a `trap`, which
-  shellcheck does not trace. `writeShellApplication` runs shellcheck at build
-  time and treats even info-level findings as fatal, so the whole image build
-  failed several minutes in, with the cause buried in "Last 7 log lines".
-
-  `scripts/test-shellcheck.sh` now lints every script `flake.nix` packages, the
-  same way the build does, and runs first in the suite. It reads the script list
-  out of `flake.nix` rather than restating it, so a script added to the image is
-  covered without anyone remembering to add it. This is the second time a
-  build-time lint finding reached a build; it should be the last.
-
-### Added
 
 - **The KasmVNC web interface is branded.** The browser tab, the favicon, the
   control bar, and the page users land on when their session ends now carry your
@@ -154,7 +83,77 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   | `QGIS_DESKTOP_BRANDING` | `1` | `0` serves KasmVNC's own web root. |
   | `QGIS_DESKTOP_BRANDED_WWW` | `/usr/share/qgis-desktop/www` | Where the branded root lives; bind-mount over it to override without rebuilding. |
 
+### Changed
 
+- **The official brand palette replaces the values derived from the live site.**
+  Accent `#DF9E2F`, blue `#569FC6`, grey `#8A8B8B`, ink `#1B1F23`, mist
+  `#F4F6F8`. The derived guesses were close but wrong. The wallpaper wordmark is
+  now brand grey with `geospatialhosting.com` beneath it in the accent, and the
+  runtime control-bar button reads its colour from the tokens file instead of a
+  second hardcoded copy.
+
+
+- **Logging out now lands on the session-ended page instead of silently
+  restarting.** The supervisor added in this release restarted XFCE under the
+  same X server, which meant the browser never disconnected — so the user was
+  bounced straight into a fresh desktop, never saw the page, and never got the
+  chance to sign out or the reminder that the machine is still billing.
+
+  A clean log out now ends the display server, which drops the browser onto the
+  session-ended page; the desktop comes straight back up behind it so
+  **Reconnect** lands on a working session. A *crash* is still papered over by
+  restarting in place, because that is the case where invisibility is the right
+  answer. `QGIS_DESKTOP_LOGOUT_DISCONNECT=0` restores the restart-in-place
+  behaviour for both.
+
+### Fixed
+
+- **The branded control-bar logo no longer reverts to Kasm's after boot.** The
+  runtime template was captured before the logo was replaced, so
+  `qgis-desktop-manage-link` faithfully re-rendered the unbranded markup every
+  time the container started. The template is now captured after every
+  build-time edit, and the build asserts that both it and the served page carry
+  the brand logo — checking only the served page is what let this through.
+
+
+- **Logging out really does show the session-ended page now.** The previous
+  attempt ended the display server on log out, on the assumption that a dropped
+  connection would send the browser to `disconnected.html`. It does not:
+  KasmVNC navigates there **only** on an idle-session timeout, and shows a small
+  status bar for every other disconnect. The page existed and nothing ever
+  showed it. A small script injected into the entry pages now watches the
+  connection-state class the bundle sets on `<html>` and navigates when a
+  session that had connected goes away. Both class names are asserted at build
+  time, so a KasmVNC rename fails the build rather than quietly restoring the
+  old behaviour.
+
+- **Arial-authored QGIS projects lay out correctly.** QGIS logged a missing
+  Arial and substituted a font with different metrics, which shifts every label
+  on a map. Liberation Sans is metric-compatible and was already in the image,
+  but `makeFontsConf` does not include fontconfig's own `conf.d`, so the stock
+  metric-alias rules never applied. The desktop's font config now carries them
+  for Arial, Helvetica, Times New Roman and Courier New. Arial itself is
+  Monotype's and is not redistributable, so it is not shipped.
+
+
+- **The image builds again.** `config/session/session-supervisor.sh` tripped
+  shellcheck's SC2329 — a function only reachable from a `trap`, which
+  shellcheck does not trace. `writeShellApplication` runs shellcheck at build
+  time and treats even info-level findings as fatal, so the whole image build
+  failed several minutes in, with the cause buried in "Last 7 log lines".
+
+  `scripts/test-shellcheck.sh` now lints every script `flake.nix` packages, the
+  same way the build does, and runs first in the suite. It reads the script list
+  out of `flake.nix` rather than restating it, so a script added to the image is
+  covered without anyone remembering to add it. This is the second time a
+  build-time lint finding reached a build; it should be the last.
+- **The CVE table in PR comments and release bodies no longer double-counts.**
+  Grype reports one match per path a vulnerable package is reachable by, and a
+  nix closure reaches the same package many ways — so a scan that found four
+  matches of two real problems said "4 CVEs found". Findings are now keyed on
+  CVE + package + version, which collapses the duplicates while keeping the
+  same CVE against a different package, or a different version of the same one,
+  as the separate findings they are. The count is labelled "unique CVEs".
 
 ## [3.1.0] — 2026-08-27
 
