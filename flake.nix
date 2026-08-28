@@ -62,16 +62,24 @@
             });
           } else { })
           //
-          # lightdm links plymouth so it can hand over from a boot splash to the
-          # greeter. There is no boot in a container and no splash to hand over
-          # from, and plymouth is one of the handful of things keeping systemd in
-          # the closure.
+          # lightdm shells out to plymouth to quit the boot splash, and nixpkgs
+          # compiles the absolute path into the binary. There is no boot in a
+          # container and no splash to quit, but the string is a store reference
+          # so plymouth — and, through it, part of what keeps systemd around —
+          # came along regardless.
+          #
+          # Filtering buildInputs did nothing: the path is substituted in from a
+          # derivation argument, not resolved from the input list. remove-
+          # references-to overwrites the hash in place, which is the nixpkgs
+          # idiom for exactly this. lightdm pings plymouth before using it and
+          # there is no daemon to answer, so the call was already failing.
           (if prev ? lightdm then {
             lightdm = prev.lightdm.overrideAttrs (old: {
-              buildInputs = builtins.filter
-                (p: !(prev.lib.hasPrefix "plymouth" (p.pname or p.name or "")))
-                (old.buildInputs or [ ]);
-              configureFlags = (old.configureFlags or [ ]) ++ [ "--disable-plymouth" ];
+              nativeBuildInputs = (old.nativeBuildInputs or [ ])
+                ++ [ prev.removeReferencesTo ];
+              postFixup = (old.postFixup or "") + ''
+                remove-references-to -t ${prev.plymouth} "$out/bin/lightdm"
+              '';
             });
           } else { })
           //
