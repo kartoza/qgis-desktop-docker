@@ -9,7 +9,106 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        # Changes that have to apply everywhere in the closure, not just where
+        # we reference a package directly. GDAL pulls HDF4 transitively, so
+        # patching it at our own call site would achieve nothing.
+        slimOverlay = _final: prev:
+          let
+            # hdf ships lib/libhdf4.settings, a build-provenance record quoting
+            # the absolute path of the compiler it was built with. Nix reads any
+            # store path in any file as a runtime reference, so 107 MB of gcc
+            # landed in the image because of a text file — in a container that
+            # untrusted subscribers run code in.
+            #
+            # HDF4 support is untouched: GDAL links libhdf/libmfhdf directly and
+            # never calls h4cc, the compiler wrapper that settings file
+            # describes.
+            dropCompilerRef = p: p.overrideAttrs (old: {
+              postInstall = (old.postInstall or "") + ''
+                if [ -f "$out/lib/libhdf4.settings" ]; then
+                  sed -i 's|/nix/store/[a-z0-9]\{32\}-|/nix-store-scrubbed-|g' \
+                    "$out/lib/libhdf4.settings"
+                fi
+                # Build-time helpers that hardcode a toolchain path. Nothing at
+                # runtime calls them.
+                rm -f "$out/bin/h4cc" "$out/bin/h4fc"
+              '';
+            });
+          in
+          # The attribute is hdf4 in nixpkgs even though the derivation is named
+          # hdf. Overriding only "hdf" changed nothing, because GDAL asks for
+          # hdf4 — the store path came back byte-identical. Cover both names,
+          # and tolerate either being absent so a nixpkgs rename fails loudly at
+          # the callsite rather than silently doing nothing here.
+          (if prev ? hdf4 then { hdf4 = dropCompilerRef prev.hdf4; } else { })
+          // (if prev ? hdf then { hdf = dropCompilerRef prev.hdf; } else { })
+          //
+          # One dependency drags in most of a second desktop environment.
+          # xfce4-settings pulls xapp (Linux Mint's cross-desktop library),
+          # which pulls mate-panel and libmateweather, which pull marco (MATE's
+          # window manager), which pulls zenity, which pulls GTK4 and
+          # libadwaita — alongside the GTK3 that XFCE actually uses. Roughly
+          # 90 MB of a desktop we do not run.
+          #
+          # Dropped from buildInputs rather than disabled by flag: xfce4-settings
+          # uses xapp only for optional cross-desktop integration, and if a
+          # future version needs it the build will say so rather than producing
+          # something subtly broken.
+          (if prev ? xfce4-settings then {
+            xfce4-settings = prev.xfce4-settings.overrideAttrs (old: {
+              buildInputs = builtins.filter
+                (p: !(prev.lib.hasPrefix "xapp" (p.pname or p.name or "")))
+                (old.buildInputs or [ ]);
+            });
+          } else { })
+          //
+          # lightdm shells out to plymouth to quit the boot splash, and nixpkgs
+          # compiles the absolute path into the binary. There is no boot in a
+          # container and no splash to quit, but the string is a store reference
+          # so plymouth — and, through it, part of what keeps systemd around —
+          # came along regardless.
+          #
+          # Filtering buildInputs did nothing: the path is substituted in from a
+          # derivation argument, not resolved from the input list. remove-
+          # references-to overwrites the hash in place, which is the nixpkgs
+          # idiom for exactly this. lightdm pings plymouth before using it and
+          # there is no daemon to answer, so the call was already failing.
+          (if prev ? lightdm then {
+            lightdm = prev.lightdm.overrideAttrs (old: {
+              nativeBuildInputs = (old.nativeBuildInputs or [ ])
+                ++ [ prev.removeReferencesTo ];
+              postFixup = (old.postFixup or "") + ''
+                remove-references-to -t ${prev.plymouth} "$out/bin/lightdm"
+              '';
+            });
+          } else { })
+          //
+          # debugpy vendors pydevd's "attach to a running process" helper, which
+          # injects code into a live process using gdb — and that single
+          # directory is the only reason a 16 MB debugger is in the image.
+          #
+          # Removing the directory rather than just scrubbing the path takes the
+          # capability away too. Injecting code into other processes is not
+          # something a subscriber on a shared desktop should be able to do, and
+          # debugpy's actual job — being a debug adapter — does not use it.
+          {
+            pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+              (_pyfinal: pyprev: {
+                debugpy = pyprev.debugpy.overrideAttrs (old: {
+                  postInstall = (old.postInstall or "") + ''
+                    find "$out" -type d -name pydevd_attach_to_process \
+                      -prune -exec rm -rf {} +
+                  '';
+                });
+              })
+            ];
+          }
+          ;
+
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ slimOverlay ];
+        };
 
         # KasmVNC package
         kasmvnc = pkgs.callPackage ./kasmvnc.nix {};
@@ -220,6 +319,21 @@
             --logo ${./resources/brand/geohosting.svg} \
             --out $out
         '';
+        # --- rclone, trimmed to the backends we can actually use -----------
+        # Upstream compiles in ~70 storage backends. Every one drags its client
+        # library along, which is how a QGIS desktop ended up with ProtonMail,
+        # Dropbox, Mega and Yandex in its SBOM. None of it was reachable:
+        # config/persist/persist.sh accepts s3 or local and rejects anything
+        # else. The replacement registry keeps exactly those two.
+        #
+        # Not a feature change — the s3 backend covers every S3-compatible
+        # provider, because the provider is a config key rather than a backend.
+        rcloneMinimal = pkgs.rclone.overrideAttrs (old: {
+          postPatch = (old.postPatch or "") + ''
+            cp ${./nix/rclone-backends-all.go} backend/all/all.go
+          '';
+        });
+
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -227,7 +341,7 @@
         persistScript = pkgs.writeShellApplication {
           name = "qgis-desktop-persist";
           runtimeInputs = with pkgs; [
-            rclone
+            rcloneMinimal   # s3 + local only; see the override above
             coreutils # timeout, numfmt, date, chown, id, cp
             gnused
             hostname
@@ -1153,7 +1267,9 @@ DBUSEOF
             docker rm -f qgis-desktop 2>/dev/null || true
             echo "▶ Auth: single-user (default VNC_USER=user, VNC_PW=password)"
             echo "  Open http://localhost:8443 — browser will prompt for creds."
-            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop kartoza:qgis-desktop-ltr
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
+              kartoza:qgis-desktop-ltr
           '';
 
           # Multi-user via inline env var.
@@ -1163,6 +1279,7 @@ DBUSEOF
             echo "  Log in as  alice / pw1   or   bob / pw2"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
               kartoza:qgis-desktop-ltr
           '';
@@ -1183,6 +1300,7 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -v "$USERS_FILE:/etc/qgis-desktop/users:ro" \
               kartoza:qgis-desktop-ltr
           '';
@@ -1193,6 +1311,7 @@ DBUSEOF
             echo "⚠  Auth: DISABLED. Do NOT expose this port to any untrusted network."
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               kartoza:qgis-desktop-ltr
           '';
@@ -1208,6 +1327,7 @@ DBUSEOF
             echo "  For multi-user try:  nix run .#run-greeter-multi"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               kartoza:qgis-desktop-ltr
           '';
@@ -1220,6 +1340,7 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
               kartoza:qgis-desktop-ltr
@@ -1245,6 +1366,7 @@ DBUSEOF
             echo "  The identity provider's host is added to the egress allowlist"
             echo "  automatically. Open http://localhost:8443 to be sent to the IdP."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=oidc \
               -e QGIS_DESKTOP_OIDC_ISSUER_URL \
               -e QGIS_DESKTOP_OIDC_CLIENT_ID \
@@ -1441,6 +1563,7 @@ DBUSEOF
             echo "  - Terminal access removed"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e KASM_WATERMARK_TEXT='CONFIDENTIAL - ''${USER} %H:%M' \
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
@@ -1458,6 +1581,7 @@ DBUSEOF
             echo "  Everything else is blocked. DNS to Docker's resolver stays open."
             echo "  Log in as user / password  ·  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_EGRESS_ALLOW='1.1.1.1,example.com' \
               kartoza:qgis-desktop-ltr
           '';
@@ -1505,6 +1629,7 @@ DBUSEOF
             echo "⚠  Dev mode: auth OFF and egress lockdown OFF."
             echo "  Open http://localhost:8443 — connects with no prompt, full network access."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               -e QGIS_DESKTOP_EGRESS_LOCKDOWN=0 \
               kartoza:qgis-desktop-ltr

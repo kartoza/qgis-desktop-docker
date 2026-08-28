@@ -23,6 +23,12 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
+      # Where the "Manage my desktops" button goes — in the control bar and on
+      # the session-ended page. Without it users get the "your desktop is still
+      # running" reminder but nothing to click, which is the wrong lesson for a
+      # demo.
+      - QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard
+
       # The greeter runs inside the X session, so the browser sees a login form
       # instead of its own HTTP Basic Auth dialog. A wrong password re-prompts
       # in place — no browser cache to fight, no tab to close.

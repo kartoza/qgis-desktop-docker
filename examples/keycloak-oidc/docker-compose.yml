@@ -73,6 +73,12 @@ services:
     secrets:
       - oidc-client-secret
     environment:
+      # Where the "Manage my desktops" button goes — in the control bar and on
+      # the session-ended page. Without it users get the "your desktop is still
+      # running" reminder but nothing to click, which is the wrong lesson for a
+      # demo.
+      - QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard
+
       - QGIS_DESKTOP_AUTH_MODE=oidc
       # Any OIDC provider works here — this is the only line that points the
       # container at a particular identity provider.
