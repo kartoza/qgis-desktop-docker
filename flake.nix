@@ -1246,7 +1246,9 @@ DBUSEOF
             docker rm -f qgis-desktop 2>/dev/null || true
             echo "▶ Auth: single-user (default VNC_USER=user, VNC_PW=password)"
             echo "  Open http://localhost:8443 — browser will prompt for creds."
-            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop kartoza:qgis-desktop-ltr
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
+              kartoza:qgis-desktop-ltr
           '';
 
           # Multi-user via inline env var.
@@ -1256,6 +1258,7 @@ DBUSEOF
             echo "  Log in as  alice / pw1   or   bob / pw2"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
               kartoza:qgis-desktop-ltr
           '';
@@ -1276,6 +1279,7 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -v "$USERS_FILE:/etc/qgis-desktop/users:ro" \
               kartoza:qgis-desktop-ltr
           '';
@@ -1286,6 +1290,7 @@ DBUSEOF
             echo "⚠  Auth: DISABLED. Do NOT expose this port to any untrusted network."
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               kartoza:qgis-desktop-ltr
           '';
@@ -1301,6 +1306,7 @@ DBUSEOF
             echo "  For multi-user try:  nix run .#run-greeter-multi"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               kartoza:qgis-desktop-ltr
           '';
@@ -1313,6 +1319,7 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
               kartoza:qgis-desktop-ltr
@@ -1338,6 +1345,7 @@ DBUSEOF
             echo "  The identity provider's host is added to the egress allowlist"
             echo "  automatically. Open http://localhost:8443 to be sent to the IdP."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=oidc \
               -e QGIS_DESKTOP_OIDC_ISSUER_URL \
               -e QGIS_DESKTOP_OIDC_CLIENT_ID \
@@ -1534,6 +1542,7 @@ DBUSEOF
             echo "  - Terminal access removed"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e KASM_WATERMARK_TEXT='CONFIDENTIAL - ''${USER} %H:%M' \
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
@@ -1551,6 +1560,7 @@ DBUSEOF
             echo "  Everything else is blocked. DNS to Docker's resolver stays open."
             echo "  Log in as user / password  ·  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_EGRESS_ALLOW='1.1.1.1,example.com' \
               kartoza:qgis-desktop-ltr
           '';
@@ -1598,6 +1608,7 @@ DBUSEOF
             echo "⚠  Dev mode: auth OFF and egress lockdown OFF."
             echo "  Open http://localhost:8443 — connects with no prompt, full network access."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               -e QGIS_DESKTOP_EGRESS_LOCKDOWN=0 \
               kartoza:qgis-desktop-ltr

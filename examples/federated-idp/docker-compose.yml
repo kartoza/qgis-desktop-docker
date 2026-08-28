@@ -72,6 +72,12 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
+      # Where the "Manage my desktops" button goes — in the control bar and on
+      # the session-ended page. Without it users get the "your desktop is still
+      # running" reminder but nothing to click, which is the wrong lesson for a
+      # demo.
+      - QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard
+
       # The container only ever talks to YOUR realm. It has no idea the
       # corporate directory exists, and swapping that directory for another one
       # changes nothing here — that indirection is what you are buying by

@@ -29,6 +29,12 @@ services:
       # lockdown does not.
       - NET_ADMIN
     environment:
+      # Where the "Manage my desktops" button goes — in the control bar and on
+      # the session-ended page. Without it users get the "your desktop is still
+      # running" reminder but nothing to click, which is the wrong lesson for a
+      # demo.
+      - QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard
+
       - QGIS_DESKTOP_AUTH_MODE=oidc
 
       # Must be byte-identical to what Keycloak announces about itself, and

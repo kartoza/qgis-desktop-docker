@@ -95,6 +95,12 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
+      # Where the "Manage my desktops" button goes — in the control bar and on
+      # the session-ended page. Without it users get the "your desktop is still
+      # running" reminder but nothing to click, which is the wrong lesson for a
+      # demo.
+      - QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard
+
       # --- Who may open the desktop -------------------------------------
       - QGIS_DESKTOP_AUTH_MODE=oidc
       - QGIS_DESKTOP_OIDC_ISSUER_URL=http://keycloak:8080/realms/qgis

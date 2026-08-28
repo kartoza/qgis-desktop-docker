@@ -7,6 +7,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Every demo now sets `QGIS_DESKTOP_MANAGE_URL`.** The "Manage my desktops"
+  button only appears when a deployment supplies a URL — one image serves many
+  customers, so it cannot be baked in — which meant none of the `nix run`
+  scenarios or example compose files showed it. Anyone trying a demo saw the
+  "your desktop is still running" reminder with nothing to click, which is the
+  wrong lesson to take away. All eleven `docker run` demos and ten compose
+  examples now point it at the hosting dashboard.
+
 ### Removed
 
 - **304 MB of the image, including the C compiler.** This container is used by
