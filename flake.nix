@@ -12,26 +12,36 @@
         # Changes that have to apply everywhere in the closure, not just where
         # we reference a package directly. GDAL pulls HDF4 transitively, so
         # patching it at our own call site would achieve nothing.
-        slimOverlay = _final: prev: {
-          # hdf ships lib/libhdf4.settings, a build-provenance record quoting
-          # the absolute path of the compiler it was built with. Nix reads that
-          # as a runtime reference, so 107 MB of gcc landed in the image because
-          # of a text file — in a container untrusted subscribers run code in.
-          #
-          # HDF4 support is untouched: GDAL links libhdf4 and never calls h4cc,
-          # the compiler wrapper that settings file describes.
-          hdf = prev.hdf.overrideAttrs (old: {
-            postInstall = (old.postInstall or "") + ''
-              if [ -f "$out/lib/libhdf4.settings" ]; then
-                sed -i 's|/nix/store/[a-z0-9]\{32\}-|/nix-store-scrubbed-|g' \
-                  "$out/lib/libhdf4.settings"
-              fi
-              # Compiler wrappers: build-time helpers that hardcode a toolchain
-              # path. Nothing at runtime calls them.
-              rm -f "$out/bin/h4cc" "$out/bin/h4fc"
-            '';
-          });
-        };
+        slimOverlay = _final: prev:
+          let
+            # hdf ships lib/libhdf4.settings, a build-provenance record quoting
+            # the absolute path of the compiler it was built with. Nix reads any
+            # store path in any file as a runtime reference, so 107 MB of gcc
+            # landed in the image because of a text file — in a container that
+            # untrusted subscribers run code in.
+            #
+            # HDF4 support is untouched: GDAL links libhdf/libmfhdf directly and
+            # never calls h4cc, the compiler wrapper that settings file
+            # describes.
+            dropCompilerRef = p: p.overrideAttrs (old: {
+              postInstall = (old.postInstall or "") + ''
+                if [ -f "$out/lib/libhdf4.settings" ]; then
+                  sed -i 's|/nix/store/[a-z0-9]\{32\}-|/nix-store-scrubbed-|g' \
+                    "$out/lib/libhdf4.settings"
+                fi
+                # Build-time helpers that hardcode a toolchain path. Nothing at
+                # runtime calls them.
+                rm -f "$out/bin/h4cc" "$out/bin/h4fc"
+              '';
+            });
+          in
+          # The attribute is hdf4 in nixpkgs even though the derivation is named
+          # hdf. Overriding only "hdf" changed nothing, because GDAL asks for
+          # hdf4 — the store path came back byte-identical. Cover both names,
+          # and tolerate either being absent so a nixpkgs rename fails loudly at
+          # the callsite rather than silently doing nothing here.
+          (if prev ? hdf4 then { hdf4 = dropCompilerRef prev.hdf4; } else { })
+          // (if prev ? hdf then { hdf = dropCompilerRef prev.hdf; } else { });
 
         pkgs = import nixpkgs {
           inherit system;
