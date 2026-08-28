@@ -283,7 +283,7 @@ if command -v rsvg-convert >/dev/null 2>&1; then
   WP_TEMPLATE="$PROJECT_ROOT/config/branding/wallpaper.svg.in"
 
   run_wallpaper() {
-    OUTPUT="$(bash "$WALLPAPER" --template "${2:-$WP_TEMPLATE}" \
+    OUTPUT="$(bash "$WALLPAPER" --template "${2:-$WP_TEMPLATE}" --logo "$LOGO" \
       --tokens "${1:-$TOKENS}" --out "$WORK/wp.png" 2>&1)"
     STATUS=$?
   }
@@ -301,6 +301,12 @@ if command -v rsvg-convert >/dev/null 2>&1; then
 
   run_wallpaper "$WORK/wp-bad.json"
   if [ "$STATUS" -ne 0 ]; then ok "a malformed wallpaper colour is rejected"; else no "a malformed wallpaper colour is rejected"; fi
+
+  # The logo is embedded by reference, so rsvg needs it beside the SVG — a
+  # missing one renders a wallpaper with a hole in it rather than failing.
+  OUTPUT="$(bash "$WALLPAPER" --template "$WP_TEMPLATE" --tokens "$TOKENS" \
+    --logo "$WORK/no-such-logo.svg" --out "$WORK/wp.png" 2>&1)"; STATUS=$?
+  if [ "$STATUS" -ne 0 ]; then ok "a missing logo is rejected"; else no "a missing logo is rejected"; fi
 
   jq 'del(.wallpaper)' "$TOKENS" > "$WORK/wp-none.json"
   run_wallpaper "$WORK/wp-none.json"

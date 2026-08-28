@@ -198,6 +198,7 @@
           ${brandWallpaperScript}/bin/qgis-desktop-brand-wallpaper \
             --template ${./config/branding/wallpaper.svg.in} \
             --tokens ${./config/branding/tokens.json} \
+            --logo ${./resources/brand/geohosting.svg} \
             --out $out
         '';
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------

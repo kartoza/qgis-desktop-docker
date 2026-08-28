@@ -29,7 +29,11 @@ genuinely on the path users take.
 
 ## The wallpaper, and the gap on log-out
 
-The desktop wallpaper is rendered from `config/branding/wallpaper.svg.in` at
+It deliberately uses the same visual language as the session-ended page — the
+same light surface, the same Lato, the same amber accent rule — so that someone
+who logs out and back in feels they stayed inside one product.
+
+The wallpaper is rendered from `config/branding/wallpaper.svg.in` at
 build time, with its colours coming from the same tokens file. Edit the SVG or
 the tokens and rebuild; `nix build .#branded-wallpaper` renders it in about a
 second so you can look at a change without an image build.

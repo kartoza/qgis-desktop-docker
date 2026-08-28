@@ -10,12 +10,13 @@
 # right: the XFCE desktop, the LightDM greeter background in greeter mode, and
 # the X root window that shows for a few seconds while a session restarts.
 #
-#   qgis-desktop-brand-wallpaper --template FILE --tokens FILE --out FILE
+#   qgis-desktop-brand-wallpaper --template FILE --tokens FILE --logo FILE \\
+#                                --out FILE
 #                                [--width N] [--height N]
 
 set -euo pipefail
 
-TEMPLATE="" TOKENS="" OUT="" WIDTH=1920 HEIGHT=1080
+TEMPLATE="" TOKENS="" OUT="" LOGO="" WIDTH=1920 HEIGHT=1080
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -23,6 +24,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --template) TEMPLATE="${2:-}"; shift 2 ;;
     --tokens) TOKENS="${2:-}"; shift 2 ;;
+    --logo) LOGO="${2:-}"; shift 2 ;;
     --out) OUT="${2:-}"; shift 2 ;;
     --width) WIDTH="${2:-}"; shift 2 ;;
     --height) HEIGHT="${2:-}"; shift 2 ;;
@@ -33,6 +35,8 @@ done
 [ -n "${TEMPLATE}" ] || die "--template is required."
 [ -n "${TOKENS}" ] || die "--tokens is required."
 [ -n "${OUT}" ] || die "--out is required."
+[ -n "${LOGO}" ] || die "--logo is required."
+[ -r "${LOGO}" ] || die "${LOGO} is not readable."
 [ -r "${TEMPLATE}" ] || die "${TEMPLATE} is not readable."
 [ -r "${TOKENS}" ] || die "${TOKENS} is not readable."
 
@@ -53,14 +57,15 @@ FONT_FAMILY="$(tok '.font.family')"
 ACCENT="$(tok '.color.accent')"
 SECONDARY="$(tok '.color.secondary')"
 MUTED="$(tok '.color.muted')"
-BG_TOP="$(tok '.wallpaper.bgTop')"
-BG_BOTTOM="$(tok '.wallpaper.bgBottom')"
+BG="$(tok '.wallpaper.bg')"
+BG_TINT="$(tok '.wallpaper.bgTint')"
 GLOW="$(tok '.wallpaper.glow')"
 WORDMARK="$(tok '.wallpaper.wordmark')"
+TAGLINE_FILL="$(tok '.wallpaper.tagline')"
 
 # Colours go straight into SVG fill attributes; a malformed one would be
 # silently ignored by the renderer and produce a black shape.
-for name in ACCENT SECONDARY MUTED BG_TOP BG_BOTTOM GLOW WORDMARK; do
+for name in ACCENT SECONDARY MUTED BG BG_TINT GLOW WORDMARK TAGLINE_FILL; do
   case "${!name}" in
     '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) : ;;
     *) die "${name} = '${!name}' is not a #rrggbb hex literal." ;;
@@ -77,6 +82,10 @@ xml_escape() {
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 SVG="${WORK}/wallpaper.svg"
+# rsvg resolves a nested <image href> relative to the SVG on disk, so the logo
+# has to sit beside it. Copying also means the template never carries an
+# absolute nix store path.
+cp "${LOGO}" "${WORK}/$(basename "${LOGO}")"
 
 sed \
   -e "s|@BRAND_NAME@|$(xml_escape "${BRAND_NAME}")|g" \
@@ -85,10 +94,12 @@ sed \
   -e "s|@ACCENT@|${ACCENT}|g" \
   -e "s|@SECONDARY@|${SECONDARY}|g" \
   -e "s|@MUTED@|${MUTED}|g" \
-  -e "s|@BG_TOP@|${BG_TOP}|g" \
-  -e "s|@BG_BOTTOM@|${BG_BOTTOM}|g" \
+  -e "s|@BG@|${BG}|g" \
+  -e "s|@BG_TINT@|${BG_TINT}|g" \
   -e "s|@GLOW@|${GLOW}|g" \
   -e "s|@WORDMARK@|${WORDMARK}|g" \
+  -e "s|@TAGLINE_FILL@|${TAGLINE_FILL}|g" \
+  -e "s|@LOGO@|$(basename "${LOGO}")|g" \
   "${TEMPLATE}" > "${SVG}"
 
 if grep -oE '@[A-Z_]+@' "${SVG}" | head -1 | grep -q .; then
