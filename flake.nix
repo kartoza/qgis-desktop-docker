@@ -62,6 +62,19 @@
             });
           } else { })
           //
+          # lightdm links plymouth so it can hand over from a boot splash to the
+          # greeter. There is no boot in a container and no splash to hand over
+          # from, and plymouth is one of the handful of things keeping systemd in
+          # the closure.
+          (if prev ? lightdm then {
+            lightdm = prev.lightdm.overrideAttrs (old: {
+              buildInputs = builtins.filter
+                (p: !(prev.lib.hasPrefix "plymouth" (p.pname or p.name or "")))
+                (old.buildInputs or [ ]);
+              configureFlags = (old.configureFlags or [ ]) ++ [ "--disable-plymouth" ];
+            });
+          } else { })
+          //
           # debugpy vendors pydevd's "attach to a running process" helper, which
           # injects code into a live process using gdb — and that single
           # directory is the only reason a 16 MB debugger is in the image.
