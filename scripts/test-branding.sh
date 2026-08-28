@@ -19,6 +19,7 @@ BRAND="$PROJECT_ROOT/config/branding/brand-www.sh"
 TOKENS="$PROJECT_ROOT/config/branding/tokens.json"
 TEMPLATE="$PROJECT_ROOT/config/branding/disconnected.html.in"
 LOGO="$PROJECT_ROOT/resources/brand/geohosting.svg"
+REDIRECT_JS="$PROJECT_ROOT/config/branding/disconnect-redirect.js"
 
 PASS=0
 FAIL=0
@@ -42,6 +43,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 printf 'regular\n' > "$WORK/regular.ttf"
 printf 'bold\n' > "$WORK/bold.ttf"
+printf 'brand-splash\n' > "$WORK/splash.jpg"
 
 # A miniature stand-in for KasmVNC's web root, carrying exactly the markup the
 # script keys on.
@@ -55,8 +57,9 @@ make_www() {
 PAGE
   done
   echo '<html><body>Session Disconnected</body></html>' > "$dir/disconnected.html"
-  echo 'console.log(1)' > "$dir/assets/ui-D357AMxM.js"
+  printf 'classList.add("noVNC_connected");classList.add("noVNC_disconnected");\n' > "$dir/assets/ui-D357AMxM.js"
   echo '.a{color:red}' > "$dir/assets/screen-D7_1SmlI.css"
+  printf 'kasm-splash\n' > "$dir/assets/splash-D03O8R4K.jpg"
 }
 
 run_brand() {
@@ -67,7 +70,7 @@ run_brand() {
       --source "$src" \
       --tokens "${TOKENS_OVERRIDE:-$TOKENS}" \
       --template "$TEMPLATE" \
-      --logo "$LOGO" \
+      --logo "$LOGO" --splash "$WORK/splash.jpg" --redirect-js "$REDIRECT_JS" \
       --font-regular "$WORK/regular.ttf" \
       --font-bold "$WORK/bold.ttf" \
       --out "$out" "$@" 2>&1
@@ -265,14 +268,259 @@ if [ "$STATUS" -ne 0 ]; then ok "an unknown argument is rejected"; else no "an u
 
 # --- The shipped tokens file ------------------------------------------------
 if jq -e . "$TOKENS" >/dev/null 2>&1; then ok "the shipped tokens file is valid JSON"; else no "the shipped tokens file is valid JSON"; fi
-if jq -e '._provenance.assumed | length > 0' "$TOKENS" >/dev/null 2>&1; then
-  ok "the tokens file records which values are assumed"
+# Every colour must say where it came from. These were guesses read off the live
+# site until the official palette was supplied; recording which are which is the
+# only way anyone can tell what still needs confirming.
+if jq -e '._provenance.official | length > 0' "$TOKENS" >/dev/null 2>&1; then
+  ok "the tokens file records which values are official"
 else
-  no "the tokens file records which values are assumed" \
-    "every derived value needs its provenance stated, or nobody knows what still needs confirming"
+  no "the tokens file records which values are official"
+fi
+if jq -e '._provenance | has("derived")' "$TOKENS" >/dev/null 2>&1; then
+  ok "…and which were derived rather than supplied"
+else
+  no "…and which were derived rather than supplied"
+fi
+if [ "$(jq -r .color.accent "$TOKENS")" = "#DF9E2F" ]; then
+  ok "the accent is the official highlight1, not the value read off the site"
+else
+  no "the accent is the official highlight1" "got $(jq -r .color.accent "$TOKENS")"
+fi
+if [ "$(cat "$WORK/out/assets/brand-accent.txt" 2>/dev/null)" = "$(jq -r .color.accent "$TOKENS")" ]; then
+  ok "the accent is published for the runtime link to read"
+else
+  no "the accent is published for the runtime link to read" \
+    "the control-bar button would keep a stale colour hardcoded"
 fi
 
 
+
+
+
+
+# --- The disconnect redirect ------------------------------------------------
+# KasmVNC only navigates to disconnected.html on an idle timeout. Without this,
+# logging out shows a small status bar and the session-ended page — including
+# the billing reminder — is never seen.
+for page in index.html vnc.html; do
+  if grep -q 'assets/brand-disconnect.js' "$WORK/out/$page" 2>/dev/null; then
+    ok "$page loads the disconnect redirect"
+  else
+    no "$page loads the disconnect redirect"
+  fi
+done
+if [ -f "$WORK/out/assets/brand-disconnect.js" ]; then
+  ok "the redirect script is installed"
+else
+  no "the redirect script is installed"
+fi
+
+# It keys on two class names in the bundle. A rename must fail the build, not
+# quietly restore the behaviour we just fixed.
+make_www "$WORK/src-noclass"
+sed -i 's|noVNC_disconnected|noVNC_gone|' "$WORK/src-noclass/assets/ui-D357AMxM.js"
+run_brand "$WORK/src-noclass" "$WORK/out-noclass"
+if [ "$STATUS" -ne 0 ]; then ok "a renamed disconnect class fails the build"; else no "a renamed disconnect class fails the build"; fi
+
+make_www "$WORK/src-twoui"
+cp "$WORK/src-twoui/assets/ui-D357AMxM.js" "$WORK/src-twoui/assets/ui-OTHER.js"
+run_brand "$WORK/src-twoui" "$WORK/out-twoui"
+if [ "$STATUS" -ne 0 ]; then ok "two ui bundles fail the build"; else no "two ui bundles fail the build"; fi
+# --- The pre-connection splash ----------------------------------------------
+# The first thing a user sees, and it was Kasm's blue geometry.
+if grep -q 'brand-splash' "$WORK/out/assets/splash-D03O8R4K.jpg" 2>/dev/null; then
+  ok "the Kasm splash is replaced with ours"
+else
+  no "the Kasm splash is replaced with ours"
+fi
+
+# The filename carries a content hash, so a KasmVNC bump renames it. Silently
+# skipping would leave Kasm's artwork on screen while everyone assumed otherwise.
+make_www "$WORK/src-nosplash"
+rm -f "$WORK/src-nosplash/assets/splash-D03O8R4K.jpg"
+run_brand "$WORK/src-nosplash" "$WORK/out-nosplash"
+if [ "$STATUS" -ne 0 ]; then ok "a missing splash asset fails the build"; else no "a missing splash asset fails the build"; fi
+
+make_www "$WORK/src-twosplash"
+cp "$WORK/src-twosplash/assets/splash-D03O8R4K.jpg" "$WORK/src-twosplash/assets/splash-OTHER.jpg"
+run_brand "$WORK/src-twosplash" "$WORK/out-twosplash"
+if [ "$STATUS" -ne 0 ]; then ok "two splash candidates fail the build"; else no "two splash candidates fail the build"; fi
+# --- The runtime management link --------------------------------------------
+# The URL belongs to the deployment, not the image, so it is filled in at
+# container start. These check the two-file arrangement that makes that
+# possible, and that it stays idempotent across restarts.
+MANAGE="$PROJECT_ROOT/config/branding/manage-link.sh"
+
+if [ -f "$WORK/out/disconnected.html.in" ]; then
+  ok "the session-ended template ships alongside the rendered page"
+else
+  no "the session-ended template ships alongside the rendered page"
+fi
+if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "$WORK/out/disconnected.html.in" 2>/dev/null; then
+  ok "the template keeps its runtime marker"
+else
+  no "the template keeps its runtime marker" "the runtime would have nothing to fill in"
+fi
+# The as-built page must be valid on its own — preview-branding serves it.
+if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "the as-built page has no leftover marker"
+else
+  ok "the as-built page has no leftover marker"
+fi
+if grep -q 'Your desktop is still running' "$WORK/out/disconnected.html" 2>/dev/null; then
+  ok "the cost reminder is present even with no URL configured"
+else
+  no "the cost reminder is present even with no URL configured" \
+    "this is the part that matters for someone's bill; it must not depend on config"
+fi
+for page in index.html vnc.html; do
+  if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->' "$WORK/out/$page.in" 2>/dev/null; then
+    ok "$page.in keeps the control-bar slot"
+  else
+    no "$page.in keeps the control-bar slot"
+  fi
+  if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->' "$WORK/out/$page" 2>/dev/null; then
+    no "$page has no leftover control-bar marker"
+  else
+    ok "$page has no leftover control-bar marker"
+  fi
+done
+
+run_manage() {
+  MANAGE_OUT="$(env QGIS_DESKTOP_BRANDED_WWW="$WORK/out" "$@" bash "$MANAGE" 2>&1)"
+  MANAGE_STATUS=$?
+}
+
+run_manage QGIS_DESKTOP_MANAGE_URL=https://example.com/dashboard
+if [ "$MANAGE_STATUS" -eq 0 ]; then ok "the runtime renderer succeeds"; else no "the runtime renderer succeeds" "$MANAGE_OUT"; fi
+if grep -q 'href="https://example.com/dashboard"' "$WORK/out/disconnected.html" 2>/dev/null; then
+  ok "the session-ended page gains the manage button"
+else
+  no "the session-ended page gains the manage button"
+fi
+if grep -q 'href="https://example.com/dashboard"' "$WORK/out/index.html" 2>/dev/null; then
+  ok "the control bar gains the manage link"
+else
+  no "the control bar gains the manage link"
+fi
+
+# A restart must not stack a second copy.
+run_manage QGIS_DESKTOP_MANAGE_URL=https://example.com/dashboard
+if [ "$(grep -c 'class="notice"' "$WORK/out/disconnected.html")" -eq 1 ]; then
+  ok "running it twice does not duplicate the notice"
+else
+  no "running it twice does not duplicate the notice" \
+    "$(grep -c 'class="notice"' "$WORK/out/disconnected.html") copies"
+fi
+
+# A hostile or malformed URL must never reach an href.
+run_manage QGIS_DESKTOP_MANAGE_URL='javascript:alert(1)'
+if grep -q 'javascript:' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "a non-http URL never reaches the page"
+else
+  ok "a non-http URL never reaches the page"
+fi
+if grep -q 'Your desktop is still running' "$WORK/out/disconnected.html" 2>/dev/null; then
+  ok "…and the reminder survives the rejection"
+else
+  no "…and the reminder survives the rejection"
+fi
+
+run_manage QGIS_DESKTOP_MANAGE_URL='https://example.com/"><script>alert(1)</script>'
+if grep -q '<script>alert' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "a URL cannot break out of its attribute"
+else
+  ok "a URL cannot break out of its attribute"
+fi
+
+run_manage
+if [ "$MANAGE_STATUS" -eq 0 ]; then ok "no URL configured is not an error"; else no "no URL configured is not an error" "$MANAGE_OUT"; fi
+if grep -q 'Manage my desktops' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "no URL means no button"
+else
+  ok "no URL means no button"
+fi
+
+MANAGE_OUT="$(env QGIS_DESKTOP_BRANDED_WWW="$WORK/nope" bash "$MANAGE" 2>&1)"; MANAGE_STATUS=$?
+if [ "$MANAGE_STATUS" -eq 0 ]; then ok "a missing web root is a no-op, not a failed boot"; else no "a missing web root is a no-op, not a failed boot"; fi
+
+# --- The runtime template must carry the branding ---------------------------
+# Regression, seen in a real container: the control-bar logo reverted to Kasm's
+# after boot. The template was captured before the logo was replaced, so the
+# runtime render faithfully restored the unbranded markup. Checking the served
+# page alone did not catch it — the template is what the runtime actually uses.
+for page in index.html vnc.html; do
+  if grep -q 'assets/brand-logo.svg' "$WORK/out/$page.in" 2>/dev/null; then
+    ok "$page.in carries the brand logo"
+  else
+    no "$page.in carries the brand logo" "the runtime render would restore Kasm's"
+  fi
+  if grep -q "<title>${BRAND_NAME}</title>" "$WORK/out/$page.in" 2>/dev/null; then
+    ok "$page.in carries the brand title"
+  else
+    no "$page.in carries the brand title"
+  fi
+  if grep -q 'kasmweb.com/kasmvnc"' "$WORK/out/$page.in" 2>/dev/null; then
+    no "$page.in has no kasmweb link left"
+  else
+    ok "$page.in has no kasmweb link left"
+  fi
+done
+
+# And after the runtime has actually rendered from it.
+run_manage QGIS_DESKTOP_MANAGE_URL=https://example.com/dashboard
+for page in index.html vnc.html; do
+  if grep -q 'assets/brand-logo.svg' "$WORK/out/$page" 2>/dev/null; then
+    ok "$page still branded after the runtime render"
+  else
+    no "$page still branded after the runtime render" "this is the regression"
+  fi
+done
+# --- The wallpaper ----------------------------------------------------------
+# It is used in three places (XFCE desktop, LightDM greeter background, and the
+# X root window during a session restart), so a broken render is visible in all
+# of them.
+if command -v rsvg-convert >/dev/null 2>&1; then
+  WALLPAPER="$PROJECT_ROOT/config/branding/brand-wallpaper.sh"
+  WP_TEMPLATE="$PROJECT_ROOT/config/branding/wallpaper.svg.in"
+
+  run_wallpaper() {
+    OUTPUT="$(bash "$WALLPAPER" --template "${2:-$WP_TEMPLATE}" --logo "$LOGO" \
+      --tokens "${1:-$TOKENS}" --out "$WORK/wp.png" 2>&1)"
+    STATUS=$?
+  }
+
+  rm -f "$WORK/wp.png"
+  run_wallpaper
+  if [ "$STATUS" -eq 0 ]; then ok "the wallpaper renders"; else no "the wallpaper renders" "$OUTPUT"; fi
+  if [ -s "$WORK/wp.png" ]; then ok "…and the PNG is not empty"; else no "…and the PNG is not empty"; fi
+  # A PNG, not an SVG someone renamed.
+  if head -c 8 "$WORK/wp.png" 2>/dev/null | grep -q 'PNG'; then
+    ok "…and is a real PNG"
+  else
+    no "…and is a real PNG"
+  fi
+
+  run_wallpaper "$WORK/wp-bad.json"
+  if [ "$STATUS" -ne 0 ]; then ok "a malformed wallpaper colour is rejected"; else no "a malformed wallpaper colour is rejected"; fi
+
+  # The logo is embedded by reference, so rsvg needs it beside the SVG — a
+  # missing one renders a wallpaper with a hole in it rather than failing.
+  OUTPUT="$(bash "$WALLPAPER" --template "$WP_TEMPLATE" --tokens "$TOKENS" \
+    --logo "$WORK/no-such-logo.svg" --out "$WORK/wp.png" 2>&1)"; STATUS=$?
+  if [ "$STATUS" -ne 0 ]; then ok "a missing logo is rejected"; else no "a missing logo is rejected"; fi
+
+  jq 'del(.wallpaper)' "$TOKENS" > "$WORK/wp-none.json"
+  run_wallpaper "$WORK/wp-none.json"
+  if [ "$STATUS" -ne 0 ]; then ok "a missing wallpaper block is rejected"; else no "a missing wallpaper block is rejected"; fi
+
+  # An unknown placeholder in the template must fail the build, not ship.
+  sed 's|@WORDMARK@|@NOT_A_TOKEN@|' "$WP_TEMPLATE" > "$WORK/wp-tmpl.svg"
+  run_wallpaper "$TOKENS" "$WORK/wp-tmpl.svg"
+  if [ "$STATUS" -ne 0 ]; then ok "an unknown template placeholder fails the render"; else no "an unknown template placeholder fails the render"; fi
+else
+  echo "  — rsvg-convert not on PATH; skipping the wallpaper checks"
+fi
 # --- shellcheck -------------------------------------------------------------
 # brand-www.sh is packaged with writeShellApplication, which runs shellcheck at
 # BUILD time and treats even info-level findings as fatal. Without this test the

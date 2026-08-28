@@ -27,6 +27,95 @@ page, with no way to navigate the page containing it. So the sign-out affordance
 lives there, and nowhere else. KasmVNC redirects to it on disconnect, so it is
 genuinely on the path users take.
 
+## The wallpaper, and the gap on log-out
+
+It deliberately uses the same visual language as the session-ended page — the
+same light surface, the same Lato, the same amber accent rule — so that someone
+who logs out and back in feels they stayed inside one product.
+
+The wallpaper is rendered from `config/branding/wallpaper.svg.in` at
+build time, with its colours coming from the same tokens file. Edit the SVG or
+the tokens and rebuild; `nix build .#branded-wallpaper` renders it in about a
+second so you can look at a change without an image build.
+
+It shows up in three places, which is why it is worth getting right:
+
+- the XFCE desktop;
+- the LightDM greeter background in `greeter` mode;
+- the X root window.
+
+That last one is the fix for a real complaint. `xfdesktop` draws the wallpaper,
+but it dies with the session — so between XFCE exiting on **Log Out** and the
+supervisor restarting it, users were left looking at the bare X root window for
+several seconds. Flat blue, no explanation, easily mistaken for a fault.
+`start-desktop.sh` now paints the root window once, as soon as X is up: a solid
+brand colour first, then the wallpaper over it. The root window outlives every
+session restart, so painting it once covers the gap for the life of the
+container, and `xfdesktop` simply draws over it while a session runs.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QGIS_DESKTOP_WALLPAPER` | `/usr/share/wallpaper.png` | The image painted on the root window and used by the greeter. Bind-mount over it to change the wallpaper without rebuilding. |
+| `QGIS_DESKTOP_ROOT_COLOR` | `#0D161C` | Solid colour painted first, and the fallback if the image cannot be drawn. |
+
+### What applies in which mode
+
+The branding is served by both desktop paths, so it is the same everywhere. The
+log-out handling deliberately is not.
+
+| | `basic` / `none` | `oidc` | `greeter` |
+|---|---|---|---|
+| Branded web UI | yes | yes | yes |
+| Branded wallpaper | yes | yes | yes, as the greeter background |
+| Session restarts on log out | yes | yes (inner mode `none`) | **no — LightDM re-shows its login form instead**, which is the better behaviour where real per-user accounts exist |
+| Root window painted | yes | yes | not needed: the greeter fills the screen itself |
+
+`bash claude.sh verify` exercises `basic`, `none` and `greeter` against a built
+image and asserts exactly that table. `oidc` needs a live identity provider, so
+it stays a manual check via `nix run .#run-keycloak-demo` — its desktop path is
+whichever inner mode is configured, and both of those are already covered.
+
+## Reminding people to shut down
+
+A disconnected session is exactly the moment someone assumes they are finished
+and walks away — from a machine that is still running, and still billing. So the
+session-ended page carries a reminder saying so, and it says it **whether or not
+a link is configured**: the warning is the part that protects someone's bill, and
+it must not depend on deployment config being filled in.
+
+When you give it a URL, the same link appears in two places — on the
+session-ended page as a button, and in the control bar down the left of the
+screen, so it is reachable while the user is still working rather than only once
+they have disconnected.
+
+```bash
+docker run ... \
+  -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
+  -e QGIS_DESKTOP_MANAGE_LABEL="Manage my desktops" \
+  ghcr.io/kartoza/qgis-desktop-docker:ltr
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QGIS_DESKTOP_MANAGE_URL` | *(none)* | Where the management link points — your control panel, per deployment. Unset, the reminder still appears, without a button. |
+| `QGIS_DESKTOP_MANAGE_LABEL` | `Manage my desktops` | Button text. |
+
+Only `http://` and `https://` are accepted; anything else is refused with a
+warning in the container log and the reminder is shown without a button, rather
+than emitting a link that does not work or, worse, a `javascript:` URL.
+
+### Why this happens at container start
+
+The URL belongs to the deployment, not to the image — one image serves many
+customers, each needing a link to their own control panel — so it cannot be
+baked in at build time. The build therefore ships two files for each page it
+touches: a template carrying a marker, and a rendered page that is valid on its
+own. `qgis-desktop-manage-link` runs as root at boot and re-renders the second
+from the first.
+
+Rendering from a pristine template rather than editing in place is what makes it
+idempotent: a container restart cannot end up with the notice inserted twice.
+
 ## What is not branded, on purpose
 
 Two things are left alone.

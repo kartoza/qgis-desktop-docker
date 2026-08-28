@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1920" height="1080" viewBox="0 0 1920 1080">
+  <!-- Desktop / greeter / root-window wallpaper. Rendered to PNG at build time
+       by brand-wallpaper.sh, with its placeholders filled from
+       config/branding/tokens.json.
+
+       Deliberately the same visual language as the session-ended page: the same
+       light surface, the same Lato, the same amber accent rule. Someone who
+       logs out and back in should feel they stayed in one product.
+
+       Composition: desktop icons live top-left and QGIS covers the middle, so
+       the mark sits right-of-centre and the type sits low-left. Nothing is
+       centred, because in greeter mode LightDM draws its login box there. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="@BG_TINT@"/>
+      <stop offset="1" stop-color="@BG@"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.68" cy="0.44" r="0.5">
+      <stop offset="0" stop-color="@GLOW@" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="@GLOW@" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#glow)"/>
+
+  <!-- The mark itself, not an approximation of it. -->
+  <image href="@LOGO@" xlink:href="@LOGO@"
+         x="1140" y="270" width="540" height="540" opacity="0.97"/>
+
+  <!-- The accent rule, echoing the card's border-top on the session-ended
+       page — the one element that makes the two screens read as a pair. -->
+  <rect x="128" y="742" width="84" height="6" rx="3" fill="@ACCENT@"/>
+
+  <text x="128" y="826"
+        font-family="@FONT_FAMILY@, 'Open Sans', sans-serif"
+        font-size="58" font-weight="700" letter-spacing="-0.5"
+        fill="@WORDMARK@">@BRAND_NAME@</text>
+  <text x="130" y="874"
+        font-family="@FONT_FAMILY@, 'Open Sans', sans-serif"
+        font-size="25" font-weight="400" letter-spacing="0.4"
+        fill="@TAGLINE_FILL@">@TAGLINE@</text>
+  <text x="130" y="916"
+        font-family="@FONT_FAMILY@, 'Open Sans', sans-serif"
+        font-size="23" font-weight="700" letter-spacing="0.6"
+        fill="@ACCENT@">@BRAND_HOST@</text>
+</svg>

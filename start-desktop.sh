@@ -82,6 +82,13 @@ esac
 QGIS_DESKTOP_USERS_FILE="${QGIS_DESKTOP_USERS_FILE:-/etc/qgis-desktop/users}"
 QGIS_DESKTOP_USERS="${QGIS_DESKTOP_USERS:-}"
 
+# Written by the session supervisor when the user logs out cleanly, and read
+# after Xkasmvnc exits. Exported so the supervisor and this script agree on the
+# path even if it is overridden.
+QGIS_DESKTOP_LOGOUT_FLAG="${QGIS_DESKTOP_LOGOUT_FLAG:-/tmp/qgis-desktop-logout}"
+export QGIS_DESKTOP_LOGOUT_FLAG
+rm -f "${QGIS_DESKTOP_LOGOUT_FLAG}"
+
 export DISPLAY
 
 # Normalise 1/yes/true/on to "1", anything else to "0".
@@ -322,6 +329,30 @@ if [ ! -e "/tmp/.X11-unix/X${DISPLAY_NUM}" ]; then
   exit 1
 fi
 
+
+# Paint the root window ourselves, once, as soon as X is up.
+#
+# xfdesktop draws the wallpaper, but it dies with the session — so between XFCE
+# exiting on Log Out and the supervisor bringing it back, the user was left
+# looking at the bare X root window for several seconds. That is the flat blue
+# people were seeing, and it looked like a fault rather than a restart.
+#
+# The root window outlives every session restart, so painting it here covers
+# the gap for the whole life of the container. xfdesktop simply draws over it
+# while a session is running.
+paint_root_window() {
+  # Solid brand colour first: instant, and it is the fallback if the image
+  # cannot be drawn for any reason.
+  if command -v xsetroot >/dev/null 2>&1; then
+    xsetroot -solid "${QGIS_DESKTOP_ROOT_COLOR:-#0D161C}" 2>/dev/null || true
+  fi
+  # Then the wallpaper itself, so the gap shows the brand rather than a flat
+  # colour. Optional — a missing feh is not worth failing a boot over.
+  if command -v feh >/dev/null 2>&1 && [ -r "${QGIS_DESKTOP_WALLPAPER:-/usr/share/wallpaper.png}" ]; then
+    feh --no-fehbg --bg-fill "${QGIS_DESKTOP_WALLPAPER:-/usr/share/wallpaper.png}" 2>/dev/null || true
+  fi
+}
+paint_root_window
 # Point the Giswater plugin at the natively built EPA solvers, if it is
 # installed in this home directory. Giswater shells out to Windows binaries it
 # ships inside its own plugin folder; `epa install` replaces them with symlinks
@@ -337,9 +368,15 @@ if command -v qgis-desktop-autostart >/dev/null 2>&1; then
   qgis-desktop-autostart || true
 fi
 
-# Start the desktop session
+# Start the desktop session under a supervisor that relaunches it when it
+# exits. Without that, XFCE's "Log Out" — and any XFCE crash — left the browser
+# attached to a bare X root window with no panel, no menu and no way back, and
+# only a container restart recovered it. See
+# config/session/session-supervisor.sh. LightDM does this job itself in greeter
+# mode, so that path never reaches here.
 echo "Starting XFCE desktop..."
-"$HOME/.vnc/xstartup" &
+QGIS_DESKTOP_SESSION_GUARD_PID="${XKASMVNC_PID}" \
+  qgis-desktop-session "$HOME/.vnc/xstartup" &
 DE_PID=$!
 export DE_PID
 
@@ -355,5 +392,26 @@ fi
 echo "============================================"
 echo ""
 
-# Wait for Xkasmvnc to exit
+# Wait for Xkasmvnc to exit.
+#
+# It exits for one of two reasons. Either the container is going down, in which
+# case so are we — or the session supervisor ended it deliberately on a clean
+# log out, to drop the browser onto the session-ended page. In that second case
+# come straight back up, so the page's Reconnect button lands on a working
+# desktop rather than a refused connection.
 wait $XKASMVNC_PID
+XKASMVNC_STATUS=$?
+
+if [ -e "${QGIS_DESKTOP_LOGOUT_FLAG}" ]; then
+  rm -f "${QGIS_DESKTOP_LOGOUT_FLAG}"
+  echo ""
+  echo "Log out: display server ended so the session-ended page is shown."
+  echo "Bringing the desktop back up for the Reconnect button."
+  echo ""
+  # Re-exec rather than loop: everything this script does at startup is
+  # idempotent, and starting over is the same code path a fresh boot takes —
+  # which is one behaviour to reason about instead of two.
+  exec "$0" "$@"
+fi
+
+exit "${XKASMVNC_STATUS}"

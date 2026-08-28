@@ -13,6 +13,7 @@ git.sh
 git.out
 claude.sh
 claude.out
+claude.issue
 screenshots_gitignored/
 build-summary.md
 sbom.txt

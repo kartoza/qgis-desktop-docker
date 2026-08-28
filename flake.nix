@@ -140,6 +140,24 @@
           text = builtins.readFile ./config/autostart/autostart.sh;
         };
 
+        # --- Session supervisor -------------------------------------------
+        # Wraps the XFCE session in the basic/none paths so that logging out
+        # of XFCE restarts the desktop instead of stranding the browser on a
+        # bare X root window. LightDM already does this in greeter mode.
+        sessionSupervisorScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-session";
+          runtimeInputs = with pkgs; [ coreutils ];
+          text = builtins.readFile ./config/session/session-supervisor.sh;
+        };
+
+
+        # The splash is a JPEG in KasmVNC's asset tree, so the wallpaper is
+        # re-encoded rather than re-rendered — one artwork, two containers for
+        # it, and no chance of the two drifting apart.
+        brandedSplash = pkgs.runCommand "qgis-desktop-splash.jpg"
+          { nativeBuildInputs = [ pkgs.imagemagick ]; } ''
+            magick ${brandedWallpaper} -quality 88 "$out"
+          '';
         # --- Branding (the KasmVNC web root) ------------------------------
         # Renders a branded copy of KasmVNC's www tree at build time. Every
         # brand value comes from config/branding/tokens.json — correcting that
@@ -162,11 +180,46 @@
             --tokens ${./config/branding/tokens.json} \
             --template ${./config/branding/disconnected.html.in} \
             --logo ${./resources/brand/geohosting.svg} \
+            --splash ${brandedSplash} \
+            --redirect-js ${./config/branding/disconnect-redirect.js} \
             --font-regular ${pkgs.lato}/share/fonts/lato/Lato-Regular.ttf \
             --font-bold ${pkgs.lato}/share/fonts/lato/Lato-Bold.ttf \
             --out $out
         '';
 
+
+
+        # Fills the deployment's management URL into the session-ended page at
+        # container start. Runs as root from the entrypoint: the URL is a
+        # property of the deployment, not of the image, so it cannot be baked in.
+        manageLinkScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-manage-link";
+          runtimeInputs = with pkgs; [ coreutils gnused gnugrep gawk ];
+          text = builtins.readFile ./config/branding/manage-link.sh;
+        };
+        # The desktop wallpaper, rendered from an SVG at build time. Used in
+        # three places: the XFCE desktop, the LightDM greeter background in
+        # greeter mode, and the X root window that shows for a few seconds
+        # while a session restarts.
+        brandWallpaperScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-brand-wallpaper";
+          runtimeInputs = with pkgs; [ jq coreutils gnused gnugrep librsvg ];
+          text = builtins.readFile ./config/branding/brand-wallpaper.sh;
+        };
+
+        # rsvg needs fontconfig to resolve the wordmark's typeface, or it
+        # silently falls back to whatever it can find — which is how you ship a
+        # wallpaper set in the wrong font without noticing.
+        wallpaperFontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.lato ]; };
+
+        brandedWallpaper = pkgs.runCommand "qgis-desktop-wallpaper.png" { } ''
+          export FONTCONFIG_FILE=${wallpaperFontsConf}
+          ${brandWallpaperScript}/bin/qgis-desktop-brand-wallpaper \
+            --template ${./config/branding/wallpaper.svg.in} \
+            --tokens ${./config/branding/tokens.json} \
+            --logo ${./resources/brand/geohosting.svg} \
+            --out $out
+        '';
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -223,10 +276,13 @@
             procps
             gnugrep
             xkbcomp
+            feh              # paints the wallpaper onto the X root window
+            xorg.xsetroot    # ...with a solid brand colour as the fallback
             xrdb
           ] ++ [
             epaTool # `epa install` wires Giswater up to the native solvers
             autostartScript # honours QGIS_DESKTOP_AUTOSTART_QGIS
+            sessionSupervisorScript # relaunches XFCE when the user logs out
           ];
           text = builtins.readFile ./start-desktop.sh;
         };
@@ -379,6 +435,7 @@
             oidcProxyScript       # qgis-desktop-oidc-proxy  (uid 1000: runs oauth2-proxy)
             disableTerminalScript # qgis-desktop-disable-terminal (root: QGIS_DESKTOP_ALLOW_TERMINAL=0)
             persistScript         # qgis-desktop-persist (root: home restore/save)
+            manageLinkScript      # qgis-desktop-manage-link (root: runtime manage URL)
           ];
           text = builtins.readFile ./entrypoint.sh;
         };
@@ -416,6 +473,8 @@
 
             # X11 essentials
             xkbcomp
+            feh              # paints the wallpaper onto the X root window
+            xorg.xsetroot    # ...with a solid brand colour as the fallback
             xkeyboard_config
             xrdb
 
@@ -464,6 +523,14 @@
             # Autostart QGIS with the session (QGIS_DESKTOP_AUTOSTART_QGIS=1).
             autostartScript
 
+            # Session supervisor: relaunches XFCE when the user logs out, so
+            # log-out is a desktop reset rather than a dead end
+            # (QGIS_DESKTOP_SESSION_RESTART=1, the default).
+            sessionSupervisorScript
+
+            # Fills QGIS_DESKTOP_MANAGE_URL into the session-ended page at boot.
+            manageLinkScript
+
             # Home persistence (QGIS_DESKTOP_PERSIST=1). rclone arrives through
             # the wrapper; it is not on the desktop user's PATH.
             persistScript
@@ -504,7 +571,7 @@
 
             # Deploy wallpaper
             mkdir -p ./usr/share
-            cp ${./resources/wallpaper.png} ./usr/share/wallpaper.png
+            cp ${brandedWallpaper} ./usr/share/wallpaper.png
 
             # Branded KasmVNC web root. Copied rather than symlinked: LightDM
             # scrubs the environment before spawning the X server, so the
@@ -950,13 +1017,29 @@ DBUSEOF
         # come up complaining that Open Sans and friends are missing.
         # Building our own config with makeFontsConf points fontconfig
         # at exactly the font packages listed in dockerImage.contents.
-        desktopFontsConf = pkgs.makeFontsConf {
+        # The font directories the desktop can see. Liberation is what makes
+        # Arial-authored QGIS projects lay out correctly — see the alias file.
+        desktopFontDirs = pkgs.makeFontsConf {
           fontDirectories = [
             pkgs.dejavu_fonts
             pkgs.liberation_ttf
             pkgs.open-sans
+            pkgs.lato
           ];
         };
+
+        # makeFontsConf does not include fontconfig's own conf.d, so its
+        # 30-metric-aliases rules never applied and Arial resolved to nothing.
+        # Wrap the generated config and add the aliases alongside it.
+        desktopFontsConf = pkgs.runCommand "qgis-desktop-fonts.conf" { } ''
+          {
+            head -n -1 ${desktopFontDirs}
+            cat ${./config/fonts/60-metric-aliases.conf} \
+              | grep -v '^<?xml' | grep -v '^<!DOCTYPE' \
+              | sed -e 's|^<fontconfig>||' -e 's|^</fontconfig>||'
+            echo '</fontconfig>'
+          } > $out
+        '';
 
         # Renders docs/**/diagrams/*.d2 to SVG. Separate from the mkdocs apps
         # because the PDF build needs it too, and because a diagram change
@@ -1000,6 +1083,10 @@ DBUSEOF
           # and the result is plain static files you can open in a browser,
           # with no multi-gigabyte image build in the way.
           branded-www = brandedWww;
+
+          # The wallpaper on its own: `nix build .#branded-wallpaper` renders it
+          # in a second so a design change can be looked at without an image build.
+          branded-wallpaper = brandedWallpaper;
 
           # QGIS LTR is the default everywhere: it is the build you put in
           # front of users.
@@ -1568,6 +1655,20 @@ DBUSEOF
             }}/bin/test-autostart";
           };
 
+          # Unit tests for the session supervisor: logging out of XFCE has to
+          # bring the desktop back, not strand the browser on a bare X display.
+          test-session-restart = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-session-restart";
+              runtimeInputs = with pkgs; [ bash coreutils ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-session-restart.sh
+              '';
+            }}/bin/test-session-restart";
+          };
+
 
           # Unit tests for the branding overlay. Mostly about failing loudly
           # when a KasmVNC bump moves the markup we key on.
@@ -1575,12 +1676,27 @@ DBUSEOF
             type = "app";
             program = "${pkgs.writeShellApplication {
               name = "test-branding";
-              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils shellcheck ];
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils shellcheck librsvg ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 exec bash ${self}/scripts/test-branding.sh
               '';
             }}/bin/test-branding";
+          };
+
+          # Lints every script flake.nix packages, the same way
+          # writeShellApplication does at build time. Cheap here; a failed image
+          # build minutes in is not.
+          test-shellcheck = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-shellcheck";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep gnused shellcheck ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-shellcheck.sh
+              '';
+            }}/bin/test-shellcheck";
           };
 
           # Unit tests for the CVE table that goes into every PR comment and
@@ -1650,16 +1766,20 @@ DBUSEOF
               runtimeInputs = with pkgs; [
                 bash coreutils gnused gnugrep gawk findutils diffutils
                 oauth2-proxy rclone d2
+                # test-branding.sh renders the wallpaper SVG.
+                librsvg
                 # test-check-oidc.sh serves a fake OIDC provider from python3
                 # and talks to it with curl/jq — no network, no Docker.
                 curl jq python3
-                # test-branding.sh lints brand-www.sh the same way
-                # writeShellApplication does at build time.
+                # test-shellcheck.sh and test-branding.sh lint packaged scripts
+                # exactly as writeShellApplication does at build time.
                 shellcheck
               ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 rc=0
+                bash ${self}/scripts/test-shellcheck.sh || rc=1
+                echo ""
                 bash ${self}/scripts/test-oidc-config.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-terminal-lockdown.sh || rc=1
@@ -1672,6 +1792,7 @@ DBUSEOF
                 echo ""
                 bash ${self}/scripts/test-autostart.sh || rc=1
                 echo ""
+                bash ${self}/scripts/test-session-restart.sh || rc=1
                 bash ${self}/scripts/test-branding.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-cve-table.sh || rc=1

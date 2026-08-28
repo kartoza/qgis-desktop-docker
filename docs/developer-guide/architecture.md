@@ -23,6 +23,7 @@ graph TD
     SETPRIV["setpriv --reuid=1000 --regid=1000<br/>--inh-caps=-all --ambient-caps=-all"]
     START["start-desktop (uid 1000)"]
     XKASM["Xkasmvnc<br/>X server + VNC + web"]
+    SUP["qgis-desktop-session<br/>relaunches XFCE on log-out"]
     DBUS["dbus-run-session"]
     XFCE["startxfce4"]
     QGIS["QGIS<br/>LTR or latest"]
@@ -30,7 +31,8 @@ graph TD
     PID1 --> NFT --> MODE
     MODE -->|"basic / none"| SETPRIV --> START
     START --> XKASM
-    START --> DBUS --> XFCE --> QGIS
+    START --> SUP --> DBUS --> XFCE --> QGIS
+    XFCE -.->|"log out / crash"| SUP
 ```
 
 ## Boot flow — `greeter`
@@ -134,8 +136,20 @@ The unprivileged desktop entrypoint (`start-desktop.sh`) then:
 - Writes `~/.vnc/xstartup` — a small script that seeds the wallpaper
   xfconf channel, then runs `dbus-run-session startxfce4`.
 - Launches `Xkasmvnc` in the background with the assembled flags, waits
-  for `/tmp/.X11-unix/X<n>` to appear, then runs the xstartup script.
+  for `/tmp/.X11-unix/X<n>` to appear, then starts the xstartup script
+  under `qgis-desktop-session`.
 - `wait`s on `Xkasmvnc` so the container exits when it does.
+
+The supervisor (`config/session/session-supervisor.sh`) is what makes XFCE's
+**Log Out** survivable: it relaunches the session when it exits, so the user
+gets a clean desktop rather than a bare X root window with nothing to click. It
+clears `~/.cache/sessions` between runs so a restarted session does not restore
+the previous user's windows, gives up after
+`QGIS_DESKTOP_SESSION_RESTART_MAX` restarts inside
+`QGIS_DESKTOP_SESSION_RESTART_WINDOW` seconds rather than spinning on a session
+that fails instantly, and stops entirely once the X server it was given as a
+guard pid has gone. LightDM performs the same role in `greeter` mode, which is
+why that path does not use it.
 
 ## Stage 2B — `greeter`
 

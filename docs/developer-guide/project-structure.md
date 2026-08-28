@@ -31,6 +31,11 @@ qgis-desktop-docker/
 │   │   ├── tokens.json         # THE brand values — one file re-themes everything
 │   │   ├── disconnected.html.in # Session-ended page template
 │   │   └── brand-www.sh        # Build-time overlay; asserts every substitution
+│   │   ├── wallpaper.svg.in    # Desktop / greeter / root-window wallpaper
+│   │   └── brand-wallpaper.sh  # Renders that SVG to PNG at build time
+│   │
+│   ├── session/                # Desktop session lifecycle (basic/none/oidc)
+│   │   └── session-supervisor.sh # Relaunches XFCE on log-out, with a crash-loop guard
 │   │
 │   └── lockdown/               # QGIS_DESKTOP_ALLOW_TERMINAL=0
 │       └── disable-terminal.sh # Root: deletes terminals, strips launcher/menu
@@ -56,6 +61,8 @@ qgis-desktop-docker/
 │   ├── epa.sh                  # Wires the Giswater plugin to the native solvers
 │   ├── test-oidc-config.sh     # Unit tests for the OIDC plumbing
 │   ├── test-terminal-lockdown.sh # Unit tests for QGIS_DESKTOP_ALLOW_TERMINAL=0
+│   ├── test-shellcheck.sh      # Lints every packaged script, as the build does
+│   ├── test-session-restart.sh # Unit tests for the session supervisor
 │   ├── sbom_table.py           # SBOM JSON to markdown table
 │   ├── test-cve-table.sh       # Unit tests for the CVE table
 │   └── cve_table.py            # Grype CVE JSON to markdown table

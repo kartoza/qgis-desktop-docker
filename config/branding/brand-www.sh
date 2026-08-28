@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-SOURCE="" TOKENS="" TEMPLATE="" LOGO="" FONT_REGULAR="" FONT_BOLD="" OUT=""
+SOURCE="" TOKENS="" TEMPLATE="" LOGO="" SPLASH="" REDIRECT_JS="" FONT_REGULAR="" FONT_BOLD="" OUT=""
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -35,6 +35,8 @@ while [ $# -gt 0 ]; do
     --tokens) TOKENS="${2:-}"; shift 2 ;;
     --template) TEMPLATE="${2:-}"; shift 2 ;;
     --logo) LOGO="${2:-}"; shift 2 ;;
+    --splash) SPLASH="${2:-}"; shift 2 ;;
+    --redirect-js) REDIRECT_JS="${2:-}"; shift 2 ;;
     --font-regular) FONT_REGULAR="${2:-}"; shift 2 ;;
     --font-bold) FONT_BOLD="${2:-}"; shift 2 ;;
     --out) OUT="${2:-}"; shift 2 ;;
@@ -44,7 +46,7 @@ done
 
 for pair in \
   "SOURCE:--source" "TOKENS:--tokens" "TEMPLATE:--template" \
-  "LOGO:--logo" "FONT_REGULAR:--font-regular" "FONT_BOLD:--font-bold" "OUT:--out"
+  "LOGO:--logo" "SPLASH:--splash" "REDIRECT_JS:--redirect-js" "FONT_REGULAR:--font-regular" "FONT_BOLD:--font-bold" "OUT:--out"
 do
   var="${pair%%:*}"
   flag="${pair#*:}"
@@ -52,7 +54,7 @@ do
 done
 
 [ -d "${SOURCE}" ] || die "--source ${SOURCE} is not a directory."
-for f in "${TOKENS}" "${TEMPLATE}" "${LOGO}" "${FONT_REGULAR}" "${FONT_BOLD}"; do
+for f in "${TOKENS}" "${TEMPLATE}" "${LOGO}" "${SPLASH}" "${REDIRECT_JS}" "${FONT_REGULAR}" "${FONT_BOLD}"; do
   [ -r "${f}" ] || die "${f} is not readable."
 done
 
@@ -91,7 +93,6 @@ for name in ACCENT ACCENT_HOVER SECONDARY MUTED SURFACE SURFACE_RAISED TEXT TEXT
   esac
 done
 
-
 # BRAND_NAME and BRAND_URL are interpolated into sed replacement text below, so
 # they must not carry sed's metacharacters. An allowlist rather than escaping:
 # a brand name has no business containing & or | or a backslash, and a rule you
@@ -107,6 +108,12 @@ mkdir -p "${OUT}"
 cp -r "${SOURCE}/." "${OUT}/"
 chmod -R u+w "${OUT}"
 
+# The control-bar link is injected at runtime, long after tokens.json is out of
+# reach, so publish the one value that markup needs. Keeps the tokens file the
+# single source of truth instead of a second hardcoded copy going stale.
+printf '%s\n' "${COLOR_ACCENT}" > "${OUT}/assets/brand-accent.txt"
+chmod 0444 "${OUT}/assets/brand-accent.txt"
+
 install -m 0444 "${LOGO}" "${OUT}/assets/brand-logo.svg"
 install -m 0444 "${FONT_REGULAR}" "${OUT}/assets/brand-body.ttf"
 install -m 0444 "${FONT_BOLD}" "${OUT}/assets/brand-body-bold.ttf"
@@ -115,6 +122,13 @@ install -m 0444 "${FONT_BOLD}" "${OUT}/assets/brand-body-bold.ttf"
 # vnc.html is byte-identical to index.html upstream, but both are served, so
 # both are patched. A future release that drops one is not an error; a release
 # that drops both is.
+# The bundle name carries a content hash, so find it by shape and insist on one.
+ui_count="$(find "${OUT}/assets" -maxdepth 1 -name 'ui-*.js' | wc -l)"
+[ "${ui_count}" -eq 1 ] ||
+  die "expected exactly one assets/ui-*.js, found ${ui_count} — KasmVNC changed its asset layout."
+UI_BUNDLE="$(basename "$(find "${OUT}/assets" -maxdepth 1 -name 'ui-*.js')")"
+install -m 0444 "${REDIRECT_JS}" "${OUT}/assets/brand-disconnect.js"
+
 patched_pages=0
 for page in index.html vnc.html; do
   path="${OUT}/${page}"
@@ -137,7 +151,16 @@ for page in index.html vnc.html; do
 
   sed -i "s|</title>|</title><link rel=\"icon\" href=\"./assets/brand-logo.svg\" type=\"image/svg+xml\">|" "${path}"
 
-  patched_pages=$((patched_pages + 1))
+  # KasmVNC only navigates to disconnected.html on an idle timeout; an ordinary
+  # disconnect shows a status bar. Without this the session-ended page — and
+  # the billing reminder on it — is never seen by anyone who logs out.
+  grep -qF 'noVNC_disconnected' "${OUT}/assets/${UI_BUNDLE}" ||
+    die "the bundle no longer sets the noVNC_disconnected class — the disconnect redirect needs updating."
+  grep -qF 'noVNC_connected' "${OUT}/assets/${UI_BUNDLE}" ||
+    die "the bundle no longer sets the noVNC_connected class — the disconnect redirect needs updating."
+  sed -i "s|</body>|<script src=\"./assets/brand-disconnect.js\"></script></body>|" "${path}"
+  grep -q 'brand-disconnect.js' "${path}" ||
+    die "${page} has no </body> to attach the disconnect redirect to."
 
   # --- The control bar and the strings users actually read ----------------
   # Everything below lives in the entry page's own markup, NOT in the hashed
@@ -177,11 +200,50 @@ for page in index.html vnc.html; do
   if [ -n "${BRAND_DOCS_URL}" ]; then
     sed -i "s|https://www.kasmweb.com/kasmvnc/docs/latest/index.html|${BRAND_DOCS_URL}|g" "${path}"
   fi
+  # --- Runtime slot, LAST ---------------------------------------------------
+  # This must come after every build-time edit above. The .in copy is what the
+  # runtime renders index.html from, so anything patched after the copy is
+  # taken would be silently thrown away at boot — which is exactly how the
+  # branded control-bar logo disappeared the first time: the template still
+  # held Kasm's.
+  sed -i "s|</h1>|</h1><!--QGIS_DESKTOP_MANAGE_LINK_BAR-->|" "${path}"
+
+  grep -q 'assets/brand-logo.svg' "${path}" ||
+    die "${page} lost the brand logo before the template was captured — the runtime would restore Kasm's."
+
+  # Ship the marked-up page as a template, and a copy with the marker removed
+  # so the tree is valid served as-is. qgis-desktop-manage-link renders the
+  # second from the first at boot, which is also what makes it idempotent.
+  cp "${path}" "${path}.in"
+  sed -i 's|<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->||' "${path}"
+
+  grep -q 'assets/brand-logo.svg' "${path}.in" ||
+    die "${page}.in has no brand logo; the runtime render would undo the branding."
+
+  patched_pages=$((patched_pages + 1))
   echo "  ${page}: title, favicon, control bar, error text"
 done
 
 [ "${patched_pages}" -gt 0 ] ||
   die "neither index.html nor vnc.html was found in ${SOURCE}."
+
+# --- The pre-connection splash ----------------------------------------------
+# The background KasmVNC shows before the desktop connects, and after it
+# disconnects. It was Kasm's blue geometry, which is the first thing a user
+# sees — so it is worth replacing even though it is a hashed asset.
+#
+# The filename carries a content hash and will change on a KasmVNC bump, so
+# find it by shape rather than by name, and insist on exactly one: zero means
+# they renamed it, more than one means the assumption is wrong. Either way the
+# build should stop rather than quietly leave Kasm's artwork in place.
+splash_count="$(find "${OUT}/assets" -maxdepth 1 -name 'splash-*.jpg' | wc -l)"
+if [ "${splash_count}" -ne 1 ]; then
+  die "expected exactly one assets/splash-*.jpg, found ${splash_count} — KasmVNC changed its asset layout and this script needs updating."
+fi
+splash_path="$(find "${OUT}/assets" -maxdepth 1 -name 'splash-*.jpg')"
+cp "${SPLASH}" "${splash_path}"
+chmod 0444 "${splash_path}"
+echo "  $(basename "${splash_path}"): replaced with the brand splash"
 
 # --- The disconnected page ----------------------------------------------
 [ -f "${OUT}/disconnected.html" ] ||
@@ -208,6 +270,29 @@ sed \
 if grep -oE '@[A-Z_]+@' "${OUT}/disconnected.html" | head -1 | grep -q .; then
   die "disconnected.html still has unsubstituted placeholders: $(grep -oE '@[A-Z_]+@' "${OUT}/disconnected.html" | sort -u | tr '\n' ' ')"
 fi
-echo "  disconnected.html: rendered from template"
+# The page carries a marker that only the runtime knows how to fill in (the
+# management URL is a property of the deployment, not the image), so ship two
+# files: the template with the marker intact, and a rendered page that is valid
+# on its own. qgis-desktop-manage-link re-renders the second from the first at
+# container start; anything serving this tree directly still gets a working
+# page.
+cp "${OUT}/disconnected.html" "${OUT}/disconnected.html.in"
+
+DEFAULT_NOTICE='    <div class="notice">
+      <p><strong>Your desktop is still running.</strong> Closing this tab does
+      not stop it — it keeps running, and keeps costing you, until you shut it
+      down from your hosting control panel.</p>
+    </div>'
+awk -v block="${DEFAULT_NOTICE}" '
+  index($0, "<!--QGIS_DESKTOP_MANAGE_LINK-->") { print block; next }
+  { print }
+' "${OUT}/disconnected.html.in" > "${OUT}/disconnected.html"
+
+grep -q 'Your desktop is still running' "${OUT}/disconnected.html" ||
+  die "the cost reminder did not reach disconnected.html — is the marker still in the template?"
+grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "${OUT}/disconnected.html.in" ||
+  die "disconnected.html.in lost its marker; the runtime would have nothing to fill in."
+
+echo "  disconnected.html: rendered from template (+ .in for the runtime link)"
 
 echo "Branded web root written to ${OUT}"
