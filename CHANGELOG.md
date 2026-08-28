@@ -7,6 +7,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Removed
+
+- **A further ~700 MB, and two interpreters, from one optional dependency.**
+  `xfce4-settings` pulled `xapp` — Linux Mint's cross-desktop library — and with
+  it `mate-panel`, `libmateweather`, `marco` (MATE's window manager), `zenity`,
+  GTK4, `libadwaita`, `gtk+3-dev`, `inxi`, and **Perl**. Most of a second
+  desktop environment and a scripting interpreter, none of it reachable from an
+  XFCE session. `xfsettingsd` still ships, so theming, fonts and cursors are
+  unaffected.
+
+- **gdb**, via `debugpy`. It was referenced only by pydevd's
+  "attach to a running process" helper, which injects code into a live process.
+  The directory is removed rather than the path scrubbed, so the capability goes
+  with the dependency — code injection into another process is not something a
+  subscriber on a shared desktop should have. `debugpy` still works as a debug
+  adapter.
+
+Together with the compiler and the rclone backends, the image is down from
+3.66 GB to 2.63 GB.
+
 ### Changed
 
 - **Every demo now sets `QGIS_DESKTOP_MANAGE_URL`.** The "Manage my desktops"
