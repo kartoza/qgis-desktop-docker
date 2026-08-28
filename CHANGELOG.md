@@ -7,6 +7,39 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Removed
+
+- **304 MB of the image, including the C compiler.** This container is used by
+  general subscribers, and QGIS's Python console is an arbitrary-code path even
+  with the terminal locked down — so a working toolchain on the box is something
+  to take away, not just weight to trim.
+
+  `gcc` was there because of a text file. `hdf` ships `lib/libhdf4.settings`, a
+  build-provenance record quoting the absolute path of the compiler it was built
+  with, and nix treats any store path in any file as a runtime reference.
+  Scrubbing that one file drops the compiler and its whole toolchain closure.
+  HDF4 support is untouched — GDAL links `libhdf`/`libmfhdf` directly and never
+  calls the `h4cc` wrapper that settings file describes.
+
+- **Roughly sixty rclone storage backends.** The SBOM for a QGIS desktop listed
+  ProtonMail, Dropbox, Mega and Yandex clients, because upstream rclone compiles
+  in every backend it supports and each drags its client library along. None of
+  it was reachable: `config/persist/persist.sh` validates
+  `QGIS_DESKTOP_PERSIST_TYPE` against exactly `s3` and `local`. The binary is now
+  21 MB rather than 38 MB.
+
+  Not a feature change. The `s3` backend covers every S3-compatible provider —
+  AWS, MinIO, Ceph, Wasabi — because the provider is a config key rather than a
+  separate backend. What still appears under the ProtonMail name is `go-crypto`,
+  an OpenPGP library rclone's core uses for encryption; it is published by Proton
+  but is not Proton Drive.
+
+### Security
+
+- No setuid or setgid binaries anywhere in the image, no `sudo`, `su`, `pkexec`
+  or `doas`, and the desktop, X server and QGIS all run as uid 1000. Verified
+  against a built image rather than assumed.
+
 ### Added
 
 - **The pre-connection splash is branded.** The screen KasmVNC shows before the
