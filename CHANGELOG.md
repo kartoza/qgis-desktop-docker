@@ -9,6 +9,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **The branded control-bar logo no longer reverts to Kasm's after boot.** The
+  runtime template was captured before the logo was replaced, so
+  `qgis-desktop-manage-link` faithfully re-rendered the unbranded markup every
+  time the container started. The template is now captured after every
+  build-time edit, and the build asserts that both it and the served page carry
+  the brand logo — checking only the served page is what let this through.
+
+### Fixed
+
 - **Logging out really does show the session-ended page now.** The previous
   attempt ended the display server on log out, on the assumption that a dropped
   connection would send the browser to `disconnected.html`. It does not:

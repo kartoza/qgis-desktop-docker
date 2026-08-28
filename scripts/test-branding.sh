@@ -443,6 +443,39 @@ fi
 
 MANAGE_OUT="$(env QGIS_DESKTOP_BRANDED_WWW="$WORK/nope" bash "$MANAGE" 2>&1)"; MANAGE_STATUS=$?
 if [ "$MANAGE_STATUS" -eq 0 ]; then ok "a missing web root is a no-op, not a failed boot"; else no "a missing web root is a no-op, not a failed boot"; fi
+
+# --- The runtime template must carry the branding ---------------------------
+# Regression, seen in a real container: the control-bar logo reverted to Kasm's
+# after boot. The template was captured before the logo was replaced, so the
+# runtime render faithfully restored the unbranded markup. Checking the served
+# page alone did not catch it — the template is what the runtime actually uses.
+for page in index.html vnc.html; do
+  if grep -q 'assets/brand-logo.svg' "$WORK/out/$page.in" 2>/dev/null; then
+    ok "$page.in carries the brand logo"
+  else
+    no "$page.in carries the brand logo" "the runtime render would restore Kasm's"
+  fi
+  if grep -q "<title>${BRAND_NAME}</title>" "$WORK/out/$page.in" 2>/dev/null; then
+    ok "$page.in carries the brand title"
+  else
+    no "$page.in carries the brand title"
+  fi
+  if grep -q 'kasmweb.com/kasmvnc"' "$WORK/out/$page.in" 2>/dev/null; then
+    no "$page.in has no kasmweb link left"
+  else
+    ok "$page.in has no kasmweb link left"
+  fi
+done
+
+# And after the runtime has actually rendered from it.
+run_manage QGIS_DESKTOP_MANAGE_URL=https://example.com/dashboard
+for page in index.html vnc.html; do
+  if grep -q 'assets/brand-logo.svg' "$WORK/out/$page" 2>/dev/null; then
+    ok "$page still branded after the runtime render"
+  else
+    no "$page still branded after the runtime render" "this is the regression"
+  fi
+done
 # --- The wallpaper ----------------------------------------------------------
 # It is used in three places (XFCE desktop, LightDM greeter background, and the
 # X root window during a session restart), so a broken render is visible in all

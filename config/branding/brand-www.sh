@@ -93,7 +93,6 @@ for name in ACCENT ACCENT_HOVER SECONDARY MUTED SURFACE SURFACE_RAISED TEXT TEXT
   esac
 done
 
-
 # BRAND_NAME and BRAND_URL are interpolated into sed replacement text below, so
 # they must not carry sed's metacharacters. An allowlist rather than escaping:
 # a brand name has no business containing & or | or a backslash, and a rule you
@@ -163,19 +162,6 @@ for page in index.html vnc.html; do
   grep -q 'brand-disconnect.js' "${path}" ||
     die "${page} has no </body> to attach the disconnect redirect to."
 
-  # A slot in the control bar for the deployment's management link. Same reason
-  # as on the session-ended page: the URL belongs to the deployment, not the
-  # image, so the build can only leave a marker for the runtime to fill.
-  sed -i "s|</h1>|</h1><!--QGIS_DESKTOP_MANAGE_LINK_BAR-->|" "${path}"
-
-  # Ship the marked-up page as a template too, and a copy with the marker
-  # removed so the tree is valid served as-is. qgis-desktop-manage-link renders
-  # the second from the first at boot, which also makes it idempotent.
-  cp "${path}" "${path}.in"
-  sed -i 's|<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->||' "${path}"
-
-  patched_pages=$((patched_pages + 1))
-
   # --- The control bar and the strings users actually read ----------------
   # Everything below lives in the entry page's own markup, NOT in the hashed
   # Vite bundle — which is why it is safe to touch. The control bar down the
@@ -214,6 +200,27 @@ for page in index.html vnc.html; do
   if [ -n "${BRAND_DOCS_URL}" ]; then
     sed -i "s|https://www.kasmweb.com/kasmvnc/docs/latest/index.html|${BRAND_DOCS_URL}|g" "${path}"
   fi
+  # --- Runtime slot, LAST ---------------------------------------------------
+  # This must come after every build-time edit above. The .in copy is what the
+  # runtime renders index.html from, so anything patched after the copy is
+  # taken would be silently thrown away at boot — which is exactly how the
+  # branded control-bar logo disappeared the first time: the template still
+  # held Kasm's.
+  sed -i "s|</h1>|</h1><!--QGIS_DESKTOP_MANAGE_LINK_BAR-->|" "${path}"
+
+  grep -q 'assets/brand-logo.svg' "${path}" ||
+    die "${page} lost the brand logo before the template was captured — the runtime would restore Kasm's."
+
+  # Ship the marked-up page as a template, and a copy with the marker removed
+  # so the tree is valid served as-is. qgis-desktop-manage-link renders the
+  # second from the first at boot, which is also what makes it idempotent.
+  cp "${path}" "${path}.in"
+  sed -i 's|<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->||' "${path}"
+
+  grep -q 'assets/brand-logo.svg' "${path}.in" ||
+    die "${page}.in has no brand logo; the runtime render would undo the branding."
+
+  patched_pages=$((patched_pages + 1))
   echo "  ${page}: title, favicon, control bar, error text"
 done
 
