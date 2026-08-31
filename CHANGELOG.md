@@ -7,6 +7,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-08-31
+
+### Security
+
+- **Every example runs least-privilege now, not just default-privilege.** The
+  compose files dropped every Linux capability and add back only the ten the
+  image actually uses — `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `SETUID`,
+  `SETGID`, `SETPCAP`, `KILL`, `AUDIT_WRITE` and `NET_ADMIN` — with
+  `no-new-privileges` set on top. It is an allowlist on purpose: if a future
+  base image widens Docker's default capability set, these containers do not
+  inherit the addition. `NET_RAW`, `MKNOD`, `SYS_CHROOT`, `SETFCAP` and
+  `NET_BIND_SERVICE` are gone for good. Verified against the running image in
+  both basic and greeter modes — the desktop still comes up as uid 1000 with
+  `CapEff=0`, and `mount`/`nsenter` still get permission denied.
+
+- **A new `SECURITY.md`** records the isolation model and walks the
+  widely-circulated container-escape techniques one by one, showing why each is
+  blocked here — and, as pointedly, which run-time flags an operator must never
+  add back.
+
 ### Removed
 
 - **A further ~700 MB, and two interpreters, from one optional dependency.**

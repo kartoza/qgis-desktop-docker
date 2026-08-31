@@ -1742,6 +1742,20 @@ DBUSEOF
             }}/bin/test-terminal-lockdown";
           };
 
+          # Keeps every example compose file under least privilege: drop ALL,
+          # add back only the agreed capability allowlist, no-new-privileges.
+          test-example-hardening = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-example-hardening";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk findutils ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-example-hardening.sh
+              '';
+            }}/bin/test-example-hardening";
+          };
+
           # Keeps the committed diagram SVGs in step with their .d2 sources.
           test-check-oidc = {
             type = "app";
@@ -1925,6 +1939,8 @@ DBUSEOF
                 bash ${self}/scripts/test-docs-diagrams.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-check-oidc.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-example-hardening.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
