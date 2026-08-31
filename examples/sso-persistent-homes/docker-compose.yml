@@ -92,8 +92,23 @@ services:
         condition: service_completed_successfully
     ports:
       - "8443:8443"
+    # Least privilege — drop all caps, add back only what the image uses, and
+    # forbid privilege escalation. Rationale and the escape audit: SECURITY.md.
+    cap_drop:
+      - ALL
     cap_add:
-      - NET_ADMIN
+      - CHOWN          # chown runtime dirs to the desktop / proxy uids
+      - DAC_OVERRIDE   # write across owners (runtime dirs, the OIDC secret)
+      - FOWNER         # chmod / utime files the root phase does not own
+      - FSETID         # keep setgid bits when creating dirs
+      - SETUID         # setpriv drops root to uid 1000 / 997
+      - SETGID         # setpriv drops the gid and inits supplementary groups
+      - SETPCAP        # setpriv clears the inheritable / ambient cap sets
+      - KILL           # the session supervisor reaps the desktop tree
+      - AUDIT_WRITE    # PAM records the login uid (greeter mode)
+      - NET_ADMIN      # install the nftables egress filter
+    security_opt:
+      - "no-new-privileges:true"
     environment:
       # Where the "Manage my desktops" button goes — in the control bar and on
       # the session-ended page. Without it users get the "your desktop is still
