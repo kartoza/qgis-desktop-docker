@@ -342,7 +342,7 @@
           name = "qgis-desktop-persist";
           runtimeInputs = with pkgs; [
             rcloneMinimal   # s3 + local only; see the override above
-            coreutils # timeout, numfmt, date, chown, id, cp
+            coreutils # timeout, numfmt, date, chown, id, cp, mktemp, mv, chmod
             gnused
             hostname
             util-linux # setpriv, to deliver files as the desktop user

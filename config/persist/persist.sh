@@ -183,17 +183,32 @@ no_check_bucket = true"
       ;;
   esac
 
+  # Written to a temp file and renamed into place rather than truncated
+  # in-place. A previous boot may have left RCLONE_CONF behind mode 0400 —
+  # /run/qgis-desktop/persist can outlive a container restart (an emptyDir
+  # survives across container restarts within the same pod, and this state
+  # dir is no longer wiped between builds either — see the image-baked
+  # ownership above) — and opening a 0400 file for writing fails even for its
+  # own owner. rename() only needs write+execute on the containing directory,
+  # which we already own, so this works regardless of what was there before.
+  #
   # The umask is scoped to the write, in a subshell, so it cannot leak. It used
   # to be set for the rest of the process, which made the staging directory
   # 0700 root-owned — and the unprivileged copy that delivers baseline files
   # could not read it. The file must never be group- or world-readable even for
   # the instant between creating and chmod'ing it.
+  local tmp
+  tmp="$(mktemp "${STATE_DIR}/rclone.conf.XXXXXX")" ||
+    die "could not create a temp file in ${STATE_DIR}."
   (
     umask 077
-    printf '%s\n' "${config}" > "${RCLONE_CONF}"
-  ) || die "could not write ${RCLONE_CONF}."
+    printf '%s\n' "${config}" > "${tmp}"
+  ) || { rm -f "${tmp}"; die "could not write ${tmp}."; }
 
-  chmod 0400 "${RCLONE_CONF}" || die "could not chmod ${RCLONE_CONF} to 0400."
+  chmod 0400 "${tmp}" || { rm -f "${tmp}"; die "could not chmod ${tmp} to 0400."; }
+
+  mv -f "${tmp}" "${RCLONE_CONF}" ||
+    die "could not move ${tmp} into place at ${RCLONE_CONF}."
 
   # Root-owning the file is what actually hides the credentials from the
   # desktop session (uid 1000): this runs as root, ahead of the privilege
