@@ -296,28 +296,14 @@
           runtimeInputs = with pkgs; [ coreutils gnused gnugrep gawk ];
           text = builtins.readFile ./config/branding/manage-link.sh;
         };
-        # The desktop wallpaper, rendered from an SVG at build time. Used in
-        # three places: the XFCE desktop, the LightDM greeter background in
-        # greeter mode, and the X root window that shows for a few seconds
-        # while a session restarts.
-        brandWallpaperScript = pkgs.writeShellApplication {
-          name = "qgis-desktop-brand-wallpaper";
-          runtimeInputs = with pkgs; [ jq coreutils gnused gnugrep librsvg ];
-          text = builtins.readFile ./config/branding/brand-wallpaper.sh;
-        };
-
-        # rsvg needs fontconfig to resolve the wordmark's typeface, or it
-        # silently falls back to whatever it can find — which is how you ship a
-        # wallpaper set in the wrong font without noticing.
-        wallpaperFontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.lato ]; };
-
+        # The desktop wallpaper: a static asset (resources/wallpaper.png)
+        # copied into the store, rather than rendered from an SVG at build
+        # time. Used in three places: the XFCE desktop, the LightDM greeter
+        # background in greeter mode, and the X root window that shows for a
+        # few seconds while a session restarts. Kept as a derivation (not the
+        # bare source path) so `nix build .#branded-wallpaper` keeps working.
         brandedWallpaper = pkgs.runCommand "qgis-desktop-wallpaper.png" { } ''
-          export FONTCONFIG_FILE=${wallpaperFontsConf}
-          ${brandWallpaperScript}/bin/qgis-desktop-brand-wallpaper \
-            --template ${./config/branding/wallpaper.svg.in} \
-            --tokens ${./config/branding/tokens.json} \
-            --logo ${./resources/brand/geohosting.svg} \
-            --out $out
+          cp ${./resources/wallpaper.png} "$out"
         '';
         # --- rclone, trimmed to the backends we can actually use -----------
         # Upstream compiles in ~70 storage backends. Every one drags its client

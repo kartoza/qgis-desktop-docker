@@ -167,15 +167,20 @@ for page in index.html vnc.html; do
   # Vite bundle — which is why it is safe to touch. The control bar down the
   # left of the screen is built from this HTML: its header is an <h1> holding
   # Kasm's logo as an inline data: URI, wrapped in a link to kasmweb.com.
+  # Dropped outright rather than replaced with our own logo — no control-bar
+  # branding at all.
   #
-  # There is exactly one <h1> in the document, so the bounded replacement below
+  # There is exactly one <h1> in the document, so the bounded removal below
   # cannot run away across the (single-line) file.
   grep -q '<h1 class="noVNC_logo">' "${path}" ||
     die "${page} no longer has the noVNC_logo header — KasmVNC changed its markup and this script needs updating."
-  sed -i "s|<h1 class=\"noVNC_logo\">.*</h1>|<h1 class=\"noVNC_logo\"><a href=\"${BRAND_URL}\" target=\"_blank\" rel=\"noopener\" title=\"${BRAND_NAME}\"><img src=\"./assets/brand-logo.svg\" alt=\"${BRAND_NAME}\" style=\"height:2.5em\"></a></h1>|" "${path}"
+  sed -i "s|<h1 class=\"noVNC_logo\">.*</h1>||" "${path}"
 
   if grep -q 'kasmweb.com/kasmvnc"' "${path}"; then
     die "${page} still links to kasmweb.com from the control-bar logo after substitution."
+  fi
+  if grep -q 'noVNC_logo' "${path}"; then
+    die "${page} still has a noVNC_logo header after removal."
   fi
 
   # Two more strings a user reads: the error box that appears whenever the
@@ -200,25 +205,11 @@ for page in index.html vnc.html; do
   if [ -n "${BRAND_DOCS_URL}" ]; then
     sed -i "s|https://www.kasmweb.com/kasmvnc/docs/latest/index.html|${BRAND_DOCS_URL}|g" "${path}"
   fi
-  # --- Runtime slot, LAST ---------------------------------------------------
-  # This must come after every build-time edit above. The .in copy is what the
-  # runtime renders index.html from, so anything patched after the copy is
-  # taken would be silently thrown away at boot — which is exactly how the
-  # branded control-bar logo disappeared the first time: the template still
-  # held Kasm's.
-  sed -i "s|</h1>|</h1><!--QGIS_DESKTOP_MANAGE_LINK_BAR-->|" "${path}"
-
-  grep -q 'assets/brand-logo.svg' "${path}" ||
-    die "${page} lost the brand logo before the template was captured — the runtime would restore Kasm's."
-
-  # Ship the marked-up page as a template, and a copy with the marker removed
-  # so the tree is valid served as-is. qgis-desktop-manage-link renders the
-  # second from the first at boot, which is also what makes it idempotent.
+  # No control-bar logo means no runtime slot to fill in there either — the
+  # .in copy exists purely so the runtime-render pipeline shape (index.html.in
+  # feeds qgis-desktop-manage-link) stays the same as disconnected.html.in,
+  # even though there is nothing left for it to patch.
   cp "${path}" "${path}.in"
-  sed -i 's|<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->||' "${path}"
-
-  grep -q 'assets/brand-logo.svg' "${path}.in" ||
-    die "${page}.in has no brand logo; the runtime render would undo the branding."
 
   patched_pages=$((patched_pages + 1))
   echo "  ${page}: title, favicon, control bar, error text"
@@ -273,23 +264,12 @@ fi
 # The page carries a marker that only the runtime knows how to fill in (the
 # management URL is a property of the deployment, not the image), so ship two
 # files: the template with the marker intact, and a rendered page that is valid
-# on its own. qgis-desktop-manage-link re-renders the second from the first at
-# container start; anything serving this tree directly still gets a working
-# page.
+# on its own. qgis-desktop-manage-link renders the notice into the second from
+# the first at container start — unconditionally, so the tree as shipped here
+# just carries the marker with nothing in its place yet (an HTML comment,
+# invisible until then) rather than a build-time placeholder notice.
 cp "${OUT}/disconnected.html" "${OUT}/disconnected.html.in"
 
-DEFAULT_NOTICE='    <div class="notice">
-      <p><strong>Your desktop is still running.</strong> Closing this tab does
-      not stop it — it keeps running, and keeps costing you, until you shut it
-      down from your hosting control panel.</p>
-    </div>'
-awk -v block="${DEFAULT_NOTICE}" '
-  index($0, "<!--QGIS_DESKTOP_MANAGE_LINK-->") { print block; next }
-  { print }
-' "${OUT}/disconnected.html.in" > "${OUT}/disconnected.html"
-
-grep -q 'Your desktop is still running' "${OUT}/disconnected.html" ||
-  die "the cost reminder did not reach disconnected.html — is the marker still in the template?"
 grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "${OUT}/disconnected.html.in" ||
   die "disconnected.html.in lost its marker; the runtime would have nothing to fill in."
 

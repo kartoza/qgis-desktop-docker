@@ -584,9 +584,7 @@ fi
 
 # Fill the deployment's management URL into the branded pages. Root, because the
 # web root lives under /usr/share; before the privilege drop for the same
-# reason. A no-op when branding is off or no URL is configured — it still leaves
-# the "your desktop is still running" reminder in place, which is the part that
-# matters for someone's bill.
+# reason. A no-op when branding is off or no URL is configured.
 if command -v qgis-desktop-manage-link >/dev/null 2>&1; then
   qgis-desktop-manage-link || echo "WARN: could not update the management link" >&2
 fi

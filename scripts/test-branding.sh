@@ -147,12 +147,13 @@ fi
 
 # --- The control bar --------------------------------------------------------
 # The panel down the left of the screen is built from this markup, not from the
-# Vite bundle — which is the only reason it is safe to touch.
+# Vite bundle — which is the only reason it is safe to touch. Dropped outright
+# rather than rebranded: no control-bar logo at all.
 for page in index.html vnc.html; do
-  if grep -q "<img src=\"./assets/brand-logo.svg\" alt=\"${BRAND_NAME}\"" "$WORK/out/$page" 2>/dev/null; then
-    ok "$page control bar shows the brand logo"
+  if grep -q 'noVNC_logo' "$WORK/out/$page" 2>/dev/null; then
+    no "$page control bar header is removed" "a noVNC_logo element survived"
   else
-    no "$page control bar shows the brand logo"
+    ok "$page control bar header is removed"
   fi
   if grep -q 'kasmweb.com/kasmvnc"' "$WORK/out/$page" 2>/dev/null; then
     no "$page control-bar logo no longer links to kasmweb" "the link survived"
@@ -361,23 +362,20 @@ if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "$WORK/out/disconnected.html.in" 2
 else
   no "the template keeps its runtime marker" "the runtime would have nothing to fill in"
 fi
-# The as-built page must be valid on its own — preview-branding serves it.
+# No build-time notice any more — qgis-desktop-manage-link renders it at
+# container start, unconditionally, so the as-built page (same as
+# preview-branding serves) carries only the bare marker until then.
 if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "$WORK/out/disconnected.html" 2>/dev/null; then
-  no "the as-built page has no leftover marker"
+  ok "the as-built page still carries the marker (no build-time notice)"
 else
-  ok "the as-built page has no leftover marker"
-fi
-if grep -q 'Your desktop is still running' "$WORK/out/disconnected.html" 2>/dev/null; then
-  ok "the cost reminder is present even with no URL configured"
-else
-  no "the cost reminder is present even with no URL configured" \
-    "this is the part that matters for someone's bill; it must not depend on config"
+  no "the as-built page still carries the marker (no build-time notice)" \
+    "the runtime would have nothing to fill in"
 fi
 for page in index.html vnc.html; do
   if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->' "$WORK/out/$page.in" 2>/dev/null; then
-    ok "$page.in keeps the control-bar slot"
+    no "$page.in has no control-bar slot" "the control bar was removed; there is nothing to fill in"
   else
-    no "$page.in keeps the control-bar slot"
+    ok "$page.in has no control-bar slot"
   fi
   if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->' "$WORK/out/$page" 2>/dev/null; then
     no "$page has no leftover control-bar marker"
@@ -398,10 +396,12 @@ if grep -q 'href="https://example.com/dashboard"' "$WORK/out/disconnected.html" 
 else
   no "the session-ended page gains the manage button"
 fi
+# No control-bar logo means no control-bar slot for manage-link.sh to fill —
+# index.html is untouched by it.
 if grep -q 'href="https://example.com/dashboard"' "$WORK/out/index.html" 2>/dev/null; then
-  ok "the control bar gains the manage link"
+  no "the control bar has no manage link (there is no control bar)"
 else
-  no "the control bar gains the manage link"
+  ok "the control bar has no manage link (there is no control bar)"
 fi
 
 # A restart must not stack a second copy.
@@ -420,10 +420,10 @@ if grep -q 'javascript:' "$WORK/out/disconnected.html" 2>/dev/null; then
 else
   ok "a non-http URL never reaches the page"
 fi
-if grep -q 'Your desktop is still running' "$WORK/out/disconnected.html" 2>/dev/null; then
-  ok "…and the reminder survives the rejection"
+if grep -qF '<!--QGIS_DESKTOP_MANAGE_LINK-->' "$WORK/out/disconnected.html" 2>/dev/null; then
+  no "…and the page still renders cleanly after the rejection" "the marker was left unresolved"
 else
-  no "…and the reminder survives the rejection"
+  ok "…and the page still renders cleanly after the rejection"
 fi
 
 run_manage QGIS_DESKTOP_MANAGE_URL='https://example.com/"><script>alert(1)</script>'

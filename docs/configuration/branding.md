@@ -75,18 +75,12 @@ image and asserts exactly that table. `oidc` needs a live identity provider, so
 it stays a manual check via `nix run .#run-keycloak-demo` — its desktop path is
 whichever inner mode is configured, and both of those are already covered.
 
-## Reminding people to shut down
+## Linking back to your control panel
 
-A disconnected session is exactly the moment someone assumes they are finished
-and walks away — from a machine that is still running, and still billing. So the
-session-ended page carries a reminder saying so, and it says it **whether or not
-a link is configured**: the warning is the part that protects someone's bill, and
-it must not depend on deployment config being filled in.
-
-When you give it a URL, the same link appears in two places — on the
-session-ended page as a button, and in the control bar down the left of the
-screen, so it is reachable while the user is still working rather than only once
-they have disconnected.
+When you give it a URL, a button pointing there appears on the session-ended
+page. There is no control-bar equivalent — the control bar carries no branding
+at all (see [What is not branded, on purpose](#what-is-not-branded-on-purpose)).
+Unset, nothing is shown.
 
 ```bash
 docker run ... \
@@ -97,12 +91,12 @@ docker run ... \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `QGIS_DESKTOP_MANAGE_URL` | *(none)* | Where the management link points — your control panel, per deployment. Unset, the reminder still appears, without a button. |
+| `QGIS_DESKTOP_MANAGE_URL` | *(none)* | Where the management link points — your control panel, per deployment. Unset, nothing is shown. |
 | `QGIS_DESKTOP_MANAGE_LABEL` | `Manage my desktops` | Button text. |
 
 Only `http://` and `https://` are accepted; anything else is refused with a
-warning in the container log and the reminder is shown without a button, rather
-than emitting a link that does not work or, worse, a `javascript:` URL.
+warning in the container log and nothing is shown, rather than emitting a link
+that does not work or, worse, a `javascript:` URL.
 
 ### Why this happens at container start
 
@@ -118,7 +112,11 @@ idempotent: a container restart cannot end up with the notice inserted twice.
 
 ## What is not branded, on purpose
 
-Two things are left alone.
+**The control bar down the left of the screen** carries no logo or link at
+all — the header KasmVNC puts there is stripped outright rather than replaced
+with a brand logo.
+
+Two more things are left alone.
 
 **The Vite bundle** (`assets/ui-*.js`) and the content-hashed stylesheets are
 byte-identical to upstream, and a test asserts it. Their filenames change on
