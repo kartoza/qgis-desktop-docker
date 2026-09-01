@@ -670,6 +670,13 @@
             # Runtime state the entrypoint writes: the listener override that
             # tells both KasmVNC launchers to move behind the OIDC proxy.
             mkdir -p ./run/qgis-desktop
+            # Home persistence's state/staging dirs, owned by the desktop user
+            # (chown'd below) so qgis-desktop-persist can write rclone.conf
+            # under them even with no root phase at all (Kubernetes
+            # runAsUser/runAsGroup). /run is otherwise root:root and not
+            # writable by uid 1000 -- persist.sh can only mkdir *into* this,
+            # not create it from nothing. See docs/configuration/persistence.md#kubernetes.
+            mkdir -p ./run/qgis-desktop/persist ./run/qgis-desktop/staging
             # Default mount point for a user:password file
             # (QGIS_DESKTOP_USERS_FILE).
             mkdir -p ./etc/qgis-desktop
@@ -696,6 +703,13 @@
             mkdir -p ./usr/share/qgis-desktop
             cp -r ${brandedWww} ./usr/share/qgis-desktop/www
             chmod -R a+rX ./usr/share/qgis-desktop/www
+            # Non-recursive: the directory inode itself needs to be writable
+            # by uid 1000 so qgis-desktop-manage-link can rename its rendered
+            # pages into place with no root phase at all (Kubernetes
+            # runAsUser/runAsGroup) -- rename() only needs write+execute on
+            # the containing directory. The files inside stay root-owned; a
+            # root-phase boot still replaces them as root, same as always.
+            chown 1000:1000 ./usr/share/qgis-desktop/www
             chmod 1777 ./tmp
 
             # Create /usr/bin symlinks for hardcoded paths
@@ -930,6 +944,9 @@ LOGINDEFS
 DBUSEOF
 
             chown -R 1000:1000 ./home/user
+            chown -R 1000:1000 ./run/qgis-desktop/persist ./run/qgis-desktop/staging
+            chmod 0700 ./run/qgis-desktop/persist
+            chmod 0755 ./run/qgis-desktop/staging
             chown -R 996:996 ./var/lib/lightdm ./var/cache/lightdm ./var/log/lightdm ./var/run/lightdm
           '';
 
