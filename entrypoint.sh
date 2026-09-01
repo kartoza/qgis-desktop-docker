@@ -376,13 +376,31 @@ else
   echo "      Container has unrestricted network access."
 fi
 
+# Whether this process actually has a root phase to spend. A Kubernetes pod
+# with securityContext.runAsUser set (or any launcher that skips straight to
+# an unprivileged UID) never gets one — the container starts as UID 1000
+# directly, and everything below that assumes "we are root right now" would
+# otherwise abort the whole entrypoint under `set -e` on the first chown.
+RUNNING_AS_ROOT=0
+[ "$(id -u)" = "0" ] && RUNNING_AS_ROOT=1
+
 # Prepare /tmp/.X11-unix with the ownership/mode the X server expects.
 # When start-desktop runs as uid 1000 and creates this dir itself, Xkasmvnc
 # logs "_XSERVTransmkdir: Owner of /tmp/.X11-unix should be set to root"
 # and can misbehave. Doing it here (as root) with mode 1777 keeps X happy
 # while still letting the uid 1000 process create per-display sockets under it.
+#
+# Without a root phase (RUNNING_AS_ROOT=0) we cannot chown to root at all —
+# skip it and settle for uid-1000-owned + mode 1777, which is what
+# start-desktop.sh would have produced anyway had it created the dir itself.
 mkdir -p /tmp/.X11-unix
-chown root:root /tmp/.X11-unix
+if [ "${RUNNING_AS_ROOT}" = "1" ]; then
+  chown root:root /tmp/.X11-unix
+else
+  echo "WARN: not running as root (uid $(id -u)) — leaving /tmp/.X11-unix owned by the" >&2
+  echo "      current user instead of root. Xkasmvnc may log _XSERVTransmkdir about" >&2
+  echo "      this; it is not fatal. See docs/configuration/permissions.md." >&2
+fi
 chmod 1777 /tmp/.X11-unix
 
 # /tmp/.ICE-unix is the socket dir for the X Session Management Protocol
@@ -391,12 +409,15 @@ chmod 1777 /tmp/.X11-unix
 # (_IceTransmkdir errors on euid != 0) and xfce4-session comes up but its
 # children never launch — the user sees an empty desktop.
 mkdir -p /tmp/.ICE-unix
-chown root:root /tmp/.ICE-unix
+[ "${RUNNING_AS_ROOT}" = "1" ] && chown root:root /tmp/.ICE-unix
 chmod 1777 /tmp/.ICE-unix
 
-# XDG runtime dir, owned by the target user.
+# XDG runtime dir, owned by the target user. When we are not root, uid 1000
+# already created it above via mkdir -p, so this chown is a same-owner no-op —
+# but skip it outright rather than rely on that when RUNNING_AS_ROOT=0, since
+# a non-default runAsUser would make it a real (failing) ownership change.
 mkdir -p /tmp/runtime-user
-chown 1000:1000 /tmp/runtime-user
+[ "${RUNNING_AS_ROOT}" = "1" ] && chown 1000:1000 /tmp/runtime-user
 chmod 700 /tmp/runtime-user
 
 # PostgreSQL service file (pg_service.conf). QGIS/libpq use this to resolve
@@ -416,7 +437,7 @@ write_pg_service_conf() {
   # value that already has real newlines is untouched.
   local content="${PG_SERVICE_CONF//\\n/$'\n'}"
   printf '%s\n' "${content}" > "${home}/.pg_service.conf"
-  chown "${uid}:${gid}" "${home}/.pg_service.conf"
+  [ "${RUNNING_AS_ROOT}" = "1" ] && chown "${uid}:${gid}" "${home}/.pg_service.conf"
   chmod 0600 "${home}/.pg_service.conf"
   echo "pg_service.conf: written to ${home}/.pg_service.conf"
 }
@@ -730,7 +751,15 @@ fi
 # start-desktop.sh only knows the desktop-level modes, so hand it the effective
 # one — under oidc that is the inner mode, with the proxy already listening.
 export QGIS_DESKTOP_AUTH_MODE="${EFFECTIVE_AUTH_MODE}"
-run_desktop setpriv \
-  --reuid=1000 --regid=1000 --init-groups \
-  --inh-caps=-all --ambient-caps=-all \
-  -- start-desktop
+if [ "${RUNNING_AS_ROOT}" = "1" ]; then
+  run_desktop setpriv \
+    --reuid=1000 --regid=1000 --init-groups \
+    --inh-caps=-all --ambient-caps=-all \
+    -- start-desktop
+else
+  # No root phase to drop out of — a pod-level runAsUser already put us at an
+  # unprivileged UID before this script ever ran. setpriv's --init-groups
+  # calls setgroups(2), which needs CAP_SETGID; without it this would fail
+  # exactly like the chown calls above. There is nothing left to drop.
+  run_desktop start-desktop
+fi

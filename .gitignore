@@ -25,3 +25,4 @@ sbom-table.md
 build-report.md
 *.tar.gz
 screenshots-gitignore
+.idea
