@@ -709,7 +709,15 @@
             # runAsUser/runAsGroup) -- rename() only needs write+execute on
             # the containing directory. The files inside stay root-owned; a
             # root-phase boot still replaces them as root, same as always.
+            #
+            # ${brandedWww} is a Nix store path, so it (and everything cp -r
+            # copies from it) starts out mode 0555 -- read-only even for its
+            # owner. chown alone does not fix that: it changes who owns the
+            # directory, not what they are allowed to do with it. The chmod
+            # below is what actually grants the write bit the comment above
+            # promises.
             chown 1000:1000 ./usr/share/qgis-desktop/www
+            chmod 0755 ./usr/share/qgis-desktop/www
             chmod 1777 ./tmp
 
             # Create /usr/bin symlinks for hardcoded paths
