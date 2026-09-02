@@ -557,11 +557,19 @@ LISTEN
   export QGIS_DESKTOP_BIND_INTERFACE="127.0.0.1"
 
   # The proxy needs no privileges: its port is unprivileged and its config file
-  # is owned by uid 1000. Same capability-clearing shape as the desktop below.
-  setpriv \
-    --reuid=1000 --regid=1000 --init-groups \
-    --inh-caps=-all --ambient-caps=-all \
-    -- qgis-desktop-oidc-proxy &
+  # is owned by uid 1000. Same capability-clearing shape as the desktop below,
+  # including the same RUNNING_AS_ROOT branch: --init-groups calls setgroups(2),
+  # which needs CAP_SETGID. That capability only exists to drop if we started as
+  # root; a pod-level runAsUser=1000 leaves nothing to drop and setpriv fails
+  # with "initgroups failed: Operation not permitted".
+  if [ "${RUNNING_AS_ROOT}" = "1" ]; then
+    setpriv \
+      --reuid=1000 --regid=1000 --init-groups \
+      --inh-caps=-all --ambient-caps=-all \
+      -- qgis-desktop-oidc-proxy &
+  else
+    qgis-desktop-oidc-proxy &
+  fi
   OIDC_PROXY_PID=$!
 
   # If the proxy dies, the container must die with it — otherwise the desktop
