@@ -384,6 +384,17 @@ fi
 RUNNING_AS_ROOT=0
 [ "$(id -u)" = "0" ] && RUNNING_AS_ROOT=1
 
+# Block USB registration for the session. In standalone KasmVNC mode, host
+# USB devices are not mounted by default; if USB nodes were injected with
+# docker --device, remove them before Xkasmvnc starts.
+if [ -d /dev/bus/usb ]; then
+  find /dev/bus/usb -mindepth 1 -maxdepth 2 -exec rm -f {} + 2>/dev/null || true
+  chmod 000 /dev/bus/usb 2>/dev/null || true
+  echo "USB passthrough: BLOCKED (USB device nodes removed from /dev/bus/usb)"
+else
+  echo "USB passthrough: BLOCKED (no USB device nodes exposed)"
+fi
+
 # Prepare /tmp/.X11-unix with the ownership/mode the X server expects.
 # When start-desktop runs as uid 1000 and creates this dir itself, Xkasmvnc
 # logs "_XSERVTransmkdir: Owner of /tmp/.X11-unix should be set to root"
