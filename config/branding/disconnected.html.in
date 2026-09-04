@@ -126,27 +126,18 @@
 </head>
 <body>
   <main>
-    <img class="logo" src="./assets/brand-logo.svg" alt="@BRAND_NAME@">
-    <h1>Your session has ended</h1>
+    <h1>You are logged out</h1>
     <p>
       The connection to your desktop closed. Reconnecting will take you
       straight back in if your sign-in is still valid.
     </p>
     <div class="actions">
       <a class="btn btn-primary" href="/">Reconnect</a>
-      <!-- This page is a real document in the user's browser, so unlike the
-           desktop itself it CAN clear the single sign-on cookie. In modes
-           without a proxy the path simply 404s, which is why it is worded as
-           a secondary action. -->
-      <a class="btn btn-secondary" href="/oauth2/sign_out">Sign out completely</a>
     </div>
     <!-- Replaced at container start by qgis-desktop-manage-link, which is the
          only way a build-time artefact can carry a runtime URL. Left exactly as
          it is when QGIS_DESKTOP_MANAGE_URL is unset. -->
     <!--QGIS_DESKTOP_MANAGE_LINK-->
   </main>
-  <footer>
-    <a href="@BRAND_URL@">@BRAND_NAME@</a>
-  </footer>
 </body>
 </html>

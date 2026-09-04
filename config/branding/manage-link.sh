@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Renders the "your desktop is still running" notice into the session-ended
-# page, at container start.
+# Renders the "manage my desktops" button into the session-ended page, at
+# container start.
 #
 # Runs as ROOT from entrypoint.sh, before privileges are dropped, because the
 # branded web root lives under /usr/share.
@@ -10,13 +10,8 @@
 # a link back to their own control panel. So the build ships a template with a
 # marker in it, and this fills the marker in from the environment.
 #
-# The reminder itself is shown whether or not a URL is configured. A
-# disconnected session is exactly the moment someone assumes they are finished
-# and walks away from a machine that is still costing them money; saying so is
-# worth more than the link is.
-#
 #   QGIS_DESKTOP_MANAGE_URL    Where "Manage my desktops" points. Unset means
-#                              the reminder is shown with no button.
+#                              nothing is shown.
 #   QGIS_DESKTOP_MANAGE_LABEL  Button text. Defaults to "Manage my desktops".
 #   QGIS_DESKTOP_BRANDED_WWW   Web root to patch.
 
@@ -79,27 +74,17 @@ SAFE_LABEL="$(html_escape "${LABEL}")"
 if [ -n "${URL}" ]; then
   BLOCK="$(cat <<HTML
     <div class="notice">
-      <p><strong>Your desktop is still running.</strong> Closing this tab does
-      not stop it — it keeps running, and keeps costing you, until you shut it
-      down.</p>
       <a class="btn btn-primary" href="${SAFE_URL}">${SAFE_LABEL}</a>
     </div>
 HTML
   )"
   log "manage link: ${URL}"
 else
-  BLOCK="$(cat <<HTML
-    <div class="notice">
-      <p><strong>Your desktop is still running.</strong> Closing this tab does
-      not stop it — it keeps running, and keeps costing you, until you shut it
-      down from your hosting control panel.</p>
-    </div>
-HTML
-  )"
+  BLOCK=""
   if [ "${URL_REJECTED}" = "1" ]; then
-    log "the configured URL was rejected; showing the reminder without a button"
+    log "the configured URL was rejected; showing nothing"
   else
-    log "no QGIS_DESKTOP_MANAGE_URL set; showing the reminder without a button"
+    log "no QGIS_DESKTOP_MANAGE_URL set; showing nothing"
   fi
 fi
 
