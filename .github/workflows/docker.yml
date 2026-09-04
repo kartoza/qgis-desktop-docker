@@ -96,6 +96,19 @@ jobs:
           GHCR_IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           VERSION="${{ github.event.release.tag_name }}"
           QGIS_VERSION="${{ steps.build.outputs.qgis_version }}"
+
+          # A release tag like "injecta.v4.4.3" or "giswater.v4.4.3" is a
+          # customised build for a deployment fork, not the current-QGIS line
+          # everyone else tracks via :latest -- it has no current-QGIS
+          # counterpart (see the "build" job's <flavor>.ltr handling
+          # instead), so skip the push.
+          case "$VERSION" in
+            injecta.*|giswater.*)
+              echo "Skipping :latest push for flavoured release ${VERSION} (LTR-only, see the build job)."
+              exit 0
+              ;;
+          esac
+
           # :latest follows the current QGIS line; :<qgis-version> and
           # :<release>-latest are the immovable pins.
           for tag in "latest" "${QGIS_VERSION}" "${VERSION}-latest"; do
@@ -354,13 +367,29 @@ jobs:
           VERSION="${{ steps.version.outputs.tag }}"
           QGIS_VERSION="${{ steps.load.outputs.qgis_version }}"
 
-          # :ltr follows the LTR line; :<qgis-version> and :<release>-ltr are
-          # the immovable pins. The bare :<release> tag stays on the LTR — it
-          # is the supported artefact, and existing pins point at it.
-          #
-          # Deliberately no :latest here. That tag belongs to the current QGIS
-          # release and is pushed by the build-qgis-latest job.
-          for tag in "ltr" "${QGIS_VERSION}" "${VERSION}-ltr" "${VERSION}"; do
+          # A release tag like "injecta.v4.4.3" or "giswater.v4.4.3" is a
+          # customised build for a deployment fork -- keep it in its own
+          # "<flavor>.*" tag namespace so it can never overwrite :ltr (or the
+          # bare QGIS-version tag, which would otherwise collide with main's
+          # image at the same QGIS version). :ltr stays reserved for releases
+          # off main.
+          case "$VERSION" in
+            injecta.*|giswater.*)
+              FLAVOR="${VERSION%%.*}"
+              TAGS=("${FLAVOR}.ltr" "${VERSION}")
+              ;;
+            *)
+              # :ltr follows the LTR line; :<qgis-version> and :<release>-ltr are
+              # the immovable pins. The bare :<release> tag stays on the LTR — it
+              # is the supported artefact, and existing pins point at it.
+              #
+              # Deliberately no :latest here. That tag belongs to the current QGIS
+              # release and is pushed by the build-qgis-latest job.
+              TAGS=("ltr" "${QGIS_VERSION}" "${VERSION}-ltr" "${VERSION}")
+              ;;
+          esac
+
+          for tag in "${TAGS[@]}"; do
             docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-ltr "${GHCR_IMAGE}:${tag}"
             docker push "${GHCR_IMAGE}:${tag}"
           done
