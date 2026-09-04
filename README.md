@@ -17,7 +17,6 @@ A fully reproducible, Nix-built Docker image that runs [QGIS](https://qgis.org) 
 - **LTR or latest QGIS** -- the long-term release by default, the current release as a second image so you can test against the next LTR before it lands
 - **Persistent home directories** -- the user's projects, plugins and QGIS profile restored from object storage at start and saved back on an interval, so a deleted container costs nothing
 - **Four ways to log in** -- no auth, HTTP Basic Auth, an in-desktop LightDM greeter, or Keycloak/OIDC single sign-on
-- **Giswater-ready** -- the EPANET and SWMM solvers, the Python packages the plugin imports, and the wiring that makes Giswater find them on Linux
 - **SBOM & CVE scanning** -- every build produces a Software Bill of Materials and vulnerability scan
 
 ## Quick Start
@@ -46,73 +45,106 @@ docker compose up -d
 
 ```bash
 docker run --rm -p 8443:8443 ghcr.io/kartoza/qgis-desktop-docker:ltr
-```
+  qgis-desktop-user-1:
 
 ### Persistent home directory (named volume)
-
+      - "8443:8443"
 ```bash
-docker run --rm -p 8443:8443 \
+      QGIS_DESKTOP_AUTH_MODE: basic
+      QGIS_DESKTOP_USERS: user_1:password
+      VNC_RESOLUTION: 1920x1080
   -v qgis-home:/home/user \
-  ghcr.io/kartoza/qgis-desktop-docker:ltr
-```
+      - qgis-home-user-1:/home/user_1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - "no-new-privileges:true"
+    restart: unless-stopped
 
-QGIS settings, plugins, and projects in `/home/user` survive container restarts.
-
-### Bind mount a local directory
-
-```bash
-docker run --rm -p 8443:8443 \
-  -v "$HOME/qgis-data:/home/user/data" \
-  ghcr.io/kartoza/qgis-desktop-docker:ltr
-```
-
-### Persistent home + local data
-
-```bash
-docker run --rm -p 8443:8443 \
-  -v qgis-home:/home/user \
-  -v "$HOME/gis-projects:/home/user/projects" \
-  ghcr.io/kartoza/qgis-desktop-docker:ltr
-```
-
-### Custom resolution
-
-```bash
-docker run --rm -p 8443:8443 \
-  -e VNC_RESOLUTION=1920x1080 \
-  ghcr.io/kartoza/qgis-desktop-docker:ltr
-```
-
-### Custom port
-
-```bash
-docker run --rm -p 3000:3000 \
-  -e VNC_PORT=3000 \
-  ghcr.io/kartoza/qgis-desktop-docker:ltr
-```
-
-## Docker Compose
-
-```yaml
-services:
-  qgis-desktop:
+  qgis-desktop-user-2:
     image: ghcr.io/kartoza/qgis-desktop-docker:ltr
     ports:
-      - "8443:8443"
+      - "8444:8443"
+    environment:
+      QGIS_DESKTOP_AUTH_MODE: basic
+      QGIS_DESKTOP_USERS: user_2:password
+      VNC_RESOLUTION: 1920x1080
+    volumes:
+      - qgis-home-user-2:/home/user_2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - "no-new-privileges:true"
+    restart: unless-stopped
+
+volumes:
+  qgis-home-user-1:
+  qgis-home-user-2:
+```
+
+Each service is a separate container with its own authentication, X session,
+and home directory. Open `http://localhost:8443` for `user_1` or
+`http://localhost:8444` for `user_2`. The complete Compose file also includes
+the full capability allowlist and commented options for OIDC, persistence,
+clipboard controls, watermarking, DLP logging, and terminal lockdown.
+
     environment:
       - VNC_RESOLUTION=1920x1080
     volumes:
       - qgis-home:/home/user
-      # Optional: mount a local data directory
+          QGIS_DESKTOP_AUTH_MODE: basic
+          QGIS_DESKTOP_USERS: user_1:password
+          VNC_RESOLUTION: 1920x1080
       # - ./data:/home/user/data
-    restart: unless-stopped
-
-volumes:
+          - qgis-home-user-1:/home/user_1
+        extra_hosts:
+          - "host.docker.internal:host-gateway"
+        cap_drop:
+          - ALL
+        cap_add:
+          - NET_ADMIN
+        security_opt:
+          - "no-new-privileges:true"
   qgis-home:
 ```
+      qgis-desktop-user-2:
+        image: ghcr.io/kartoza/qgis-desktop-docker:ltr
+        ports:
+          - "8444:8443"
+        environment:
+          QGIS_DESKTOP_AUTH_MODE: basic
+          QGIS_DESKTOP_USERS: user_2:password
+          VNC_RESOLUTION: 1920x1080
+        volumes:
+          - qgis-home-user-2:/home/user_2
+        extra_hosts:
+          - "host.docker.internal:host-gateway"
+        cap_drop:
+          - ALL
+        cap_add:
+          - NET_ADMIN
+        security_opt:
+          - "no-new-privileges:true"
+        restart: unless-stopped
 
-## QGIS version
 
+      qgis-home-user-1:
+      qgis-home-user-2:
+
+
+    Each service is a separate container with its own authentication, X session,
+    and home directory. Open `http://localhost:8443` for `user_1` or
+    `http://localhost:8444` for `user_2`. The complete Compose file also includes
+    the full capability allowlist and commented options for OIDC, persistence,
+    clipboard controls, watermarking, DLP logging, and terminal lockdown.
 Two images are built from the same source. The only difference is which QGIS
 is inside.
 
@@ -148,8 +180,8 @@ nix run .#build-docker          # QGIS LTR    -> kartoza:qgis-desktop-ltr    (+ 
 nix run .#build-docker-latest   # QGIS latest -> kartoza:qgis-desktop-latest (+ :qgis-desktop-4.0.1)
 ```
 
-Every other feature — auth modes, egress lockdown, terminal lockdown, Giswater
-wiring — is identical across both, so a project that works on one and not the
+Every other feature — auth modes, egress lockdown, and terminal lockdown — is
+identical across both, so a project that works on one and not the
 other is a QGIS change worth reporting upstream while it can still be fixed.
 
 The running container tells you which it is: the boot log opens with a `QGIS:`
@@ -352,33 +384,36 @@ hangs and times out.
   restrict traffic between multiple containers on a shared Docker network
   unless each container has its own filter.
 
-## Giswater
+## Connect from another computer on the LAN
 
-QGIS in this image is equipped for the
-[Giswater](https://www.giswater.org/) plugin: the Python packages it imports
-(`jsonschema`, `psutil`, `pyproj`, `matplotlib`, `debugpy`) are inside QGIS's
-own interpreter, and both EPA hydraulic solvers are built from source and on
-`PATH`:
+The Compose configuration publishes the desktops on all host interfaces. A
+computer on the same LAN connects to the Docker host's LAN address, not to
+`localhost`:
 
-| Solver | Commands | Giswater project type |
-|--------|----------|-----------------------|
-| EPANET 2.2 | `runepanet`, `epanet`, `epanet2` | `ws` — water supply |
-| SWMM 5.2.4 | `runswmm`, `swmm5` | `ud` — urban drainage |
-
-Giswater does not search `PATH` — it executes Windows binaries shipped inside
-its own plugin folder, which exist on Linux but cannot run. The `epa` command
-replaces them with symlinks to the native solvers and runs automatically on
-every desktop (and greeter session) start:
-
-```bash
-epa status      # solver paths and per-plugin wiring
-epa install     # point the Giswater plugin(s) at the native solvers
-epa test        # run a real model through both solvers
+```text
+http://<docker-host-ip>:8443
+http://<docker-host-ip>:8444
 ```
 
-Install the plugin itself from the QGIS plugin manager — remember to allow
-`plugins.qgis.org` and your PostGIS host through the egress lockdown. Full
-details in [docs/configuration/giswater.md](docs/configuration/giswater.md).
+Find the Docker host's address on Linux with:
+
+```bash
+hostname -I
+```
+
+The client and Docker host must be able to reach TCP ports `8443` and `8444`.
+If the host uses UFW, allow only the trusted LAN subnet rather than opening the
+ports to everyone:
+
+```bash
+sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 8444 proto tcp
+```
+
+This Compose example uses plain HTTP. Keep the ports restricted to a trusted
+LAN, or put the services behind an HTTPS reverse proxy before allowing access
+from an untrusted network or the internet. Do not forward them directly from
+the router to the public internet.
 
 ## Endpoints
 
@@ -554,8 +589,6 @@ config/
   xfce4/                     # XFCE panel and desktop configuration
   lightdm/                   # Greeter mode: config, PAM verifier, X server wrapper
   oidc/                      # OIDC mode: secret materialisation + oauth2-proxy launcher
-nix/
-  epanet.nix, swmm.nix       # EPA hydraulic solvers for Giswater (built from source)
 docker-compose.yml           # Docker Compose example
 examples/
   analyst-locked-down/       # Locked-down analyst scenario
@@ -563,7 +596,6 @@ examples/
 Makefile                     # Make targets for build/run/summary
 build-summary.sh             # Build summary generator
 scripts/
-  epa.sh                     # Points the Giswater plugin at the native solvers
   test-oidc-config.sh        # Unit tests for the OIDC plumbing
   sbom_table.py              # SBOM JSON to markdown table
   cve_table.py               # Grype CVE JSON to markdown table

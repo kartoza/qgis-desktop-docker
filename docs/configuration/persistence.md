@@ -309,6 +309,35 @@ Three things matter here:
   the process. A volume that outlives the container makes restarts instant, and
   `sizeLimit` gives the quota something to mean.
 
+### `runAsUser` / `runAsGroup`
+
+```yaml
+      containers:
+        - name: qgis-desktop
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          env:
+            - name: QGIS_DESKTOP_EGRESS_LOCKDOWN
+              value: "0"   # a non-root PID 1 never gets to use NET_ADMIN
+```
+
+A pod started this way never has a root phase — the container is uid 1000 from
+the first instruction, not root-then-drop. `QGIS_DESKTOP_PERSIST` still works
+here: `/run/qgis-desktop/persist` and `/run/qgis-desktop/staging` ship in the
+image already owned by uid 1000, precisely so `qgis-desktop-persist` can write
+into them without ever being root. What does not survive is the credential
+isolation described in
+[How the credentials are kept from the user](#how-the-credentials-are-kept-from-the-user)
+— read that section before relying on this mode with anything but disposable,
+narrowly-scoped bucket credentials.
+
+The egress lockdown does not work here either, for the same reason: `nft`
+needs `CAP_NET_ADMIN` as an effective capability, and a process that starts as
+uid 1000 rather than execve'ing down from root never has it, `cap_add` on the
+container notwithstanding. Set `QGIS_DESKTOP_EGRESS_LOCKDOWN=0` and control
+egress at the network policy layer instead.
+
 ## Quota
 
 `QGIS_DESKTOP_PERSIST_QUOTA` is enforced client-side: usage is measured before
@@ -361,6 +390,18 @@ uid 1000 and read anything that uid can read.
     to anyone who can reach the daemon or the API. The `_FILE` form reads it
     from a mount instead — root-owned `0400`. The value never enters the
     environment at all.
+
+!!! warning "None of this holds under `runAsUser`"
+    Everything above assumes the entrypoint gets a root phase before it drops
+    to uid 1000. A pod with `securityContext.runAsUser: 1000` (see
+    [Kubernetes](#kubernetes) below) never gets one — the container starts as
+    uid 1000 directly, so there is no privilege to hide the credentials from
+    in the first place. `rclone.conf` ends up owned by the same uid the
+    desktop session runs as, mode `0400` still, but that no longer means
+    anything: the owner can always read its own `0400` file. The container
+    logs a `WARN` about this every time it writes the file, rather than let it
+    pass quietly. Persistence still works in this mode; it just cannot promise
+    the QGIS Python console can't read its own object-store credentials.
 
 ## Checking on it
 
