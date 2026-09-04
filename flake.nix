@@ -953,6 +953,11 @@ LOGINDEFS
 DBUSEOF
 
             chown -R 1000:1000 ./home/user
+            # The parent dir itself, not just persist/staging/oidc below: the
+            # entrypoint writes listen.env directly into it (see the comment
+            # at its mkdir above), so it also needs to be owned by uid 1000
+            # when there is no root phase to chown it at runtime.
+            chown 1000:1000 ./run/qgis-desktop
             chown -R 1000:1000 ./run/qgis-desktop/persist ./run/qgis-desktop/staging ./run/qgis-desktop/oidc
             chmod 0700 ./run/qgis-desktop/persist
             chmod 0755 ./run/qgis-desktop/staging
