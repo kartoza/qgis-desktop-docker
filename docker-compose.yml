@@ -1,6 +1,6 @@
 # Shared defaults keep the deployment configuration in one place.
 x-common-qgis-desktop: &default-qgis-desktop
-  image: ghcr.io/kartoza/qgis-desktop-docker:injecta.ltr
+  image: ghcr.io/kartoza/qgis-desktop-docker:injecta.v3.3.6
   cap_drop:
     - ALL
   cap_add:
