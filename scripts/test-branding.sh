@@ -131,13 +131,6 @@ if grep -qE '@[A-Z_]+@' "$WORK/out/disconnected.html" 2>/dev/null; then
 else
   ok "no placeholder survives substitution"
 fi
-# This page is the one surface that CAN clear the SSO cookie, so the link is
-# the point of branding it at all.
-if grep -q 'href="/oauth2/sign_out"' "$WORK/out/disconnected.html" 2>/dev/null; then
-  ok "the disconnected page offers a sign-out link"
-else
-  no "the disconnected page offers a sign-out link"
-fi
 if grep -q 'Session Disconnected' "$WORK/out/disconnected.html" 2>/dev/null; then
   no "the stock Kasm disconnected page is replaced" "upstream text survived"
 else

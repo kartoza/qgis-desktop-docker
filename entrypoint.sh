@@ -384,6 +384,17 @@ fi
 RUNNING_AS_ROOT=0
 [ "$(id -u)" = "0" ] && RUNNING_AS_ROOT=1
 
+# Block USB registration for the session. In standalone KasmVNC mode, host
+# USB devices are not mounted by default; if USB nodes were injected with
+# docker --device, remove them before Xkasmvnc starts.
+if [ -d /dev/bus/usb ]; then
+  find /dev/bus/usb -mindepth 1 -maxdepth 2 -exec rm -f {} + 2>/dev/null || true
+  chmod 000 /dev/bus/usb 2>/dev/null || true
+  echo "USB passthrough: BLOCKED (USB device nodes removed from /dev/bus/usb)"
+else
+  echo "USB passthrough: BLOCKED (no USB device nodes exposed)"
+fi
+
 # Prepare /tmp/.X11-unix with the ownership/mode the X server expects.
 # When start-desktop runs as uid 1000 and creates this dir itself, Xkasmvnc
 # logs "_XSERVTransmkdir: Owner of /tmp/.X11-unix should be set to root"
@@ -557,11 +568,19 @@ LISTEN
   export QGIS_DESKTOP_BIND_INTERFACE="127.0.0.1"
 
   # The proxy needs no privileges: its port is unprivileged and its config file
-  # is owned by uid 1000. Same capability-clearing shape as the desktop below.
-  setpriv \
-    --reuid=1000 --regid=1000 --init-groups \
-    --inh-caps=-all --ambient-caps=-all \
-    -- qgis-desktop-oidc-proxy &
+  # is owned by uid 1000. Same capability-clearing shape as the desktop below,
+  # including the same RUNNING_AS_ROOT branch: --init-groups calls setgroups(2),
+  # which needs CAP_SETGID. That capability only exists to drop if we started as
+  # root; a pod-level runAsUser=1000 leaves nothing to drop and setpriv fails
+  # with "initgroups failed: Operation not permitted".
+  if [ "${RUNNING_AS_ROOT}" = "1" ]; then
+    setpriv \
+      --reuid=1000 --regid=1000 --init-groups \
+      --inh-caps=-all --ambient-caps=-all \
+      -- qgis-desktop-oidc-proxy &
+  else
+    qgis-desktop-oidc-proxy &
+  fi
   OIDC_PROXY_PID=$!
 
   # If the proxy dies, the container must die with it — otherwise the desktop
