@@ -12,6 +12,8 @@ and on which X display.
 | `DISPLAY` | `:1` | X display number the server binds to (basic/none mode). In `greeter` mode LightDM manages the display and pins it to `:0`. |
 | `QGIS_DESKTOP_AUTOSTART_QGIS` | `0` | `1` starts QGIS with the desktop session. See [Starting QGIS automatically](#starting-qgis-automatically). |
 | `QGIS_DESKTOP_AUTOSTART_QGIS_ARGS` | *(none)* | Arguments for that launch, e.g. `--project /home/user/projects/site.qgs`. |
+| `QGIS_DESKTOP_SESSION_RESTART` | `1` | Relaunch the desktop session when it exits, so XFCE's **Log Out** resets the desktop instead of leaving a bare X display. See [Logging out](authentication.md#logging-out-new-in-310) for the full set of `QGIS_DESKTOP_SESSION_*` knobs. |
+| `QGIS_DESKTOP_MANAGE_URL` | *(none)* | Link back to your hosting control panel, shown on the session-ended page and in the control bar. See [Branding](branding.md#reminding-people-to-shut-down). |
 
 Authentication lives on its own page — see
 [Authentication](authentication.md) for `QGIS_DESKTOP_AUTH_MODE`, `QGIS_DESKTOP_USERS_FILE`,

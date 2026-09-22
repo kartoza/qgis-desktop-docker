@@ -375,13 +375,15 @@ assert_exists "$BUCKET/alice-0f8b/.persist-lease" "the lease object exists"
 # first still holds a fresh lease. This is the case that must be refused: two
 # writers means whichever saves last wins and the other's work is gone.
 SECOND_STATE="$WORK/lease/state2"
-mkdir -p "$SECOND_STATE"
+SECOND_STAGE="$WORK/lease/stage2"
+mkdir -p "$SECOND_STATE" "$SECOND_STAGE"
 run_second_container() {
   OUTPUT="$(
     env QGIS_DESKTOP_PERSIST=1 QGIS_DESKTOP_PERSIST_TYPE=local \
       QGIS_DESKTOP_PERSIST_BUCKET="$BUCKET" QGIS_DESKTOP_PERSIST_PREFIX="alice-0f8b" \
       QGIS_DESKTOP_PERSIST_HOME="$WORK/lease/home2" \
       QGIS_DESKTOP_PERSIST_STATE_DIR="$SECOND_STATE" \
+      QGIS_DESKTOP_PERSIST_STAGE_DIR="$SECOND_STAGE" \
       QGIS_DESKTOP_PERSIST_OWNER="qgis-desktop-1" \
       "$@" \
       bash "$PERSIST" restore 2>&1

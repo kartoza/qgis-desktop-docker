@@ -1,0 +1,21 @@
+<svg width="255" height="255" viewBox="0 5 220 275" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M201 135L111 165L21 135V165.204L111 195L201 165.204V135Z" fill="#888B8C"/>
+<path d="M21 129L111 104L201 129L111 160L21 129Z" fill="#888B8C"/>
+<ellipse cx="111" cy="131" rx="13" ry="5" fill="white"/>
+<path d="M201 170L111 200L21 170V200.204L111 230L201 200.204V170Z" fill="#57A0C7"/>
+<path d="M201 205L111 235L21 205V235.204L111 265L201 235.204V205Z" fill="#ECB44B"/>
+<circle cx="125" cy="176" r="3.5" fill="white" stroke="white"/>
+<circle cx="125" cy="211" r="3.5" fill="white" stroke="white"/>
+<circle cx="125" cy="246" r="3.5" fill="white" stroke="white"/>
+<circle cx="136" cy="172" r="3.5" fill="white" stroke="white"/>
+<circle cx="136" cy="207" r="3.5" fill="white" stroke="white"/>
+<circle cx="136" cy="242" r="3.5" fill="white" stroke="white"/>
+<circle cx="146" cy="169" r="3.5" fill="white" stroke="white"/>
+<circle cx="146" cy="204" r="3.5" fill="white" stroke="white"/>
+<circle cx="146" cy="239" r="3.5" fill="white" stroke="white"/>
+<path d="M171.276 159.658L188.276 154" stroke="white" stroke-width="6" stroke-linecap="round"/>
+<path d="M171.276 194.658L188.276 189" stroke="white" stroke-width="6" stroke-linecap="round"/>
+<path d="M171.276 229.658L188.276 224" stroke="white" stroke-width="6" stroke-linecap="round"/>
+<path d="M110.621 76C113.62 76 116.187 74.9229 118.322 72.7687C120.458 70.6146 121.526 68.025 121.526 65C121.526 61.975 120.458 59.3854 118.322 57.2313C116.187 55.0771 113.62 54 110.621 54C107.622 54 105.055 55.0771 102.919 57.2313C100.783 59.3854 99.7155 61.975 99.7155 65C99.7155 68.025 100.783 70.6146 102.919 72.7687C105.055 74.9229 107.622 76 110.621 76ZM111 131C96.3689 118.442 85.0617 106.777 77.837 96.0062C70.6123 85.2354 67 75.2667 67 66.1C67 52.35 71.3848 41.3958 80.1544 33.2375C88.9239 25.0792 99.0794 21 110.621 21C122.162 21 132.317 25.0792 141.087 33.2375C149.857 41.3958 154.241 52.35 154.241 66.1C154.241 75.2667 150.629 85.2354 143.404 96.0062C136.18 106.777 125.631 118.442 111 131Z" fill="#ECB44B"/>
+<circle cx="111" cy="65" r="21" fill="white"/>
+</svg>

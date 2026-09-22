@@ -9,7 +9,106 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        # Changes that have to apply everywhere in the closure, not just where
+        # we reference a package directly. GDAL pulls HDF4 transitively, so
+        # patching it at our own call site would achieve nothing.
+        slimOverlay = _final: prev:
+          let
+            # hdf ships lib/libhdf4.settings, a build-provenance record quoting
+            # the absolute path of the compiler it was built with. Nix reads any
+            # store path in any file as a runtime reference, so 107 MB of gcc
+            # landed in the image because of a text file — in a container that
+            # untrusted subscribers run code in.
+            #
+            # HDF4 support is untouched: GDAL links libhdf/libmfhdf directly and
+            # never calls h4cc, the compiler wrapper that settings file
+            # describes.
+            dropCompilerRef = p: p.overrideAttrs (old: {
+              postInstall = (old.postInstall or "") + ''
+                if [ -f "$out/lib/libhdf4.settings" ]; then
+                  sed -i 's|/nix/store/[a-z0-9]\{32\}-|/nix-store-scrubbed-|g' \
+                    "$out/lib/libhdf4.settings"
+                fi
+                # Build-time helpers that hardcode a toolchain path. Nothing at
+                # runtime calls them.
+                rm -f "$out/bin/h4cc" "$out/bin/h4fc"
+              '';
+            });
+          in
+          # The attribute is hdf4 in nixpkgs even though the derivation is named
+          # hdf. Overriding only "hdf" changed nothing, because GDAL asks for
+          # hdf4 — the store path came back byte-identical. Cover both names,
+          # and tolerate either being absent so a nixpkgs rename fails loudly at
+          # the callsite rather than silently doing nothing here.
+          (if prev ? hdf4 then { hdf4 = dropCompilerRef prev.hdf4; } else { })
+          // (if prev ? hdf then { hdf = dropCompilerRef prev.hdf; } else { })
+          //
+          # One dependency drags in most of a second desktop environment.
+          # xfce4-settings pulls xapp (Linux Mint's cross-desktop library),
+          # which pulls mate-panel and libmateweather, which pull marco (MATE's
+          # window manager), which pulls zenity, which pulls GTK4 and
+          # libadwaita — alongside the GTK3 that XFCE actually uses. Roughly
+          # 90 MB of a desktop we do not run.
+          #
+          # Dropped from buildInputs rather than disabled by flag: xfce4-settings
+          # uses xapp only for optional cross-desktop integration, and if a
+          # future version needs it the build will say so rather than producing
+          # something subtly broken.
+          (if prev ? xfce4-settings then {
+            xfce4-settings = prev.xfce4-settings.overrideAttrs (old: {
+              buildInputs = builtins.filter
+                (p: !(prev.lib.hasPrefix "xapp" (p.pname or p.name or "")))
+                (old.buildInputs or [ ]);
+            });
+          } else { })
+          //
+          # lightdm shells out to plymouth to quit the boot splash, and nixpkgs
+          # compiles the absolute path into the binary. There is no boot in a
+          # container and no splash to quit, but the string is a store reference
+          # so plymouth — and, through it, part of what keeps systemd around —
+          # came along regardless.
+          #
+          # Filtering buildInputs did nothing: the path is substituted in from a
+          # derivation argument, not resolved from the input list. remove-
+          # references-to overwrites the hash in place, which is the nixpkgs
+          # idiom for exactly this. lightdm pings plymouth before using it and
+          # there is no daemon to answer, so the call was already failing.
+          (if prev ? lightdm then {
+            lightdm = prev.lightdm.overrideAttrs (old: {
+              nativeBuildInputs = (old.nativeBuildInputs or [ ])
+                ++ [ prev.removeReferencesTo ];
+              postFixup = (old.postFixup or "") + ''
+                remove-references-to -t ${prev.plymouth} "$out/bin/lightdm"
+              '';
+            });
+          } else { })
+          //
+          # debugpy vendors pydevd's "attach to a running process" helper, which
+          # injects code into a live process using gdb — and that single
+          # directory is the only reason a 16 MB debugger is in the image.
+          #
+          # Removing the directory rather than just scrubbing the path takes the
+          # capability away too. Injecting code into other processes is not
+          # something a subscriber on a shared desktop should be able to do, and
+          # debugpy's actual job — being a debug adapter — does not use it.
+          {
+            pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+              (_pyfinal: pyprev: {
+                debugpy = pyprev.debugpy.overrideAttrs (old: {
+                  postInstall = (old.postInstall or "") + ''
+                    find "$out" -type d -name pydevd_attach_to_process \
+                      -prune -exec rm -rf {} +
+                  '';
+                });
+              })
+            ];
+          }
+          ;
+
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ slimOverlay ];
+        };
 
         # KasmVNC package
         kasmvnc = pkgs.callPackage ./kasmvnc.nix {};
@@ -161,6 +260,101 @@
           text = builtins.readFile ./config/autostart/autostart.sh;
         };
 
+        # --- Session supervisor -------------------------------------------
+        # Wraps the XFCE session in the basic/none paths so that logging out
+        # of XFCE restarts the desktop instead of stranding the browser on a
+        # bare X root window. LightDM already does this in greeter mode.
+        sessionSupervisorScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-session";
+          runtimeInputs = with pkgs; [ coreutils ];
+          text = builtins.readFile ./config/session/session-supervisor.sh;
+        };
+
+
+        # The splash is a JPEG in KasmVNC's asset tree, so the wallpaper is
+        # re-encoded rather than re-rendered — one artwork, two containers for
+        # it, and no chance of the two drifting apart.
+        brandedSplash = pkgs.runCommand "qgis-desktop-splash.jpg"
+          { nativeBuildInputs = [ pkgs.imagemagick ]; } ''
+            magick ${brandedWallpaper} -quality 88 "$out"
+          '';
+        # --- Branding (the KasmVNC web root) ------------------------------
+        # Renders a branded copy of KasmVNC's www tree at build time. Every
+        # brand value comes from config/branding/tokens.json — correcting that
+        # one file re-themes everything below it.
+        brandWwwScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-brand-www";
+          runtimeInputs = with pkgs; [ jq coreutils gnused gnugrep ];
+          text = builtins.readFile ./config/branding/brand-www.sh;
+        };
+
+        # The branded web root itself. Kept deliberately narrow: the entry
+        # pages' title and favicon, and a replacement disconnected.html. The
+        # Vite bundle and the content-hashed stylesheets are left alone, so a
+        # KasmVNC bump does not turn into a debugging session — and the script
+        # asserts every substitution, so a bump that DOES move the markup fails
+        # this build instead of silently shipping Kasm's branding.
+        brandedWww = pkgs.runCommand "kasmvnc-www-branded" { } ''
+          ${brandWwwScript}/bin/qgis-desktop-brand-www \
+            --source ${kasmvnc}/share/kasmvnc/www \
+            --tokens ${./config/branding/tokens.json} \
+            --template ${./config/branding/disconnected.html.in} \
+            --logo ${./resources/brand/geohosting.svg} \
+            --splash ${brandedSplash} \
+            --redirect-js ${./config/branding/disconnect-redirect.js} \
+            --font-regular ${pkgs.lato}/share/fonts/lato/Lato-Regular.ttf \
+            --font-bold ${pkgs.lato}/share/fonts/lato/Lato-Bold.ttf \
+            --out $out
+        '';
+
+
+
+        # Fills the deployment's management URL into the session-ended page at
+        # container start. Runs as root from the entrypoint: the URL is a
+        # property of the deployment, not of the image, so it cannot be baked in.
+        manageLinkScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-manage-link";
+          runtimeInputs = with pkgs; [ coreutils gnused gnugrep gawk ];
+          text = builtins.readFile ./config/branding/manage-link.sh;
+        };
+        # The desktop wallpaper, rendered from an SVG at build time. Used in
+        # three places: the XFCE desktop, the LightDM greeter background in
+        # greeter mode, and the X root window that shows for a few seconds
+        # while a session restarts.
+        brandWallpaperScript = pkgs.writeShellApplication {
+          name = "qgis-desktop-brand-wallpaper";
+          runtimeInputs = with pkgs; [ jq coreutils gnused gnugrep librsvg ];
+          text = builtins.readFile ./config/branding/brand-wallpaper.sh;
+        };
+
+        # rsvg needs fontconfig to resolve the wordmark's typeface, or it
+        # silently falls back to whatever it can find — which is how you ship a
+        # wallpaper set in the wrong font without noticing.
+        wallpaperFontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.lato ]; };
+
+        brandedWallpaper = pkgs.runCommand "qgis-desktop-wallpaper.png" { } ''
+          export FONTCONFIG_FILE=${wallpaperFontsConf}
+          ${brandWallpaperScript}/bin/qgis-desktop-brand-wallpaper \
+            --template ${./config/branding/wallpaper.svg.in} \
+            --tokens ${./config/branding/tokens.json} \
+            --logo ${./resources/brand/geohosting.svg} \
+            --out $out
+        '';
+        # --- rclone, trimmed to the backends we can actually use -----------
+        # Upstream compiles in ~70 storage backends. Every one drags its client
+        # library along, which is how a QGIS desktop ended up with ProtonMail,
+        # Dropbox, Mega and Yandex in its SBOM. None of it was reachable:
+        # config/persist/persist.sh accepts s3 or local and rejects anything
+        # else. The replacement registry keeps exactly those two.
+        #
+        # Not a feature change — the s3 backend covers every S3-compatible
+        # provider, because the provider is a config key rather than a backend.
+        rcloneMinimal = pkgs.rclone.overrideAttrs (old: {
+          postPatch = (old.postPatch or "") + ''
+            cp ${./nix/rclone-backends-all.go} backend/all/all.go
+          '';
+        });
+
         # --- Home persistence (QGIS_DESKTOP_PERSIST=1) --------------------
         # Restore/save the home directory against object storage. Runs as root
         # so the credentials stay unreadable by the desktop user, and so the
@@ -168,8 +362,8 @@
         persistScript = pkgs.writeShellApplication {
           name = "qgis-desktop-persist";
           runtimeInputs = with pkgs; [
-            rclone
-            coreutils # timeout, numfmt, date, chown, id, cp
+            rcloneMinimal   # s3 + local only; see the override above
+            coreutils # timeout, numfmt, date, chown, id, cp, mktemp, mv, chmod
             gnused
             hostname
             util-linux # setpriv, to deliver files as the desktop user
@@ -217,10 +411,13 @@
             procps
             gnugrep
             xkbcomp
+            feh              # paints the wallpaper onto the X root window
+            xorg.xsetroot    # ...with a solid brand colour as the fallback
             xrdb
           ] ++ [
             epaTool # `epa install` wires Giswater up to the native solvers
             autostartScript # honours QGIS_DESKTOP_AUTOSTART_QGIS
+            sessionSupervisorScript # relaunches XFCE when the user logs out
           ];
           text = builtins.readFile ./start-desktop.sh;
         };
@@ -373,6 +570,7 @@
             oidcProxyScript       # qgis-desktop-oidc-proxy  (uid 1000: runs oauth2-proxy)
             disableTerminalScript # qgis-desktop-disable-terminal (root: QGIS_DESKTOP_ALLOW_TERMINAL=0)
             persistScript         # qgis-desktop-persist (root: home restore/save)
+            manageLinkScript      # qgis-desktop-manage-link (root: runtime manage URL)
           ];
           text = builtins.readFile ./entrypoint.sh;
         };
@@ -412,6 +610,8 @@
 
             # X11 essentials
             xkbcomp
+            feh              # paints the wallpaper onto the X root window
+            xorg.xsetroot    # ...with a solid brand colour as the fallback
             xkeyboard_config
             xrdb
 
@@ -460,6 +660,14 @@
             # Autostart QGIS with the session (QGIS_DESKTOP_AUTOSTART_QGIS=1).
             autostartScript
 
+            # Session supervisor: relaunches XFCE when the user logs out, so
+            # log-out is a desktop reset rather than a dead end
+            # (QGIS_DESKTOP_SESSION_RESTART=1, the default).
+            sessionSupervisorScript
+
+            # Fills QGIS_DESKTOP_MANAGE_URL into the session-ended page at boot.
+            manageLinkScript
+
             # Home persistence (QGIS_DESKTOP_PERSIST=1). rclone arrives through
             # the wrapper; it is not on the desktop user's PATH.
             persistScript
@@ -485,6 +693,14 @@
             # Runtime state the entrypoint writes: the listener override that
             # tells both KasmVNC launchers to move behind the OIDC proxy.
             mkdir -p ./run/qgis-desktop
+            # Home persistence's state/staging dirs, and the OIDC proxy's
+            # secrets dir, owned by the desktop user (chown'd below) so
+            # qgis-desktop-persist and qgis-desktop-oidc-config can write
+            # under them even with no root phase at all (Kubernetes
+            # runAsUser/runAsGroup). /run is otherwise root:root and not
+            # writable by uid 1000 -- those scripts can only mkdir *into*
+            # this, not create it from nothing. See docs/configuration/persistence.md#kubernetes.
+            mkdir -p ./run/qgis-desktop/persist ./run/qgis-desktop/staging ./run/qgis-desktop/oidc
             # Default mount point for a user:password file
             # (QGIS_DESKTOP_USERS_FILE).
             mkdir -p ./etc/qgis-desktop
@@ -555,7 +771,32 @@ INIEOF
 
             # Deploy wallpaper
             mkdir -p ./usr/share
-            cp ${./resources/wallpaper.png} ./usr/share/wallpaper.png
+            cp ${brandedWallpaper} ./usr/share/wallpaper.png
+
+            # Branded KasmVNC web root. Copied rather than symlinked: LightDM
+            # scrubs the environment before spawning the X server, so the
+            # greeter path can only find this at a fixed path, and a symlink
+            # into the store would dangle unless the store path were also in
+            # `contents` — where its files would splat at the image root.
+            # See config/branding/.
+            mkdir -p ./usr/share/qgis-desktop
+            cp -r ${brandedWww} ./usr/share/qgis-desktop/www
+            chmod -R a+rX ./usr/share/qgis-desktop/www
+            # Non-recursive: the directory inode itself needs to be writable
+            # by uid 1000 so qgis-desktop-manage-link can rename its rendered
+            # pages into place with no root phase at all (Kubernetes
+            # runAsUser/runAsGroup) -- rename() only needs write+execute on
+            # the containing directory. The files inside stay root-owned; a
+            # root-phase boot still replaces them as root, same as always.
+            #
+            # ${brandedWww} is a Nix store path, so it (and everything cp -r
+            # copies from it) starts out mode 0555 -- read-only even for its
+            # owner. chown alone does not fix that: it changes who owns the
+            # directory, not what they are allowed to do with it. The chmod
+            # below is what actually grants the write bit the comment above
+            # promises.
+            chown 1000:1000 ./usr/share/qgis-desktop/www
+            chmod 0755 ./usr/share/qgis-desktop/www
             chmod 1777 ./tmp
 
             # Create /usr/bin symlinks for hardcoded paths
@@ -790,6 +1031,15 @@ LOGINDEFS
 DBUSEOF
 
             chown -R 1000:1000 ./home/user
+            # The parent dir itself, not just persist/staging/oidc below: the
+            # entrypoint writes listen.env directly into it (see the comment
+            # at its mkdir above), so it also needs to be owned by uid 1000
+            # when there is no root phase to chown it at runtime.
+            chown 1000:1000 ./run/qgis-desktop
+            chown -R 1000:1000 ./run/qgis-desktop/persist ./run/qgis-desktop/staging ./run/qgis-desktop/oidc
+            chmod 0700 ./run/qgis-desktop/persist
+            chmod 0755 ./run/qgis-desktop/staging
+            chmod 0700 ./run/qgis-desktop/oidc
             chown -R 996:996 ./var/lib/lightdm ./var/cache/lightdm ./var/log/lightdm ./var/run/lightdm
           '';
 
@@ -991,13 +1241,29 @@ DBUSEOF
         # come up complaining that Open Sans and friends are missing.
         # Building our own config with makeFontsConf points fontconfig
         # at exactly the font packages listed in dockerImage.contents.
-        desktopFontsConf = pkgs.makeFontsConf {
+        # The font directories the desktop can see. Liberation is what makes
+        # Arial-authored QGIS projects lay out correctly — see the alias file.
+        desktopFontDirs = pkgs.makeFontsConf {
           fontDirectories = [
             pkgs.dejavu_fonts
             pkgs.liberation_ttf
             pkgs.open-sans
+            pkgs.lato
           ];
         };
+
+        # makeFontsConf does not include fontconfig's own conf.d, so its
+        # 30-metric-aliases rules never applied and Arial resolved to nothing.
+        # Wrap the generated config and add the aliases alongside it.
+        desktopFontsConf = pkgs.runCommand "qgis-desktop-fonts.conf" { } ''
+          {
+            head -n -1 ${desktopFontDirs}
+            cat ${./config/fonts/60-metric-aliases.conf} \
+              | grep -v '^<?xml' | grep -v '^<!DOCTYPE' \
+              | sed -e 's|^<fontconfig>||' -e 's|^</fontconfig>||'
+            echo '</fontconfig>'
+          } > $out
+        '';
 
         # Renders docs/**/diagrams/*.d2 to SVG. Separate from the mkdocs apps
         # because the PDF build needs it too, and because a diagram change
@@ -1035,6 +1301,16 @@ DBUSEOF
       in {
         packages = {
           kasmvnc = kasmvnc;
+
+          # The branded KasmVNC web root, on its own. This is the fast way to
+          # review a branding change: `nix build .#branded-www` takes seconds
+          # and the result is plain static files you can open in a browser,
+          # with no multi-gigabyte image build in the way.
+          branded-www = brandedWww;
+
+          # The wallpaper on its own: `nix build .#branded-wallpaper` renders it
+          # in a second so a design change can be looked at without an image build.
+          branded-wallpaper = brandedWallpaper;
 
           # QGIS LTR is the default everywhere: it is the build you put in
           # front of users.
@@ -1101,7 +1377,9 @@ DBUSEOF
             docker rm -f qgis-desktop 2>/dev/null || true
             echo "▶ Auth: single-user (default VNC_USER=user, VNC_PW=password)"
             echo "  Open http://localhost:8443 — browser will prompt for creds."
-            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop kartoza:qgis-desktop-ltr
+            docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
+              kartoza:qgis-desktop-ltr
           '';
 
           # Multi-user via inline env var.
@@ -1111,6 +1389,7 @@ DBUSEOF
             echo "  Log in as  alice / pw1   or   bob / pw2"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_USERS='alice:pw1,bob:pw2' \
               kartoza:qgis-desktop-ltr
           '';
@@ -1131,6 +1410,7 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -v "$USERS_FILE:/etc/qgis-desktop/users:ro" \
               kartoza:qgis-desktop-ltr
           '';
@@ -1141,6 +1421,7 @@ DBUSEOF
             echo "⚠  Auth: DISABLED. Do NOT expose this port to any untrusted network."
             echo "  Open http://localhost:8443 — connects with no prompt."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               kartoza:qgis-desktop-ltr
           '';
@@ -1156,6 +1437,7 @@ DBUSEOF
             echo "  For multi-user try:  nix run .#run-greeter-multi"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               kartoza:qgis-desktop-ltr
           '';
@@ -1168,6 +1450,7 @@ DBUSEOF
             echo "  Log in as  alice / hunter2   or   bob / correct-horse-battery-staple"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=greeter \
               -e QGIS_DESKTOP_USERS='alice:hunter2,bob:correct-horse-battery-staple' \
               kartoza:qgis-desktop-ltr
@@ -1193,6 +1476,7 @@ DBUSEOF
             echo "  The identity provider's host is added to the egress allowlist"
             echo "  automatically. Open http://localhost:8443 to be sent to the IdP."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=oidc \
               -e QGIS_DESKTOP_OIDC_ISSUER_URL \
               -e QGIS_DESKTOP_OIDC_CLIENT_ID \
@@ -1389,6 +1673,7 @@ DBUSEOF
             echo "  - Terminal access removed"
             echo "  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e KASM_WATERMARK_TEXT='CONFIDENTIAL - ''${USER} %H:%M' \
               -e KASM_DLP_LOG=info \
               -e KASM_CLIPBOARD_DELAY_MS=500 \
@@ -1406,6 +1691,7 @@ DBUSEOF
             echo "  Everything else is blocked. DNS to Docker's resolver stays open."
             echo "  Log in as user / password  ·  Open http://localhost:8443"
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_EGRESS_ALLOW='1.1.1.1,example.com' \
               kartoza:qgis-desktop-ltr
           '';
@@ -1453,6 +1739,7 @@ DBUSEOF
             echo "⚠  Dev mode: auth OFF and egress lockdown OFF."
             echo "  Open http://localhost:8443 — connects with no prompt, full network access."
             docker run --rm -p 8443:8443 --cap-add=NET_ADMIN --name qgis-desktop \
+              -e QGIS_DESKTOP_MANAGE_URL=https://geospatialhosting.com/dashboard \
               -e QGIS_DESKTOP_AUTH_MODE=none \
               -e QGIS_DESKTOP_EGRESS_LOCKDOWN=0 \
               kartoza:qgis-desktop-ltr
@@ -1565,6 +1852,20 @@ DBUSEOF
             }}/bin/test-terminal-lockdown";
           };
 
+          # Keeps every example compose file under least privilege: drop ALL,
+          # add back only the agreed capability allowlist, no-new-privileges.
+          test-example-hardening = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-example-hardening";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep gawk findutils ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-example-hardening.sh
+              '';
+            }}/bin/test-example-hardening";
+          };
+
           # Keeps the committed diagram SVGs in step with their .d2 sources.
           test-check-oidc = {
             type = "app";
@@ -1603,6 +1904,64 @@ DBUSEOF
             }}/bin/test-autostart";
           };
 
+          # Unit tests for the session supervisor: logging out of XFCE has to
+          # bring the desktop back, not strand the browser on a bare X display.
+          test-session-restart = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-session-restart";
+              runtimeInputs = with pkgs; [ bash coreutils ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-session-restart.sh
+              '';
+            }}/bin/test-session-restart";
+          };
+
+
+          # Unit tests for the branding overlay. Mostly about failing loudly
+          # when a KasmVNC bump moves the markup we key on.
+          test-branding = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-branding";
+              runtimeInputs = with pkgs; [ bash coreutils gnused gnugrep jq diffutils shellcheck librsvg ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-branding.sh
+              '';
+            }}/bin/test-branding";
+          };
+
+          # Lints every script flake.nix packages, the same way
+          # writeShellApplication does at build time. Cheap here; a failed image
+          # build minutes in is not.
+          test-shellcheck = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-shellcheck";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep gnused shellcheck ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-shellcheck.sh
+              '';
+            }}/bin/test-shellcheck";
+          };
+
+          # Unit tests for the CVE table that goes into every PR comment and
+          # release body. A wrong count there is a wrong public claim about the
+          # image.
+          test-cve-table = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-cve-table";
+              runtimeInputs = with pkgs; [ bash coreutils gnugrep python3 ];
+              text = ''
+                export QGIS_DESKTOP_PROJECT_ROOT=${self}
+                exec bash ${self}/scripts/test-cve-table.sh
+              '';
+            }}/bin/test-cve-table";
+          };
           # Guards the PDF build: any character pdflatex cannot set fails here,
           # in a second, instead of ten minutes into `docs-pdf`.
           test-docs-glyphs = {
@@ -1656,13 +2015,20 @@ DBUSEOF
               runtimeInputs = with pkgs; [
                 bash coreutils gnused gnugrep gawk findutils diffutils
                 oauth2-proxy rclone d2
+                # test-branding.sh renders the wallpaper SVG.
+                librsvg
                 # test-check-oidc.sh serves a fake OIDC provider from python3
                 # and talks to it with curl/jq — no network, no Docker.
                 curl jq python3
+                # test-shellcheck.sh and test-branding.sh lint packaged scripts
+                # exactly as writeShellApplication does at build time.
+                shellcheck
               ];
               text = ''
                 export QGIS_DESKTOP_PROJECT_ROOT=${self}
                 rc=0
+                bash ${self}/scripts/test-shellcheck.sh || rc=1
+                echo ""
                 bash ${self}/scripts/test-oidc-config.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-terminal-lockdown.sh || rc=1
@@ -1675,9 +2041,16 @@ DBUSEOF
                 echo ""
                 bash ${self}/scripts/test-autostart.sh || rc=1
                 echo ""
+                bash ${self}/scripts/test-session-restart.sh || rc=1
+                bash ${self}/scripts/test-branding.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-cve-table.sh || rc=1
+                echo ""
                 bash ${self}/scripts/test-docs-diagrams.sh || rc=1
                 echo ""
                 bash ${self}/scripts/test-check-oidc.sh || rc=1
+                echo ""
+                bash ${self}/scripts/test-example-hardening.sh || rc=1
                 exit "$rc"
               '';
             }}/bin/test";
@@ -1687,6 +2060,36 @@ DBUSEOF
             bash build-summary.sh kartoza:qgis-desktop-ltr build-summary.md
           '';
 
+          # Review a branding change without building a container image. The
+          # branded web root is static files, so serving them locally shows
+          # exactly what a user's browser will get — in seconds rather than the
+          # tens of minutes an image build costs.
+          preview-branding = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "preview-branding";
+              runtimeInputs = with pkgs; [ python3 coreutils ];
+              text = ''
+                ADDR="''${1:-127.0.0.1:8100}"
+                HOST="''${ADDR%%:*}"
+                PORT="''${ADDR##*:}"
+
+                echo "Branded web root: ${brandedWww}"
+                echo ""
+                echo "  Session-ended page:  http://$ADDR/disconnected.html"
+                echo "  Entry page:          http://$ADDR/index.html"
+                echo ""
+                echo "The session-ended page is the one that is fully branded."
+                echo "The entry page has no desktop behind it here, so it will sit"
+                echo "at 'connecting' — its branded parts are the tab title and the"
+                echo "favicon. Ctrl-C to stop."
+                echo ""
+
+                exec python3 -m http.server "$PORT" \
+                  --bind "$HOST" --directory ${brandedWww}
+              '';
+            }}/bin/preview-branding";
+          };
           # --- Documentation apps -----------------------------------------
           # Local preview at http://127.0.0.1:8000.
           # `site_url` points at GitHub Pages, and mkdocs serve honours its path
@@ -1819,6 +2222,7 @@ DBUSEOF
               "$DOCS_DIR/configuration/environment.md"
               "$DOCS_DIR/configuration/permissions.md"
               "$DOCS_DIR/configuration/authentication.md"
+              "$DOCS_DIR/configuration/branding.md"
               "$DOCS_DIR/configuration/egress-lockdown.md"
               "$DOCS_DIR/configuration/giswater.md"
               "$DOCS_DIR/configuration/persistence.md"
