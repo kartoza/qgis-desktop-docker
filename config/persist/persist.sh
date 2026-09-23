@@ -13,12 +13,22 @@
 #   status    what is configured and how full it is
 #   release   drop the single-writer lease
 #
-# It runs as ROOT throughout, for two reasons: the restore has to write into a
-# home directory owned by uid 1000, and the object-store credentials must stay
-# unreadable by the desktop user. The rclone config file is written 0400
-# root-owned, so the user in the session — who has a Python console in QGIS and
-# can run anything as uid 1000 — cannot read the credentials out of it, and
-# cannot reach the bucket with them.
+# It normally runs as ROOT throughout, for two reasons: the restore has to
+# write into a home directory owned by uid 1000, and the object-store
+# credentials must stay unreadable by the desktop user. The rclone config file
+# is written 0400 root-owned, so the user in the session — who has a Python
+# console in QGIS and can run anything as uid 1000 — cannot read the
+# credentials out of it, and cannot reach the bucket with them.
+#
+# It also tolerates having no root phase at all — Kubernetes
+# securityContext.runAsUser/runAsGroup, or any launcher that starts the
+# container as uid 1000 directly — because refusing to run there entirely
+# would leave persistence unusable for every pod locked down that way. The
+# credential-hiding guarantee above does not survive that: with no privilege
+# separation, this process already runs as the same uid the desktop session
+# does, so rclone.conf stays owned by that uid instead of root. write_rclone_config
+# logs a WARN about this every time it happens rather than let it pass
+# unnoticed. See docs/configuration/persistence.md#kubernetes.
 #
 # Direction matters for safety. The restore is the only moment root writes into
 # the home directory, and it happens before any user process exists, so a
@@ -96,6 +106,7 @@ TRASH_PREFIX=".persist-trash"
 
 log() { printf '[persist] %s\n' "$*"; }
 err() { printf '[persist] %s\n' "$*" >&2; }
+warn() { printf '[persist] WARN: %s\n' "$*" >&2; }
 
 die() {
   err "ERROR: $*"
@@ -123,9 +134,20 @@ read_secret() {
 
 # The rclone config file is the only place the credentials land. 0400 root, in
 # a tmpfs-ish runtime dir that never reaches the image or a volume.
+#
+# Every step below dies loudly on failure rather than continuing past it. This
+# used to only warn-and-carry-on, which meant a permission error here (no
+# writable /run/qgis-desktop, most commonly) left restore() silently
+# "succeeding" with no rclone.conf ever written — nothing restored, and every
+# later push failing forever with no clear signal why. Restore has to fail
+# honestly so the caller's REQUIRED-by-default safety net actually fires.
 write_rclone_config() {
-  mkdir -p "${STATE_DIR}"
-  chmod 0700 "${STATE_DIR}"
+  mkdir -p "${STATE_DIR}" ||
+    die "could not create ${STATE_DIR}. This directory must already exist and be" \
+      "writable by uid $(id -u) -- with no root phase at all (Kubernetes" \
+      "runAsUser/runAsGroup), persist.sh cannot create it from nothing. See" \
+      "docs/configuration/persistence.md#kubernetes."
+  chmod 0700 "${STATE_DIR}" || die "could not chmod ${STATE_DIR} to 0700."
 
   local access secret token config
 
@@ -161,18 +183,50 @@ no_check_bucket = true"
       ;;
   esac
 
+  # Written to a temp file and renamed into place rather than truncated
+  # in-place. A previous boot may have left RCLONE_CONF behind mode 0400 —
+  # /run/qgis-desktop/persist can outlive a container restart (an emptyDir
+  # survives across container restarts within the same pod, and this state
+  # dir is no longer wiped between builds either — see the image-baked
+  # ownership above) — and opening a 0400 file for writing fails even for its
+  # own owner. rename() only needs write+execute on the containing directory,
+  # which we already own, so this works regardless of what was there before.
+  #
   # The umask is scoped to the write, in a subshell, so it cannot leak. It used
   # to be set for the rest of the process, which made the staging directory
   # 0700 root-owned — and the unprivileged copy that delivers baseline files
   # could not read it. The file must never be group- or world-readable even for
   # the instant between creating and chmod'ing it.
+  local tmp
+  tmp="$(mktemp "${STATE_DIR}/rclone.conf.XXXXXX")" ||
+    die "could not create a temp file in ${STATE_DIR}."
   (
     umask 077
-    printf '%s\n' "${config}" > "${RCLONE_CONF}"
-  )
+    printf '%s\n' "${config}" > "${tmp}"
+  ) || { rm -f "${tmp}"; die "could not write ${tmp}."; }
 
-  chmod 0400 "${RCLONE_CONF}"
-  chown 0:0 "${RCLONE_CONF}" 2>/dev/null || true
+  chmod 0400 "${tmp}" || { rm -f "${tmp}"; die "could not chmod ${tmp} to 0400."; }
+
+  mv -f "${tmp}" "${RCLONE_CONF}" ||
+    die "could not move ${tmp} into place at ${RCLONE_CONF}."
+
+  # Root-owning the file is what actually hides the credentials from the
+  # desktop session (uid 1000): this runs as root, ahead of the privilege
+  # drop, so a 0400-root file is unreadable by whatever runs afterwards.
+  # Without a root phase at all -- Kubernetes runAsUser/runAsGroup -- there is
+  # no separate privilege to hide it from: this process already runs as the
+  # same uid the desktop session runs as, so the file stays owned by that uid
+  # and mode 0400 buys nothing. Say so loudly rather than let it pass with
+  # the credentials quietly less protected than the design in
+  # docs/configuration/persistence.md#how-the-credentials-are-kept-from-the-user
+  # describes.
+  if [ "$(id -u)" = "0" ]; then
+    chown 0:0 "${RCLONE_CONF}" || die "could not chown ${RCLONE_CONF} to root."
+  else
+    warn "no root phase (running as uid $(id -u)) -- ${RCLONE_CONF} stays owned by that uid."
+    warn "the desktop session runs as the same uid, so it can read its own object-store credentials."
+    warn "see docs/configuration/persistence.md#kubernetes."
+  fi
 }
 
 # --- Remote paths -----------------------------------------------------------
@@ -579,14 +633,16 @@ cmd_restore() {
 
   # Anything the operator has staged for this user. After the restore, so the
   # user's own copy of a file always wins.
-  mkdir -p "${STAGE_DIR}"
-  chmod 0755 "${STAGE_DIR}"
+  mkdir -p "${STAGE_DIR}" || die "could not create ${STAGE_DIR}."
+  chmod 0755 "${STAGE_DIR}" || die "could not chmod ${STAGE_DIR}."
   ensure_prefixes
   apply_baseline
   drain_deploy
 
-  mkdir -p "${STATE_DIR}"
-  date -u '+%Y-%m-%dT%H:%M:%SZ' > "${SENTINEL}"
+  mkdir -p "${STATE_DIR}" || die "could not create ${STATE_DIR}."
+  date -u '+%Y-%m-%dT%H:%M:%SZ' > "${SENTINEL}" ||
+    die "could not write ${SENTINEL} -- the restore itself succeeded, but" \
+      "without this marker a later push would refuse to run."
   local_files > "${COUNT_FILE}" 2>/dev/null || echo 0 > "${COUNT_FILE}"
   lease_write
 
@@ -738,8 +794,8 @@ cmd_status() {
 cmd_deliver() {
   require_config
   [ -f "${RCLONE_CONF}" ] || write_rclone_config
-  mkdir -p "${STAGE_DIR}"
-  chmod 0755 "${STAGE_DIR}"
+  mkdir -p "${STAGE_DIR}" || die "could not create ${STAGE_DIR}."
+  chmod 0755 "${STAGE_DIR}" || die "could not chmod ${STAGE_DIR}."
   ensure_prefixes
   apply_baseline
   drain_deploy

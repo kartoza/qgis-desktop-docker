@@ -97,22 +97,21 @@ jobs:
           VERSION="${{ github.event.release.tag_name }}"
           QGIS_VERSION="${{ steps.build.outputs.qgis_version }}"
 
-          # :<release>-latest is an immovable pin — always published,
-          # whatever branch the release was cut from.
-          tags=("${VERSION}-latest")
+          # A release tag like "injecta-v4.4.3" or "giswater-v4.4.3" is a
+          # customised build for a deployment fork, not the current-QGIS line
+          # everyone else tracks via :latest -- it has no current-QGIS
+          # counterpart (see the "build" job's <flavor>-ltr handling
+          # instead), so skip the push.
+          case "$VERSION" in
+            injecta-*|giswater-*)
+              echo "Skipping :latest push for flavoured release ${VERSION} (LTR-only, see the build job)."
+              exit 0
+              ;;
+          esac
 
-          # :latest and :<qgis-version> are the moving current-release line.
-          # Only a release cut from main is allowed to move them, so a
-          # release tagged off a feature branch (e.g. v3.1.0.gis-water) can
-          # still publish an immutable, pin-able image without disturbing
-          # what :latest points at.
-          if [ "${{ github.event.release.target_commitish }}" = "main" ]; then
-            tags+=("latest" "${QGIS_VERSION}")
-          else
-            echo "Release target_commitish is '${{ github.event.release.target_commitish }}', not 'main' — skipping :latest and :${QGIS_VERSION}"
-          fi
-
-          for tag in "${tags[@]}"; do
+          # :latest follows the current QGIS line; :<qgis-version> and
+          # :<release>-latest are the immovable pins.
+          for tag in "latest" "${QGIS_VERSION}" "${VERSION}-latest"; do
             docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-latest "${GHCR_IMAGE}:${tag}"
             docker push "${GHCR_IMAGE}:${tag}"
           done
@@ -368,26 +367,29 @@ jobs:
           VERSION="${{ steps.version.outputs.tag }}"
           QGIS_VERSION="${{ steps.load.outputs.qgis_version }}"
 
-          # :<release>-ltr and the bare :<release> tag are immovable pins —
-          # always published, whatever branch the release was cut from. The
-          # bare tag stays on the LTR build; existing pins point at it.
-          tags=("${VERSION}-ltr" "${VERSION}")
+          # A release tag like "injecta-v4.4.3" or "giswater-v4.4.3" is a
+          # customised build for a deployment fork -- keep it in its own
+          # "<flavor>-*" tag namespace so it can never overwrite :ltr (or the
+          # bare QGIS-version tag, which would otherwise collide with main's
+          # image at the same QGIS version). :ltr stays reserved for releases
+          # off main.
+          case "$VERSION" in
+            injecta-*|giswater-*)
+              FLAVOR="${VERSION%%-*}"
+              TAGS=("${FLAVOR}-ltr" "${VERSION}")
+              ;;
+            *)
+              # :ltr follows the LTR line; :<qgis-version> and :<release>-ltr are
+              # the immovable pins. The bare :<release> tag stays on the LTR — it
+              # is the supported artefact, and existing pins point at it.
+              #
+              # Deliberately no :latest here. That tag belongs to the current QGIS
+              # release and is pushed by the build-qgis-latest job.
+              TAGS=("ltr" "${QGIS_VERSION}" "${VERSION}-ltr" "${VERSION}")
+              ;;
+          esac
 
-          # :ltr and :<qgis-version> are the moving LTR line. Only a release
-          # cut from main is allowed to move them, so a release tagged off a
-          # feature branch (e.g. v3.1.0.gis-water) can still publish an
-          # immutable, pin-able image without disturbing what :ltr points at.
-          #
-          # Deliberately no :latest here regardless of branch — that tag
-          # belongs to the current QGIS release and is pushed by the
-          # build-qgis-latest job.
-          if [ "${{ github.event.release.target_commitish }}" = "main" ]; then
-            tags+=("ltr" "${QGIS_VERSION}")
-          else
-            echo "Release target_commitish is '${{ github.event.release.target_commitish }}', not 'main' — skipping :ltr and :${QGIS_VERSION}"
-          fi
-
-          for tag in "${tags[@]}"; do
+          for tag in "${TAGS[@]}"; do
             docker tag ${{ env.NIX_IMAGE }}:qgis-desktop-ltr "${GHCR_IMAGE}:${tag}"
             docker push "${GHCR_IMAGE}:${tag}"
           done

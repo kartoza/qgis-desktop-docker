@@ -31,6 +31,304 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   alongside the plugin flag, no manual connection setup needed to browse
   the database directly.
 
+## [3.3.0] — 2026-08-31
+
+### Security
+
+- **Every example runs least-privilege now, not just default-privilege.** The
+  compose files dropped every Linux capability and add back only the ten the
+  image actually uses — `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `SETUID`,
+  `SETGID`, `SETPCAP`, `KILL`, `AUDIT_WRITE` and `NET_ADMIN` — with
+  `no-new-privileges` set on top. It is an allowlist on purpose: if a future
+  base image widens Docker's default capability set, these containers do not
+  inherit the addition. `NET_RAW`, `MKNOD`, `SYS_CHROOT`, `SETFCAP` and
+  `NET_BIND_SERVICE` are gone for good. Verified against the running image in
+  both basic and greeter modes — the desktop still comes up as uid 1000 with
+  `CapEff=0`, and `mount`/`nsenter` still get permission denied.
+
+- **A new `SECURITY.md`** records the isolation model and walks the
+  widely-circulated container-escape techniques one by one, showing why each is
+  blocked here — and, as pointedly, which run-time flags an operator must never
+  add back.
+
+### Removed
+
+- **A further ~700 MB, and two interpreters, from one optional dependency.**
+  `xfce4-settings` pulled `xapp` — Linux Mint's cross-desktop library — and with
+  it `mate-panel`, `libmateweather`, `marco` (MATE's window manager), `zenity`,
+  GTK4, `libadwaita`, `gtk+3-dev`, `inxi`, and **Perl**. Most of a second
+  desktop environment and a scripting interpreter, none of it reachable from an
+  XFCE session. `xfsettingsd` still ships, so theming, fonts and cursors are
+  unaffected.
+
+- **gdb**, via `debugpy`. It was referenced only by pydevd's
+  "attach to a running process" helper, which injects code into a live process.
+  The directory is removed rather than the path scrubbed, so the capability goes
+  with the dependency — code injection into another process is not something a
+  subscriber on a shared desktop should have. `debugpy` still works as a debug
+  adapter.
+
+Together with the compiler and the rclone backends, the image is down from
+3.66 GB to 2.63 GB.
+
+### Changed
+
+- **Every demo now sets `QGIS_DESKTOP_MANAGE_URL`.** The "Manage my desktops"
+  button only appears when a deployment supplies a URL — one image serves many
+  customers, so it cannot be baked in — which meant none of the `nix run`
+  scenarios or example compose files showed it. Anyone trying a demo saw the
+  "your desktop is still running" reminder with nothing to click, which is the
+  wrong lesson to take away. All eleven `docker run` demos and ten compose
+  examples now point it at the hosting dashboard.
+
+### Removed
+
+- **304 MB of the image, including the C compiler.** This container is used by
+  general subscribers, and QGIS's Python console is an arbitrary-code path even
+  with the terminal locked down — so a working toolchain on the box is something
+  to take away, not just weight to trim.
+
+  `gcc` was there because of a text file. `hdf` ships `lib/libhdf4.settings`, a
+  build-provenance record quoting the absolute path of the compiler it was built
+  with, and nix treats any store path in any file as a runtime reference.
+  Scrubbing that one file drops the compiler and its whole toolchain closure.
+  HDF4 support is untouched — GDAL links `libhdf`/`libmfhdf` directly and never
+  calls the `h4cc` wrapper that settings file describes.
+
+- **Roughly sixty rclone storage backends.** The SBOM for a QGIS desktop listed
+  ProtonMail, Dropbox, Mega and Yandex clients, because upstream rclone compiles
+  in every backend it supports and each drags its client library along. None of
+  it was reachable: `config/persist/persist.sh` validates
+  `QGIS_DESKTOP_PERSIST_TYPE` against exactly `s3` and `local`. The binary is now
+  21 MB rather than 38 MB.
+
+  Not a feature change. The `s3` backend covers every S3-compatible provider —
+  AWS, MinIO, Ceph, Wasabi — because the provider is a config key rather than a
+  separate backend. What still appears under the ProtonMail name is `go-crypto`,
+  an OpenPGP library rclone's core uses for encryption; it is published by Proton
+  but is not Proton Drive.
+
+### Security
+
+- No setuid or setgid binaries anywhere in the image, no `sudo`, `su`, `pkexec`
+  or `doas`, and the desktop, X server and QGIS all run as uid 1000. Verified
+  against a built image rather than assumed.
+
+### Added
+
+- **The pre-connection splash is branded.** The screen KasmVNC shows before the
+  desktop connects was Kasm's blue geometry — the first thing a user sees. It is
+  now the brand wallpaper, re-encoded from the same artwork so the two cannot
+  drift apart. The asset is content-hashed, so the build fails if a KasmVNC bump
+  renames it rather than quietly leaving Kasm's artwork in place.
+
+
+- **A "your desktop is still running" reminder, and a link back to your control
+  panel.** A disconnected session is the moment someone assumes they are done
+  and walks away from a machine that is still billing them. The session-ended
+  page now says so — with or without a link configured, because the warning is
+  the part that protects the bill.
+
+  Set `QGIS_DESKTOP_MANAGE_URL` and the link appears twice: as a button on that
+  page, and in the control bar down the left of the screen, so it is reachable
+  while the user is still working rather than only after they disconnect.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_MANAGE_URL` | *(none)* | Your control panel. Only `http(s)` is accepted. |
+  | `QGIS_DESKTOP_MANAGE_LABEL` | `Manage my desktops` | Button text. |
+
+  The URL belongs to the deployment rather than the image, so it is filled in at
+  container start: the build ships a template plus a rendered page, and
+  `qgis-desktop-manage-link` re-renders one from the other as root at boot.
+  Rendering from a pristine template is what keeps a restart from inserting the
+  notice twice.
+
+
+- **A branded wallpaper, and no more blue flash on log-out.** The desktop
+  wallpaper is rendered from `config/branding/wallpaper.svg.in` at build time
+  using the same tokens file as the rest of the branding, and carries the
+  layered motif from the GeoSpatialHosting mark.
+
+  It also fixes something people noticed: `xfdesktop` draws the wallpaper but
+  dies with the session, so between XFCE exiting on **Log Out** and the
+  supervisor restarting it there were several seconds of bare X root window —
+  flat blue, no explanation, easily read as a fault. `start-desktop.sh` now
+  paints the root window once as soon as X is up, so the gap shows the brand
+  instead. The same image is the LightDM greeter background in `greeter` mode.
+
+  `nix build .#branded-wallpaper` renders it in about a second, so a design
+  change can be reviewed without an image build.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_WALLPAPER` | `/usr/share/wallpaper.png` | Bind-mount over it to change the wallpaper without rebuilding. |
+  | `QGIS_DESKTOP_ROOT_COLOR` | `#0D161C` | Painted first, and the fallback if the image cannot be drawn. |
+
+
+- **The KasmVNC web interface is branded.** The browser tab, the favicon, the
+  control bar, and the page users land on when their session ends now carry your
+  brand rather than KasmVNC's. Every value lives in `config/branding/tokens.json`; correcting that
+  one file re-themes everything.
+
+  The session-ended page also gained a **Sign out completely** link. It is the
+  only branded surface that can offer one: it is a real document in the user's
+  browser, so unlike the desktop — which is pixels inside a page — it can clear
+  the single sign-on cookie.
+
+  The control bar down the left of the screen is branded too — its header held
+  Kasm's logo and a link to kasmweb.com — as are the connection-error message and
+  the keyboard-shortcuts toggle. All of it lives in the entry page's own HTML,
+  which is what makes it safe to rewrite. The Vite bundle and hashed stylesheets
+  are left byte-identical, and a KasmVNC release that renames the markup we key
+  on fails the build instead of silently shipping Kasm branding.
+
+  Review a change with `nix run .#preview-branding` — seconds, no image build.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_BRANDING` | `1` | `0` serves KasmVNC's own web root. |
+  | `QGIS_DESKTOP_BRANDED_WWW` | `/usr/share/qgis-desktop/www` | Where the branded root lives; bind-mount over it to override without rebuilding. |
+
+### Changed
+
+- **The official brand palette replaces the values derived from the live site.**
+  Accent `#DF9E2F`, blue `#569FC6`, grey `#8A8B8B`, ink `#1B1F23`, mist
+  `#F4F6F8`. The derived guesses were close but wrong. The wallpaper wordmark is
+  now brand grey with `geospatialhosting.com` beneath it in the accent, and the
+  runtime control-bar button reads its colour from the tokens file instead of a
+  second hardcoded copy.
+
+
+- **Logging out now lands on the session-ended page instead of silently
+  restarting.** The supervisor added in this release restarted XFCE under the
+  same X server, which meant the browser never disconnected — so the user was
+  bounced straight into a fresh desktop, never saw the page, and never got the
+  chance to sign out or the reminder that the machine is still billing.
+
+  A clean log out now ends the display server, which drops the browser onto the
+  session-ended page; the desktop comes straight back up behind it so
+  **Reconnect** lands on a working session. A *crash* is still papered over by
+  restarting in place, because that is the case where invisibility is the right
+  answer. `QGIS_DESKTOP_LOGOUT_DISCONNECT=0` restores the restart-in-place
+  behaviour for both.
+
+### Fixed
+
+- **The branded control-bar logo no longer reverts to Kasm's after boot.** The
+  runtime template was captured before the logo was replaced, so
+  `qgis-desktop-manage-link` faithfully re-rendered the unbranded markup every
+  time the container started. The template is now captured after every
+  build-time edit, and the build asserts that both it and the served page carry
+  the brand logo — checking only the served page is what let this through.
+
+
+- **Logging out really does show the session-ended page now.** The previous
+  attempt ended the display server on log out, on the assumption that a dropped
+  connection would send the browser to `disconnected.html`. It does not:
+  KasmVNC navigates there **only** on an idle-session timeout, and shows a small
+  status bar for every other disconnect. The page existed and nothing ever
+  showed it. A small script injected into the entry pages now watches the
+  connection-state class the bundle sets on `<html>` and navigates when a
+  session that had connected goes away. Both class names are asserted at build
+  time, so a KasmVNC rename fails the build rather than quietly restoring the
+  old behaviour.
+
+- **Arial-authored QGIS projects lay out correctly.** QGIS logged a missing
+  Arial and substituted a font with different metrics, which shifts every label
+  on a map. Liberation Sans is metric-compatible and was already in the image,
+  but `makeFontsConf` does not include fontconfig's own `conf.d`, so the stock
+  metric-alias rules never applied. The desktop's font config now carries them
+  for Arial, Helvetica, Times New Roman and Courier New. Arial itself is
+  Monotype's and is not redistributable, so it is not shipped.
+
+
+- **The image builds again.** `config/session/session-supervisor.sh` tripped
+  shellcheck's SC2329 — a function only reachable from a `trap`, which
+  shellcheck does not trace. `writeShellApplication` runs shellcheck at build
+  time and treats even info-level findings as fatal, so the whole image build
+  failed several minutes in, with the cause buried in "Last 7 log lines".
+
+  `scripts/test-shellcheck.sh` now lints every script `flake.nix` packages, the
+  same way the build does, and runs first in the suite. It reads the script list
+  out of `flake.nix` rather than restating it, so a script added to the image is
+  covered without anyone remembering to add it. This is the second time a
+  build-time lint finding reached a build; it should be the last.
+- **The CVE table in PR comments and release bodies no longer double-counts.**
+  Grype reports one match per path a vulnerable package is reachable by, and a
+  nix closure reaches the same package many ways — so a scan that found four
+  matches of two real problems said "4 CVEs found". Findings are now keyed on
+  CVE + package + version, which collapses the duplicates while keeping the
+  same CVE against a different package, or a different version of the same one,
+  as the separate findings they are. The count is labelled "unique CVEs".
+
+## [3.1.0] — 2026-08-27
+
+Logging out stops being a dead end. Before this release, picking **Log Out**
+from the XFCE menu ended the session and left the browser attached to a bare X
+root window — no panel, no menu, nothing to click — and only a container restart
+brought it back. An XFCE crash did the same thing. Both are now survivable, and
+signing out of single sign-on is properly documented and properly wired.
+
+### Added
+
+- **The desktop session is supervised.** `qgis-desktop-session` wraps XFCE in
+  the `basic`, `none` and `oidc` paths and relaunches it when it exits, so
+  **Log Out** means "give me a clean desktop" — a fresh XFCE, a fresh QGIS if
+  `QGIS_DESKTOP_AUTOSTART_QGIS=1`, on the same browser tab, in a few seconds.
+  A crash-loop guard stops a session that fails instantly from spinning: five
+  restarts inside sixty seconds and the supervisor gives up with a message
+  rather than burning CPU until someone notices.
+
+  `greeter` mode is unchanged — LightDM already ends the session and re-shows
+  its login form, which is the better behaviour when the container holds real
+  per-user accounts.
+
+  | Variable | Default | Description |
+  |----------|---------|-------------|
+  | `QGIS_DESKTOP_SESSION_RESTART` | `1` | Relaunch the session when it exits. `0` restores the old run-once behaviour. |
+  | `QGIS_DESKTOP_SESSION_RESTART_MAX` | `5` | Restarts tolerated inside the window before giving up. |
+  | `QGIS_DESKTOP_SESSION_RESTART_WINDOW` | `60` | Width of that window, in seconds. |
+  | `QGIS_DESKTOP_SESSION_RESTART_DELAY` | `1` | Seconds between restarts. |
+  | `QGIS_DESKTOP_SESSION_RESET_STATE` | `1` | Clear `~/.cache/sessions` between runs. |
+
+- **`QGIS_DESKTOP_OIDC_BACKEND_LOGOUT_URL` ends the session at the identity
+  provider.** `/oauth2/sign_out` only ever dropped oauth2-proxy's own cookie,
+  which is half a logout: the provider still had a live SSO session, so the next
+  visit completed the authorization-code flow without ever showing a login form
+  and the user was straight back in. Set this and oauth2-proxy calls the
+  provider's RP-initiated logout endpoint server-side during sign-out, passing
+  the user's `id_token` as the hint. `auto` derives Keycloak's endpoint from the
+  issuer; any other provider takes the `end_session_endpoint` from its discovery
+  document, with `{id_token}` where the hint belongs.
+
+- **`QGIS_DESKTOP_OIDC_SIGN_OUT_REDIRECT` sends users somewhere after signing
+  out.** Setting it adds that host to oauth2-proxy's redirect allowlist, which
+  is what makes `/oauth2/sign_out?rd=<url>` actually honour the destination
+  instead of silently falling back to `/`. Left unset, sign-out returns to `/`,
+  which restarts the OIDC flow and puts the provider's login page back on
+  screen — usually what you want.
+
+### Changed
+
+- **Logging out of XFCE now discards unsaved work.** It used to strand the
+  session; it now replaces it. Nothing prompts to save, because XFCE has already
+  torn the session down by the time the supervisor sees it. Set
+  `QGIS_DESKTOP_SESSION_RESTART=0` for the old behaviour.
+- **The saved-session cache is cleared between runs.** Under `oidc` and `basic`
+  the next person to open the container's URL may genuinely be a different
+  person, and handing them the previous session's open windows is a privacy
+  leak, not a convenience. `QGIS_DESKTOP_SESSION_RESET_STATE=0` keeps it.
+
+### Documentation
+
+- A new **Logging out** section in
+  [Authentication](https://kartoza.github.io/qgis-desktop-docker/configuration/authentication/)
+  covering both halves — ending the desktop session and ending the SSO session —
+  and stating plainly why the second cannot be done from inside the container:
+  the proxy session is a cookie in the user's browser, and the desktop is only
+  pixels inside that page.
+
 ## [3.0.0] — 2026-08-17
 
 The two published channels are named for what they track, and every build gains
@@ -587,7 +885,9 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.1.0...v3.3.0
+[3.1.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v2.0.0
 [1.4.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.3.0...v1.4.0

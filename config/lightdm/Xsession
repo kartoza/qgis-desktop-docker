@@ -19,6 +19,20 @@ mkdir -p "$HOME/.config/xfce4"
 # xfconf will use it and the user gets the Kartoza wallpaper without any
 # extra setup here.
 
+# Point the Giswater plugin at the natively built EPA solvers for THIS
+# user's profile. Greeter mode gives every user their own home directory, so
+# the wiring has to happen per session rather than once at boot (start-
+# desktop.sh does the equivalent for basic/none mode). No-op when the plugin
+# is not installed.
+if command -v epa >/dev/null 2>&1; then
+  epa install || echo "WARN: could not wire up the EPA solvers — run 'epa status' for detail"
+fi
+
+# Same reasoning for the autostart entry: it lives in this user's home.
+if command -v qgis-desktop-autostart >/dev/null 2>&1; then
+  qgis-desktop-autostart || true
+fi
+
 # dbus-run-session hosts the session bus for XFCE. Without it, xfconfd
 # refuses to start and the panel / desktop come up broken.
 exec dbus-run-session -- startxfce4
