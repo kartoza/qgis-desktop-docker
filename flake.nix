@@ -139,18 +139,17 @@
         # gitlinks, which satisfies flake purity without needing a separate
         # NAR hash.
         #
-        # This is the commit for tag v4.16.1, the latest tagged plugin
-        # release, not main (development). Verified directly: v4.9.2, the
-        # officially-branded "stable" release, does NOT work with the
-        # current giswater-cli tooling (its dbmodel predates the manifest
-        # architecture the CLI requires); v4.16.1 does, confirmed with a
-        # real `gw schema main create` + `gw project create` run against a
-        # live DB. To move to a newer release: `git ls-remote --tags
+        # This is the commit for tag v4.17.0, the latest tagged plugin
+        # release (bumped from v4.16.1, see giswater-suite's CLAUDE.md
+        # "Why this pins to v4.17.0" for the full investigation: ships the
+        # role_system dbmodel feature for real, verified end-to-end). To
+        # move to a newer release: `git ls-remote --tags
         # https://github.com/giswater/plugin.git`, pick the new tag, then
-        # `git rev-parse <tag>^{}` for its commit.
+        # `git rev-parse <tag>^{}` for its commit (tags here are annotated,
+        # the tag ref itself is the tag object, not the commit).
         giswaterPlugin = builtins.fetchGit {
           url = "https://github.com/giswater/plugin.git";
-          rev = "491d2035ff4864afed4085259c8fc2b15ed0564e";
+          rev = "a28c79193da9fa372bcfc9001e640de928a6b0f8";
           submodules = true;
         };
 
