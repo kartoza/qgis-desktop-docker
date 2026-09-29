@@ -127,18 +127,49 @@ log "session-ended page updated"
 # Styled inline rather than with a Kasm class: the class names live in a bundle
 # whose contents change between releases, and inline styling cannot go stale.
 BAR_MARKER='<!--QGIS_DESKTOP_MANAGE_LINK_BAR-->'
+BAR_STYLE="display:block;margin:6px 8px 10px;padding:7px 10px;border-radius:6px;background:${ACCENT};color:#2B2B2B;font:700 12px/1.2 sans-serif;text-align:center;text-decoration:none"
 if [ -n "${URL}" ]; then
-  BAR_BLOCK="<a href=\"${SAFE_URL}\" target=\"_blank\" rel=\"noopener\" title=\"${SAFE_LABEL}\" style=\"display:block;margin:6px 8px 10px;padding:7px 10px;border-radius:6px;background:${ACCENT};color:#2B2B2B;font:700 12px/1.2 sans-serif;text-align:center;text-decoration:none\">${SAFE_LABEL}</a>"
+  BAR_BLOCK="<a href=\"${SAFE_URL}\" target=\"_blank\" rel=\"noopener\" title=\"${SAFE_LABEL}\" style=\"${BAR_STYLE}\">${SAFE_LABEL}</a>"
 else
   BAR_BLOCK=""
+fi
+
+# A second button under the first, pointing at the file browser. Control bar
+# only: once the session has ended there is nothing to browse files for.
+#   FILEBROWSER_URL    Where the button points. Unset means no button.
+#   FILEBROWSER_LABEL  Button text. Defaults to "Filebrowser".
+FB_URL="${FILEBROWSER_URL:-}"
+FB_LABEL="${FILEBROWSER_LABEL:-Filebrowser}"
+if [ -n "${FB_URL}" ]; then
+  case "${FB_URL}" in
+    http://* | https://*) : ;;
+    *)
+      warn "FILEBROWSER_URL='${FB_URL}' must start with http:// or https://; leaving the button out."
+      FB_URL=""
+      ;;
+  esac
+fi
+if [ -n "${FB_URL}" ]; then
+  SAFE_FB_URL="$(html_escape "${FB_URL}")"
+  SAFE_FB_LABEL="$(html_escape "${FB_LABEL}")"
+  BAR_BLOCK="${BAR_BLOCK}<a href=\"${SAFE_FB_URL}\" target=\"_blank\" rel=\"noopener\" title=\"${SAFE_FB_LABEL}\" style=\"${BAR_STYLE}\">${SAFE_FB_LABEL}</a>"
 fi
 
 for page in index.html vnc.html; do
   src="${WWW}/${page}.in"
   [ -r "${src}" ] || continue
   tmp="$(mktemp)"
+  # index/substr rather than gsub: gsub reads "&" in the replacement as "the
+  # matched text", and every escaped URL with a query string contains "&amp;".
   awk -v marker="${BAR_MARKER}" -v block="${BAR_BLOCK}" '
-    { gsub(marker, block); print }
+    {
+      out = ""
+      while ((i = index($0, marker)) > 0) {
+        out = out substr($0, 1, i - 1) block
+        $0 = substr($0, i + length(marker))
+      }
+      print out $0
+    }
   ' "${src}" > "${tmp}" || { warn "could not render ${page}"; rm -f "${tmp}"; continue; }
   if grep -qF "${BAR_MARKER}" "${tmp}"; then
     warn "${page}: the control-bar marker survived substitution; leaving it as built."
@@ -151,4 +182,7 @@ done
 
 if [ -n "${URL}" ]; then
   log "control bar link added to the entry pages"
+fi
+if [ -n "${FB_URL}" ]; then
+  log "filebrowser link: ${FB_URL}"
 fi
