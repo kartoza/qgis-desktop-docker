@@ -1,0 +1,108 @@
+# When a release tag is cut from main, open a PR that merges it into the
+# feature/gis-water branch, so the Giswater build never drifts far behind
+# main.
+#
+# Only plain release tags (v3.3.7, ...) trigger this. Flavoured tags such as
+# "giswater.v4.4.3", "giswater-v3.3.6" or "injecta.v3.3.6" are cut from the
+# fork branches themselves and must not be fed back into feature/gis-water.
+#
+# The PR head is a dedicated "sync/gis-water-<tag>" branch pointing at the
+# tagged commit (a PR cannot use a tag as its head). Merge conflicts are
+# left for a human to resolve on that branch.
+#
+# Note: a PR opened with the default GITHUB_TOKEN does not trigger other
+# workflows (e.g. docker.yml's pull_request build). Set a SYNC_PR_TOKEN
+# secret (a fine-grained PAT with Contents, Pull requests and Workflows
+# write) to get CI on the sync PR, and so the sync branch can be pushed even
+# when the release touches .github/workflows/. Without it the workflow falls
+# back to GITHUB_TOKEN.
+
+name: Sync giswater
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "!*giswater*"
+      - "!*injecta*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to open a feature/gis-water sync PR for"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  TARGET_BRANCH: feature/gis-water
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_PR_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Open sync PR
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          case "$TAG" in
+            *giswater*|*injecta*)
+              echo "Skipping flavoured tag ${TAG}."
+              exit 0
+              ;;
+          esac
+
+          SHA=$(git rev-list -n 1 "refs/tags/${TAG}")
+
+          # Only sync tags that were cut from main.
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "Tag ${TAG} (${SHA}) is not on main; nothing to sync."
+            exit 0
+          fi
+
+          if git merge-base --is-ancestor "$SHA" "origin/${TARGET_BRANCH}"; then
+            echo "${TARGET_BRANCH} already contains ${TAG}; nothing to sync."
+            exit 0
+          fi
+
+          SYNC_BRANCH="sync/gis-water-${TAG}"
+          git push --force origin "${SHA}:refs/heads/${SYNC_BRANCH}"
+
+          EXISTING=$(gh pr list --base "$TARGET_BRANCH" --head "$SYNC_BRANCH" \
+            --state open --json url --jq '.[0].url // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR already open: ${EXISTING}"
+            exit 0
+          fi
+
+          if git merge-tree --write-tree "origin/${TARGET_BRANCH}" "$SHA" >/dev/null; then
+            CONFLICTS="This merge applies cleanly."
+          else
+            CONFLICTS="⚠️ This merge has conflicts. Resolve them on \`${SYNC_BRANCH}\` before merging."
+          fi
+
+          {
+            echo "Automated sync of release \`${TAG}\` from \`main\` into \`${TARGET_BRANCH}\`."
+            echo
+            echo "$CONFLICTS"
+            echo
+            echo "Commits from \`main\` not yet in \`${TARGET_BRANCH}\`:"
+            echo
+            git log --no-merges --format='- %h %s' "origin/${TARGET_BRANCH}..${SHA}"
+          } > pr-body.md
+
+          gh pr create \
+            --base "$TARGET_BRANCH" \
+            --head "$SYNC_BRANCH" \
+            --title "Sync ${TAG} from main into ${TARGET_BRANCH}" \
+            --body-file pr-body.md
