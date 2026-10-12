@@ -156,6 +156,7 @@ nav:
   - Getting Started:
     - getting-started/index.md
     - Quick Start: getting-started/quickstart.md
+    - Installing Nix: getting-started/nix.md
     - Nix Workflow: getting-started/nix-workflow.md
     - Building from Source: getting-started/building.md
   - Configuration:

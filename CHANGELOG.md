@@ -7,6 +7,30 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **The Giswater plugin is now pre-installed and enabled**, baked into the
+  default profile at build time (pinned to a specific upstream commit) and
+  turned on in `QGIS3.ini`, no Plugin Manager step needed. Reaches a fresh
+  `/home/user` on a named volume only; a bind mount replaces the mountpoint
+  instead, see `docs/configuration/giswater.md`.
+- **Two demo Giswater projects (`wsex.qgs`, `udex.qgs`)**, plus their
+  `*_attachments.zip` sidecars (QGIS's own project-style-attachment
+  mechanism), are now baked into `~/Desktop/giswater-projects/`, real
+  projects generated from a live `giswater-suite` bootstrap run, using
+  `service='qwc_giswaterdb'` datasources only, no embedded credentials.
+  No `pg_service.conf` is baked into the image — resolving that service
+  needs one supplied by the deployment (a mounted `~/.pg_service.conf`, or
+  the entrypoint's `PG_SERVICE_CONF`), see
+  `docs/configuration/giswater.md#demo-projects`.
+- **`mousepad` (GUI) and `nano` (terminal)** text editors, previously
+  absent entirely. `mousepad` is reachable from the applications menu like
+  any other installed app; no panel launcher was added.
+- **A saved PostgreSQL connection named "Giswater"**, pointing at
+  `service=qwc_giswaterdb`, baked into the default profile's `QGIS3.ini`
+  alongside the plugin flag, no manual connection setup needed to browse
+  the database directly.
+
 ## [3.3.0] — 2026-08-31
 
 ### Security
@@ -304,7 +328,6 @@ signing out of single sign-on is properly documented and properly wired.
   and stating plainly why the second cannot be done from inside the container:
   the proxy session is a cookie in the user's browser, and the desktop is only
   pixels inside that page.
-
 
 ## [3.0.0] — 2026-08-17
 
@@ -862,7 +885,8 @@ See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releas
 
 Initial release. See [GitHub release notes](https://github.com/kartoza/qgis-desktop-docker/releases/tag/v1.0.0).
 
-[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.1.0...v3.3.0
 [3.1.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/kartoza/qgis-desktop-docker/compare/v1.4.0...v2.0.0
